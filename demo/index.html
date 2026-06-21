@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sheetedit demo</title>
+    <style>
+      html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; }
+      body { display: flex; flex-direction: column; }
+      header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+      header strong { font-size: 15px; }
+      #editor { flex: 1; min-height: 0; }
+      #status { color: #666; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>sheetedit</strong>
+      <input id="file" type="file" accept=".xlsx,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet" />
+      <button id="save" disabled>Download edited workbook</button>
+      <span id="status">Open a .xlsx or .ods file</span>
+    </header>
+    <div id="editor"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
