@@ -24,10 +24,14 @@ export type CellKind = "n" | "s" | "b" | "e" | "blank";
 export interface Cell {
   row: number; // 1-based
   col: number; // 1-based
-  /** Display value: the literal, or the cached result for a formula cell. */
+  /** Canonical/editable value: the literal, or the cached result for a formula cell. */
   value: string;
   /** Serialization hint for `value`. */
   kind: CellKind;
+  /** Formatted text for the grid (number format applied). Falls back to `value`. */
+  display?: string;
+  /** Number format for this cell: an xlsx format code, a built-in numFmtId, or none. */
+  numFmt?: string | number;
   /** Formula text in A1 syntax, without the leading "=". Undefined if not a formula. */
   formula?: string;
   /** xlsx: the <c> element in the worksheet DOM (for surgical edits). */
@@ -113,6 +117,20 @@ function numToStr(n: number): string {
   return String(parseFloat(n.toPrecision(15)));
 }
 
+/** Apply a number format (code or built-in id) to a numeric value via SSF. */
+function formatNumber(fmt: string | number, value: string): string | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  try {
+    return FormulaParser.SSF.format(fmt, n);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Text shown in the grid for a cell: the formatted display, else the raw value. */
+const cellDisplay = (cell: Cell | undefined): string => (cell ? cell.display ?? cell.value : "");
+
 // ---------------------------------------------------------------------------
 // A1 helpers
 // ---------------------------------------------------------------------------
@@ -177,6 +195,41 @@ function readSharedStrings(file: Uint8Array | undefined): string[] {
   );
 }
 
+interface XlsxStyles {
+  customFmt: Map<number, string>; // numFmtId -> format code (custom, id >= 164)
+  xfNumFmtIds: number[]; // cellXfs index (the cell @s) -> numFmtId
+}
+
+function readXlsxStyles(file: Uint8Array | undefined): XlsxStyles {
+  const customFmt = new Map<number, string>();
+  const xfNumFmtIds: number[] = [];
+  if (!file) return { customFmt, xfNumFmtIds };
+  const doc = parseXml(file);
+  for (const nf of Array.from(doc.getElementsByTagName("numFmt"))) {
+    const id = Number(nf.getAttribute("numFmtId"));
+    const code = nf.getAttribute("formatCode");
+    if (Number.isFinite(id) && code != null) customFmt.set(id, code);
+  }
+  // The cell @s indexes <cellXfs>, not <cellStyleXfs>; read that list specifically.
+  const cellXfs = doc.getElementsByTagName("cellXfs")[0];
+  if (cellXfs) {
+    for (const xf of Array.from(cellXfs.children)) {
+      if (xf.localName === "xf") xfNumFmtIds.push(Number(xf.getAttribute("numFmtId") || "0"));
+    }
+  }
+  return { customFmt, xfNumFmtIds };
+}
+
+/** Resolve a cell's number format (code or built-in id), or undefined for General. */
+function resolveXlsxFmt(styles: XlsxStyles, s: string | undefined): string | number | undefined {
+  if (s == null) return undefined;
+  const numFmtId = styles.xfNumFmtIds[Number(s)];
+  if (numFmtId == null || numFmtId === 0) return undefined; // 0 = General
+  const custom = styles.customFmt.get(numFmtId);
+  if (custom != null) return custom === "General" ? undefined : custom;
+  return numFmtId; // built-in id; SSF resolves it
+}
+
 function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const wb: Workbook = { kind: "xlsx", sheets: [], files };
   const wbXml = files["xl/workbook.xml"];
@@ -192,6 +245,7 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
     }
   }
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
+  const styles = readXlsxStyles(files["xl/styles.xml"]);
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
@@ -210,14 +264,14 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
       const sheetData = doc.getElementsByTagName("sheetData")[0];
       sheet.doc = doc;
       sheet.sheetData = sheetData;
-      if (sheetData) readSheetData(sheet, sheetData, shared);
+      if (sheetData) readSheetData(sheet, sheetData, shared, styles);
     }
     wb.sheets.push(sheet);
   }
   return wb;
 }
 
-function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]): void {
+function readSheetData(sheet: Sheet, sheetData: Element, shared: string[], styles: XlsxStyles): void {
   for (const rowEl of Array.from(sheetData.getElementsByTagName("row"))) {
     const rAttr = rowEl.getAttribute("r");
     let rowNum = rAttr ? Number(rAttr) : 0;
@@ -275,6 +329,14 @@ function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]): void
         el: c,
         style: c.getAttribute("s") ?? undefined,
       };
+      if (kind === "n") {
+        const fmt = resolveXlsxFmt(styles, cell.style);
+        if (fmt != null) {
+          cell.numFmt = fmt;
+          const d = formatNumber(fmt, value);
+          if (d != null) cell.display = d;
+        }
+      }
       sheet.cells.set(key(row, col), cell);
       noteExtent(sheet, row, col);
     }
@@ -550,10 +612,14 @@ function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
     const valueType = cellEl.getAttribute("office:value-type");
     const formulaRaw = cellEl.getAttribute("table:formula") ?? undefined;
     const style = cellEl.getAttribute("table:style-name") ?? undefined;
+    const text = odsCellText(cellEl);
     let value = "";
     let kind: CellKind = "blank";
+    let display: string | undefined;
     if (valueType === "float" || valueType === "percentage" || valueType === "currency") {
-      value = cellEl.getAttribute("office:value") ?? odsCellText(cellEl);
+      value = cellEl.getAttribute("office:value") ?? text;
+      // ODF stores the producer's formatted text in <text:p>; use it as the display.
+      if (text !== "" && text !== value) display = text;
       kind = "n";
     } else if (valueType === "boolean") {
       value = cellEl.getAttribute("office:boolean-value") === "true" ? "TRUE" : "FALSE";
@@ -562,10 +628,12 @@ function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
       value = cellEl.getAttribute("office:string-value") ?? odsCellText(cellEl);
       kind = "s";
     } else if (valueType === "date") {
-      value = cellEl.getAttribute("office:date-value") ?? odsCellText(cellEl);
+      value = cellEl.getAttribute("office:date-value") ?? text;
+      if (text !== "" && text !== value) display = text;
       kind = "s";
     } else if (valueType === "time") {
-      value = cellEl.getAttribute("office:time-value") ?? odsCellText(cellEl);
+      value = cellEl.getAttribute("office:time-value") ?? text;
+      if (text !== "" && text !== value) display = text;
       kind = "s";
     } else {
       value = odsCellText(cellEl);
@@ -581,6 +649,7 @@ function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
       col: startCol,
       value,
       kind,
+      display,
       formula: formulaRaw ? odfToA1(formulaRaw) : undefined,
       odfFormula: formulaRaw,
       style,
@@ -703,6 +772,8 @@ function applyResult(cell: Cell, res: unknown): void {
     cell.kind = kind;
     cell.recomputed = true;
   }
+  // Refresh the formatted display from the (possibly new) value.
+  cell.display = kind === "n" && cell.numFmt != null ? formatNumber(cell.numFmt, value) ?? undefined : undefined;
 }
 
 /** Recompute every formula cell's cached value, in dependency order. */
@@ -865,6 +936,9 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
     cell.value = raw;
     cell.kind = "s";
   }
+  // Re-apply the cell's number format (a typed value keeps the cell's format, like Excel).
+  cell.display =
+    cell.kind === "n" && cell.numFmt != null ? formatNumber(cell.numFmt, cell.value) ?? undefined : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -951,10 +1025,7 @@ export function createSheetEditor(
     options.onChange?.();
   };
 
-  const displayValue = (sheet: Sheet, r: number, c: number): string => {
-    const cell = getCell(sheet, r, c);
-    return cell ? cell.value : "";
-  };
+  const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
 
   const refreshDisplays = (sheet: Sheet, except?: HTMLInputElement) => {
     for (const [k, input] of inputs) {
@@ -999,12 +1070,14 @@ export function createSheetEditor(
         if (cell?.kind === "n") td.classList.add("num");
         const input = document.createElement("input");
         input.type = "text";
-        input.value = cell ? cell.value : "";
+        input.value = cellDisplay(cell);
         input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
         const ki = key(r, c);
         input.addEventListener("focus", () => {
           const live = getCell(sheet, r, c);
-          if (live?.formula != null) input.value = "=" + live.formula;
+          if (!live) return;
+          // Show the editable underlying value (formula or raw), not the formatted display.
+          input.value = live.formula != null ? "=" + live.formula : live.value;
         });
         const commit = () => {
           const raw = input.value;

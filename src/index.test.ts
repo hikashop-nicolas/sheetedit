@@ -136,6 +136,78 @@ describe("xlsx", () => {
 });
 
 // ---------------------------------------------------------------------------
+// number format display layer
+// ---------------------------------------------------------------------------
+
+const STYLED_SHEET = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <sheetData>
+  <row r="1"><c r="A1" s="1"><v>45000</v></c><c r="B1" s="2"><v>1234.5</v></c><c r="C1" s="2"><f>B1</f><v>1234.5</v></c><c r="D1"><v>1.5</v></c></row>
+ </sheetData>
+</worksheet>`;
+
+const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <numFmts count="1"><numFmt numFmtId="164" formatCode="$#,##0.00"/></numFmts>
+ <cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164"/></cellXfs>
+</styleSheet>`;
+
+function makeStyledXlsx(): Uint8Array {
+  return zipSync({
+    "[Content_Types].xml": strToU8("<Types/>"),
+    "_rels/.rels": strToU8("<Relationships/>"),
+    "xl/workbook.xml": strToU8(
+      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    ),
+    "xl/_rels/workbook.xml.rels": strToU8(
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    ),
+    "xl/worksheets/sheet1.xml": strToU8(STYLED_SHEET),
+    "xl/styles.xml": strToU8(STYLES_XML),
+  });
+}
+
+describe("number format display layer", () => {
+  it("formats xlsx cells via their number format, keeping the raw value editable", () => {
+    const wb = readWorkbook(makeStyledXlsx());
+    const s = wb.sheets[0]!;
+    const a1 = s.cells.get("1:1")!;
+    expect(a1.value).toBe("45000"); // raw serial preserved for editing
+    expect(a1.display).toBe("3/15/23"); // built-in date format (id 14)
+    const b1 = s.cells.get("1:2")!;
+    expect(b1.value).toBe("1234.5");
+    expect(b1.display).toBe("$1,234.50"); // custom currency code
+    const d1 = s.cells.get("1:4")!;
+    expect(d1.display).toBeUndefined(); // General format -> no display, raw value shown
+  });
+
+  it("reformats a formula cell's display when it recomputes", () => {
+    const wb = readWorkbook(makeStyledXlsx());
+    const s = wb.sheets[0]!;
+    expect(s.cells.get("1:3")!.display).toBe("$1,234.50"); // C1 = B1, currency
+    setCellInput(s, 1, 2, "1000.5"); // B1
+    recalc(wb);
+    expect(s.cells.get("1:3")!.display).toBe("$1,000.50"); // C1 reformatted
+    expect(s.cells.get("1:2")!.display).toBe("$1,000.50"); // typed value keeps the format
+  });
+
+  it("uses the ODF text:p as the display for formatted .ods cells", () => {
+    const content = `<?xml version="1.0"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+ <office:body><office:spreadsheet><table:table table:name="S">
+  <table:table-row><table:table-cell office:value-type="float" office:value="1234.5"><text:p>1,234.50</text:p></table:table-cell></table:table-row>
+ </table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array>);
+    const cell = readWorkbook(bytes).sheets[0]!.cells.get("1:1")!;
+    expect(cell.value).toBe("1234.5"); // raw, editable
+    expect(cell.display).toBe("1,234.50"); // producer-formatted text
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ods
 // ---------------------------------------------------------------------------
 

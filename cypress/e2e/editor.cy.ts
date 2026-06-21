@@ -17,6 +17,14 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="C4"]').should("have.value", "14"); // SUM(C2:C3)
   });
 
+  it("shows formatted numbers but edits the raw value", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="D2"]').should("have.value", "$3.50"); // currency format applied
+    cy.get('input[aria-label="D2"]').focus().should("have.value", "3.5"); // raw value when editing
+    cy.get('input[aria-label="D2"]').clear().type("9.9").blur();
+    cy.get('input[aria-label="D2"]').should("have.value", "$9.90"); // typed value keeps the format
+  });
+
   it("recalculates formulas when a dependency changes", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="B2"]').clear().type("5").blur();

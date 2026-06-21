@@ -32,6 +32,16 @@ engine), both MIT.
 - Formula cells display their computed value, and the formula itself when focused.
 - Existing formulas in the file are preserved on save with refreshed cached values.
 
+## Number formats
+
+Cells are shown using their number format: dates, currency, percentages and
+thousands separators render the way the file specifies, while the cell still edits as
+its raw underlying value (focus a `$1,234.50` cell and you edit `1234.5`). For `.xlsx`
+the format code is resolved from `xl/styles.xml` and applied with SSF (the SheetJS
+formatter, bundled with the formula engine); for `.ods` the producer's formatted text
+in `<text:p>` is used. A typed value keeps the cell's format, and a recomputed formula
+result is re-formatted.
+
 You can also use the pure functions directly:
 
 ```ts
@@ -56,9 +66,8 @@ const out = writeWorkbook(wb); // re-zips, preserving other parts
 
 ## Scope / honest limitations
 
-- Edits cell values and formulas across all sheets. Styles and number formats are
-  preserved, not displayed: a date stored as a serial number shows the raw number in
-  the grid (and is preserved on save).
+- Edits cell values and formulas across all sheets. Styles are preserved; number
+  formats are both preserved and applied to the displayed value (see Number formats).
 - The formula engine implements a large subset of spreadsheet functions; an
   unsupported function or a circular reference yields an error value in that cell.
   Desktop apps recompute on open, so cached values are a convenience, not authority.

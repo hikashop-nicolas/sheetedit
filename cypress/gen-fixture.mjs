@@ -11,17 +11,24 @@ mkdirSync(join(here, "fixtures"), { recursive: true });
 const sheet1 = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
  <sheetData>
-  <row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c><c r="B1" t="inlineStr"><is><t>qty</t></is></c><c r="C1" t="inlineStr"><is><t>total</t></is></c></row>
-  <row r="2"><c r="A2" t="inlineStr"><is><t>apples</t></is></c><c r="B2"><v>3</v></c><c r="C2"><f>B2*2</f><v>6</v></c></row>
-  <row r="3"><c r="A3" t="inlineStr"><is><t>pears</t></is></c><c r="B3"><v>4</v></c><c r="C3"><f>B3*2</f><v>8</v></c></row>
+  <row r="1"><c r="A1" t="inlineStr"><is><t>item</t></is></c><c r="B1" t="inlineStr"><is><t>qty</t></is></c><c r="C1" t="inlineStr"><is><t>total</t></is></c><c r="D1" t="inlineStr"><is><t>price</t></is></c></row>
+  <row r="2"><c r="A2" t="inlineStr"><is><t>apples</t></is></c><c r="B2"><v>3</v></c><c r="C2"><f>B2*2</f><v>6</v></c><c r="D2" s="1"><v>3.5</v></c></row>
+  <row r="3"><c r="A3" t="inlineStr"><is><t>pears</t></is></c><c r="B3"><v>4</v></c><c r="C3"><f>B3*2</f><v>8</v></c><c r="D3" s="1"><v>4.25</v></c></row>
   <row r="4"><c r="A4" t="inlineStr"><is><t>sum</t></is></c><c r="C4"><f>SUM(C2:C3)</f><v>14</v></c></row>
  </sheetData>
 </worksheet>`;
 
+const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <numFmts count="1"><numFmt numFmtId="164" formatCode="$#,##0.00"/></numFmts>
+ <cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>
+</styleSheet>`;
+
 const xlsx = zipSync({
   "[Content_Types].xml": strToU8(
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
   ),
+  "xl/styles.xml": strToU8(styles),
   "_rels/.rels": strToU8(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
   ),

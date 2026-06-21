@@ -2,10 +2,14 @@ export type CellKind = "n" | "s" | "b" | "e" | "blank";
 export interface Cell {
     row: number;
     col: number;
-    /** Display value: the literal, or the cached result for a formula cell. */
+    /** Canonical/editable value: the literal, or the cached result for a formula cell. */
     value: string;
     /** Serialization hint for `value`. */
     kind: CellKind;
+    /** Formatted text for the grid (number format applied). Falls back to `value`. */
+    display?: string;
+    /** Number format for this cell: an xlsx format code, a built-in numFmtId, or none. */
+    numFmt?: string | number;
     /** Formula text in A1 syntax, without the leading "=". Undefined if not a formula. */
     formula?: string;
     /** xlsx: the <c> element in the worksheet DOM (for surgical edits). */

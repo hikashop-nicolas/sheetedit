@@ -26,10 +26,15 @@ declare module "fast-formula-parser" {
     parse(formula: string, position?: CellRef): Ref[];
   }
 
+  export interface SSFModule {
+    format(fmt: string | number, value: number): string;
+  }
+
   export default class FormulaParser {
     constructor(config?: ParserConfig);
     parse(formula: string, position?: CellRef, allowReturnArray?: boolean): unknown;
     static DepParser: typeof DepParser;
     static FormulaError: unknown;
+    static SSF: SSFModule;
   }
 }
