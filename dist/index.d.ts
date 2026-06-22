@@ -1,4 +1,19 @@
 export type CellKind = "n" | "s" | "b" | "e" | "blank";
+/** Resolved visual formatting for a cell (read from the file's style pools). */
+export interface CellStyle {
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    bg?: string;
+    align?: "left" | "center" | "right";
+    /** Border presence + CSS colour per side. */
+    borders?: {
+        top?: string;
+        right?: string;
+        bottom?: string;
+        left?: string;
+    };
+}
 export interface Cell {
     row: number;
     col: number;
@@ -18,6 +33,8 @@ export interface Cell {
     odfFormula?: string;
     /** xlsx @s style index / ods @table:style-name, preserved across edits. */
     style?: string;
+    /** Resolved visual formatting (fonts/fills/borders/alignment) for the grid. */
+    cellStyle?: CellStyle;
     /** User changed the value/formula (forces regeneration). */
     edited?: boolean;
     /** Recalc changed the cached value. */
@@ -28,6 +45,15 @@ export interface Sheet {
     cells: Map<string, Cell>;
     maxRow: number;
     maxCol: number;
+    /** 1-based column -> width in px (from the file's <cols>), when specified. */
+    colWidths?: Map<number, number>;
+    /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
+    merges?: {
+        r1: number;
+        c1: number;
+        r2: number;
+        c2: number;
+    }[];
     doc?: Document;
     sheetData?: Element;
     path?: string;

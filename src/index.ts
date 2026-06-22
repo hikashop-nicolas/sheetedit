@@ -21,6 +21,17 @@ import FormulaParser from "fast-formula-parser";
 
 export type CellKind = "n" | "s" | "b" | "e" | "blank";
 
+/** Resolved visual formatting for a cell (read from the file's style pools). */
+export interface CellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  color?: string; // CSS text colour
+  bg?: string; // CSS fill colour
+  align?: "left" | "center" | "right";
+  /** Border presence + CSS colour per side. */
+  borders?: { top?: string; right?: string; bottom?: string; left?: string };
+}
+
 export interface Cell {
   row: number; // 1-based
   col: number; // 1-based
@@ -40,6 +51,8 @@ export interface Cell {
   odfFormula?: string;
   /** xlsx @s style index / ods @table:style-name, preserved across edits. */
   style?: string;
+  /** Resolved visual formatting (fonts/fills/borders/alignment) for the grid. */
+  cellStyle?: CellStyle;
   /** User changed the value/formula (forces regeneration). */
   edited?: boolean;
   /** Recalc changed the cached value. */
@@ -51,6 +64,10 @@ export interface Sheet {
   cells: Map<string, Cell>;
   maxRow: number; // 1-based extent of used cells (0 = empty)
   maxCol: number;
+  /** 1-based column -> width in px (from the file's <cols>), when specified. */
+  colWidths?: Map<number, number>;
+  /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
+  merges?: { r1: number; c1: number; r2: number; c2: number }[];
   // xlsx
   doc?: Document;
   sheetData?: Element;
@@ -198,26 +215,123 @@ function readSharedStrings(file: Uint8Array | undefined): string[] {
 interface XlsxStyles {
   customFmt: Map<number, string>; // numFmtId -> format code (custom, id >= 164)
   xfNumFmtIds: number[]; // cellXfs index (the cell @s) -> numFmtId
+  xfStyles: (CellStyle | undefined)[]; // cellXfs index (the cell @s) -> resolved style
 }
 
-function readXlsxStyles(file: Uint8Array | undefined): XlsxStyles {
+// ARGB ("FFRRGGBB" or "RRGGBB") -> CSS "#rrggbb".
+function argbToCss(argb: string | null | undefined): string | undefined {
+  if (!argb) return undefined;
+  const h = argb.length === 8 ? argb.slice(2) : argb;
+  return /^[0-9a-fA-F]{6}$/.test(h) ? "#" + h.toLowerCase() : undefined;
+}
+
+// Excel tint: negative darkens toward black, positive lightens toward white.
+function applyTint(hex: string, tint: number): string {
+  const ch = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16);
+    const v = tint < 0 ? c * (1 + tint) : c * (1 - tint) + 255 * tint;
+    return Math.max(0, Math.min(255, Math.round(v)))
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return "#" + ch(1) + ch(3) + ch(5);
+}
+
+const findByLocal = (doc: Document, local: string): Element | undefined =>
+  Array.from(doc.getElementsByTagName("*")).find((e) => e.localName === local);
+
+// theme1.xml <clrScheme> -> array indexed by a <color theme="N"> index.
+function readTheme(file: Uint8Array | undefined): string[] {
+  const fallback = ["#ffffff", "#000000", "#e7e6e6", "#44546a", "#4472c4", "#ed7d31", "#a5a5a5", "#ffc000", "#5b9bd5", "#70ad47", "#0563c1", "#954f72"];
+  if (!file) return fallback;
+  try {
+    const scheme = findByLocal(parseXml(file), "clrScheme");
+    if (!scheme) return fallback;
+    const byName: Record<string, string> = {};
+    for (const el of Array.from(scheme.children)) {
+      const c = el.firstElementChild;
+      const css = c && (c.localName === "srgbClr" ? argbToCss(c.getAttribute("val")) : argbToCss(c.getAttribute("lastClr")));
+      if (el.localName && css) byName[el.localName] = css;
+    }
+    // theme index order swaps dk/lt 1 and 2 vs the clrScheme element order.
+    const order = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
+    return order.map((nm, i) => byName[nm] ?? fallback[i]!);
+  } catch {
+    return fallback;
+  }
+}
+
+// Resolve a <color> element (rgb, or theme + tint) to a CSS colour.
+function resolveColor(el: Element | undefined, theme: string[]): string | undefined {
+  if (!el) return undefined;
+  const rgb = el.getAttribute("rgb");
+  if (rgb) return argbToCss(rgb);
+  const t = el.getAttribute("theme");
+  if (t != null) {
+    const base = theme[Number(t)] ?? "#000000";
+    const tint = Number(el.getAttribute("tint") || "0");
+    return tint ? applyTint(base, tint) : base;
+  }
+  return undefined;
+}
+
+function readXlsxStyles(file: Uint8Array | undefined, theme: string[]): XlsxStyles {
   const customFmt = new Map<number, string>();
   const xfNumFmtIds: number[] = [];
-  if (!file) return { customFmt, xfNumFmtIds };
+  const xfStyles: (CellStyle | undefined)[] = [];
+  if (!file) return { customFmt, xfNumFmtIds, xfStyles };
   const doc = parseXml(file);
   for (const nf of Array.from(doc.getElementsByTagName("numFmt"))) {
     const id = Number(nf.getAttribute("numFmtId"));
     const code = nf.getAttribute("formatCode");
     if (Number.isFinite(id) && code != null) customFmt.set(id, code);
   }
+
+  const pool = (local: string) => {
+    const parent = firstByLocal(doc.documentElement, local);
+    return parent ? Array.from(parent.children).filter((e) => e.localName === local.replace(/s$/, "")) : [];
+  };
+  const fonts = pool("fonts").map((f) => ({
+    bold: !!firstByLocal(f, "b"),
+    italic: !!firstByLocal(f, "i"),
+    color: resolveColor(firstByLocal(f, "color"), theme),
+  }));
+  const fills = pool("fills").map((fl) => {
+    const pat = firstByLocal(fl, "patternFill");
+    return pat?.getAttribute("patternType") === "solid" ? resolveColor(firstByLocal(pat, "fgColor"), theme) : undefined;
+  });
+  const borders = pool("borders").map((bd) => {
+    const side = (name: string): string | undefined => {
+      const s = firstByLocal(bd, name);
+      return s?.getAttribute("style") ? (resolveColor(firstByLocal(s, "color"), theme) ?? "#444") : undefined;
+    };
+    const b = { top: side("top"), right: side("right"), bottom: side("bottom"), left: side("left") };
+    return b.top || b.right || b.bottom || b.left ? b : undefined;
+  });
+
   // The cell @s indexes <cellXfs>, not <cellStyleXfs>; read that list specifically.
   const cellXfs = doc.getElementsByTagName("cellXfs")[0];
   if (cellXfs) {
     for (const xf of Array.from(cellXfs.children)) {
-      if (xf.localName === "xf") xfNumFmtIds.push(Number(xf.getAttribute("numFmtId") || "0"));
+      if (xf.localName !== "xf") continue;
+      xfNumFmtIds.push(Number(xf.getAttribute("numFmtId") || "0"));
+      const st: CellStyle = {};
+      const font = fonts[Number(xf.getAttribute("fontId") || "0")];
+      if (font) {
+        if (font.bold) st.bold = true;
+        if (font.italic) st.italic = true;
+        if (font.color) st.color = font.color;
+      }
+      const fill = fills[Number(xf.getAttribute("fillId") || "0")];
+      if (fill) st.bg = fill;
+      const border = borders[Number(xf.getAttribute("borderId") || "0")];
+      if (border) st.borders = border;
+      const align = firstByLocal(xf, "alignment")?.getAttribute("horizontal");
+      if (align === "center" || align === "right" || align === "left") st.align = align;
+      xfStyles.push(Object.keys(st).length ? st : undefined);
     }
   }
-  return { customFmt, xfNumFmtIds };
+  return { customFmt, xfNumFmtIds, xfStyles };
 }
 
 /** Resolve a cell's number format (code or built-in id), or undefined for General. */
@@ -245,7 +359,8 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
     }
   }
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
-  const styles = readXlsxStyles(files["xl/styles.xml"]);
+  const theme = readTheme(files["xl/theme/theme1.xml"]);
+  const styles = readXlsxStyles(files["xl/styles.xml"], theme);
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
@@ -264,6 +379,35 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
       const sheetData = doc.getElementsByTagName("sheetData")[0];
       sheet.doc = doc;
       sheet.sheetData = sheetData;
+      // Column widths: <cols><col min max width/></cols>. Width is in character units;
+      // convert to px (~7px per char + padding for the default font).
+      const colsEl = doc.getElementsByTagName("cols")[0];
+      if (colsEl) {
+        const cw = new Map<number, number>();
+        for (const col of Array.from(colsEl.children)) {
+          if (col.localName !== "col") continue;
+          const min = Number(col.getAttribute("min") || "0");
+          const max = Number(col.getAttribute("max") || "0");
+          const width = Number(col.getAttribute("width") || "0");
+          if (!min || !width) continue;
+          const px = Math.round(width * 7 + 5);
+          for (let c = min; c <= Math.min(max || min, min + 1000); c++) cw.set(c, px);
+        }
+        if (cw.size) sheet.colWidths = cw;
+      }
+      // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.
+      const mergeEls = doc.getElementsByTagName("mergeCell");
+      if (mergeEls.length) {
+        const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
+        for (const m of Array.from(mergeEls)) {
+          const ref = m.getAttribute("ref");
+          const [a, b] = (ref ?? "").split(":");
+          const p1 = a ? parseA1Ref(a) : null;
+          const p2 = b ? parseA1Ref(b) : null;
+          if (p1 && p2) merges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
+        }
+        if (merges.length) sheet.merges = merges;
+      }
       if (sheetData) readSheetData(sheet, sheetData, shared, styles);
     }
     wb.sheets.push(sheet);
@@ -337,6 +481,7 @@ function readSheetData(sheet: Sheet, sheetData: Element, shared: string[], style
           if (d != null) cell.display = d;
         }
       }
+      if (cell.style != null) cell.cellStyle = styles.xfStyles[Number(cell.style)];
       sheet.cells.set(key(row, col), cell);
       noteExtent(sheet, row, col);
     }
@@ -871,8 +1016,12 @@ export function recalc(wb: Workbook): void {
     try {
       res = parser.parse(node.cell.formula!, { row: node.cell.row, col: node.cell.col, sheet: node.sheet.name });
     } catch {
-      res = "#ERROR!";
+      continue; // unsupported function / parse error: keep the file's cached value
     }
+    // A fresh recompute can error on blank inputs (e.g. DATEDIF on an empty date) even
+    // though the file holds a valid cached result; keep that result rather than show an error.
+    const isErr = res != null && typeof res === "object" && !Array.isArray(res);
+    if (isErr && node.cell.value !== "" && node.cell.kind !== "e") continue;
     applyResult(node.cell, res);
   }
 }
@@ -966,21 +1115,27 @@ function injectStyles(): void {
   s.id = STYLE_ID;
   s.textContent = `
     .sheetedit-wrap { display:flex; flex-direction:column; height:100%; background:#1f2227; color:#e6e6e6; font:13px system-ui, sans-serif; }
-    .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#2a2d33; }
-    table.sheetedit-table { border-collapse:collapse; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; }
-    .sheetedit-table th, .sheetedit-table td { border:1px solid #3a3f47; padding:0; margin:0; }
+    /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
+       font colours render faithfully and stay readable; the chrome stays dark. */
+    .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
+    table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; }
+    .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
+    .sheetedit-table th { border:1px solid #d4d4d8; }
+    /* Cell gridlines as box-shadows (not borders) so the file's own borders sit flush
+       against their neighbours and touch, like a real spreadsheet. */
+    .sheetedit-table td { background:#fff; box-shadow: inset -1px -1px 0 0 #e3e3e6; }
     .sheetedit-table th {
-      position:sticky; top:0; z-index:2; background:#33373e; color:#aeb4bf; font-weight:600;
-      padding:3px 8px; text-align:center; user-select:none; min-width:64px;
+      position:sticky; top:0; z-index:2; background:#f1f1f4; color:#555; font-weight:600;
+      padding:3px 8px; text-align:center; user-select:none;
     }
     .sheetedit-table th.corner { left:0; z-index:3; }
-    .sheetedit-table th.rownum { position:sticky; left:0; z-index:1; top:auto; min-width:38px; text-align:right; }
+    .sheetedit-table th.rownum { position:sticky; left:0; z-index:1; top:auto; text-align:right; background:#f1f1f4; }
     .sheetedit-table input {
-      border:0; background:transparent; color:#e6e6e6; font:inherit; padding:3px 8px;
-      width:96px; box-sizing:border-box; outline:none;
+      border:0; background:transparent; color:#1a1a1a; font:inherit; padding:3px 8px;
+      width:100%; box-sizing:border-box; outline:none;
     }
     .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
-    .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px #6e7bff; background:#23262b; }
+    .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px #6e7bff; background:#eef0ff; }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:#2b2f36; border-top:1px solid #1c1f24; overflow-x:auto; }
     .sheetedit-tab {
       font:inherit; background:#3a3f47; color:#cfd3da; border:1px solid #4a4f57; border-bottom:none;
@@ -1002,7 +1157,9 @@ export function createSheetEditor(
   injectStyles();
 
   const wb = readWorkbook(bytes);
-  recalc(wb);
+  // Trust the file's cached results on open (like Excel/LibreOffice); recalc only runs
+  // after an edit. Recomputing on load would overwrite valid cached values whose inputs
+  // are blank in this session (e.g. a DATEDIF age before a birthdate is entered).
 
   const wrap = document.createElement("div");
   wrap.className = "sheetedit-wrap";
@@ -1047,6 +1204,25 @@ export function createSheetEditor(
 
     const table = document.createElement("table");
     table.className = "sheetedit-table";
+
+    // Column widths (table-layout is fixed, so these are authoritative). The table is
+    // sized to the sum so columns keep their width and the grid scrolls horizontally,
+    // rather than the table shrinking to the viewport and squashing every column.
+    const colgroup = document.createElement("colgroup");
+    const rnCol = document.createElement("col");
+    rnCol.style.width = "44px";
+    colgroup.appendChild(rnCol);
+    let totalW = 44;
+    for (let c = 1; c <= cols; c++) {
+      const w = sheet.colWidths?.get(c) ?? 96;
+      const col = document.createElement("col");
+      col.style.width = `${w}px`;
+      colgroup.appendChild(col);
+      totalW += w;
+    }
+    table.appendChild(colgroup);
+    table.style.width = `${totalW}px`;
+
     const head = document.createElement("tr");
     const corner = document.createElement("th");
     corner.className = "corner";
@@ -1058,6 +1234,15 @@ export function createSheetEditor(
     }
     table.appendChild(head);
 
+    // Merged ranges: the top-left cell spans; covered cells are not rendered.
+    const covered = new Set<string>();
+    const spanAt = new Map<string, { rs: number; cs: number }>();
+    for (const m of sheet.merges ?? []) {
+      spanAt.set(key(m.r1, m.c1), { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 });
+      for (let r = m.r1; r <= m.r2; r++)
+        for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) covered.add(key(r, c));
+    }
+
     for (let r = 1; r <= rows; r++) {
       const tr = document.createElement("tr");
       const rn = document.createElement("th");
@@ -1065,13 +1250,38 @@ export function createSheetEditor(
       rn.textContent = String(r);
       tr.appendChild(rn);
       for (let c = 1; c <= cols; c++) {
+        if (covered.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
         const td = document.createElement("td");
+        const sp = spanAt.get(key(r, c));
+        if (sp) {
+          if (sp.rs > 1) td.rowSpan = sp.rs;
+          if (sp.cs > 1) td.colSpan = sp.cs;
+        }
         const cell = getCell(sheet, r, c);
         if (cell?.kind === "n") td.classList.add("num");
         const input = document.createElement("input");
         input.type = "text";
         input.value = cellDisplay(cell);
         input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
+        // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
+        const cs = cell?.cellStyle;
+        if (cs) {
+          if (cs.bg) td.style.background = cs.bg;
+          if (cs.borders) {
+            // Override the default gridline box-shadow: keep light right/bottom unless the
+            // file specifies a border there, and add the file's top/left where present.
+            const bd = cs.borders;
+            const g = "#e3e3e6";
+            const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
+            if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
+            if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
+            td.style.boxShadow = sh.join(", ");
+          }
+          if (cs.bold) input.style.fontWeight = "700";
+          if (cs.italic) input.style.fontStyle = "italic";
+          if (cs.color) input.style.color = cs.color;
+          if (cs.align) input.style.textAlign = cs.align;
+        }
         const ki = key(r, c);
         input.addEventListener("focus", () => {
           const live = getCell(sheet, r, c);

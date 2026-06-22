@@ -248,3 +248,75 @@ describe("ods", () => {
     expect(s2.cells.get("1:3")?.formula).toBe("A1*3");
   });
 });
+
+// ---------------------------------------------------------------------------
+// xlsx style resolution (display)
+// ---------------------------------------------------------------------------
+
+const STYLES = `<?xml version="1.0"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <fonts count="2">
+  <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
+  <font><b/><color rgb="FFFF0000"/></font>
+ </fonts>
+ <fills count="3">
+  <fill><patternFill patternType="none"/></fill>
+  <fill><patternFill patternType="gray125"/></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill>
+ </fills>
+ <borders count="2">
+  <border><left/><right/><top/><bottom/></border>
+  <border><left style="thin"><color rgb="FF000000"/></left><right/><top/><bottom style="thin"><color rgb="FF000000"/></bottom></border>
+ </borders>
+ <cellXfs count="3">
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  <xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyFont="1" applyFill="1"><alignment horizontal="center"/></xf>
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/>
+ </cellXfs>
+</styleSheet>`;
+
+const VSTYLE_SHEET = `<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <cols><col min="2" max="2" width="20" customWidth="1"/></cols>
+ <sheetData>
+  <row r="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="2"><v>5</v></c></row>
+ </sheetData>
+</worksheet>`;
+
+function makeVisualXlsx(): Uint8Array {
+  return zipSync({
+    "xl/workbook.xml": strToU8(
+      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    ),
+    "xl/_rels/workbook.xml.rels": strToU8(
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    ),
+    "xl/worksheets/sheet1.xml": strToU8(VSTYLE_SHEET),
+    "xl/sharedStrings.xml": strToU8(
+      `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Title</t></si></sst>`,
+    ),
+    "xl/styles.xml": strToU8(STYLES),
+  });
+}
+
+describe("xlsx cell styles", () => {
+  it("resolves font, fill, alignment and column width", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    const a1 = sheet.cells.get("1:1")!.cellStyle!;
+    expect(a1.bold).toBe(true);
+    expect(a1.color).toBe("#ff0000");
+    expect(a1.bg).toBe("#ffff00");
+    expect(a1.align).toBe("center");
+    // Column B has width 20 (chars) -> ~145px.
+    expect(sheet.colWidths?.get(2)).toBe(145);
+  });
+
+  it("resolves borders per side", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const b1 = wb.sheets[0]!.cells.get("1:2")!.cellStyle!;
+    expect(b1.borders?.left).toBe("#000000");
+    expect(b1.borders?.bottom).toBe("#000000");
+    expect(b1.borders?.top).toBeUndefined();
+  });
+});
