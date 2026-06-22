@@ -82,6 +82,18 @@ export interface Workbook {
   files: Record<string, Uint8Array>;
   contentDoc?: Document; // ods
   contentPath?: string; // ods
+  stylesDoc?: Document; // xlsx xl/styles.xml, kept for style writes
+  stylesDirty?: boolean; // xlsx styles.xml changed and must be re-serialized
+}
+
+/** A style change to apply to a cell (only the set fields change). */
+export interface StyleChange {
+  bold?: boolean;
+  italic?: boolean;
+  color?: string; // CSS "#rrggbb" text colour
+  bg?: string; // CSS "#rrggbb" fill colour
+  align?: "left" | "center" | "right";
+  border?: boolean; // all-sides box border on/off
 }
 
 const key = (row: number, col: number): string => `${row}:${col}`;
@@ -275,12 +287,11 @@ function resolveColor(el: Element | undefined, theme: string[]): string | undefi
   return undefined;
 }
 
-function readXlsxStyles(file: Uint8Array | undefined, theme: string[]): XlsxStyles {
+function readXlsxStyles(doc: Document | undefined, theme: string[]): XlsxStyles {
   const customFmt = new Map<number, string>();
   const xfNumFmtIds: number[] = [];
   const xfStyles: (CellStyle | undefined)[] = [];
-  if (!file) return { customFmt, xfNumFmtIds, xfStyles };
-  const doc = parseXml(file);
+  if (!doc) return { customFmt, xfNumFmtIds, xfStyles };
   for (const nf of Array.from(doc.getElementsByTagName("numFmt"))) {
     const id = Number(nf.getAttribute("numFmtId"));
     const code = nf.getAttribute("formatCode");
@@ -360,7 +371,8 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
   const theme = readTheme(files["xl/theme/theme1.xml"]);
-  const styles = readXlsxStyles(files["xl/styles.xml"], theme);
+  wb.stylesDoc = files["xl/styles.xml"] ? parseXml(files["xl/styles.xml"]) : undefined;
+  const styles = readXlsxStyles(wb.stylesDoc, theme);
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
@@ -590,6 +602,131 @@ function writeXlsxCell(sheet: Sheet, cell: Cell): void {
   }
 }
 
+const xmlOf = (el: Element): string => new XMLSerializer().serializeToString(el);
+
+// Find a matching child in a style pool (deduped by serialized form) or append it;
+// returns its index and keeps the pool's count attribute in sync.
+function poolIndex(parent: Element, candidate: Element): number {
+  const want = xmlOf(candidate);
+  const kids = Array.from(parent.children);
+  for (let i = 0; i < kids.length; i++) if (xmlOf(kids[i]!) === want) return i;
+  parent.appendChild(candidate);
+  parent.setAttribute("count", String(parent.children.length));
+  return parent.children.length - 1;
+}
+
+const argbOf = (css: string): string => "FF" + css.replace("#", "").toUpperCase();
+
+/**
+ * Apply a style change to a cell, managing the xlsx style pools: derive a new font /
+ * fill / border from the cell's current format plus the change, find-or-create each in
+ * styles.xml, find-or-create the combined <xf>, and point the cell at it.
+ */
+export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change: StyleChange): void {
+  const doc = wb.stylesDoc;
+  if (!doc) return;
+  const ns = doc.documentElement.namespaceURI || SS_MAIN;
+  const ce = (name: string) => doc.createElementNS(ns, name);
+  const root = doc.documentElement;
+  const pool = (name: string): Element => firstByLocal(root, name) ?? (root.appendChild(ce(name)) as Element);
+  const fontsEl = pool("fonts");
+  const fillsEl = pool("fills");
+  const bordersEl = pool("borders");
+  const cellXfsEl = pool("cellXfs");
+
+  const curXf = cellXfsEl.children[cell.style ? Number(cell.style) : 0];
+  const numFmtId = curXf?.getAttribute("numFmtId") || "0";
+  const curFontId = Number(curXf?.getAttribute("fontId") || "0");
+  const curFillId = Number(curXf?.getAttribute("fillId") || "0");
+  const curBorderId = Number(curXf?.getAttribute("borderId") || "0");
+
+  const cur = cell.cellStyle ?? {};
+  const bold = change.bold ?? cur.bold;
+  const italic = change.italic ?? cur.italic;
+  const color = change.color ?? cur.color;
+  const bg = change.bg ?? cur.bg;
+  const align = change.align ?? cur.align;
+  const border = change.border ?? !!cur.borders;
+
+  // Font: clone the current one and toggle bold/italic/colour.
+  const baseFont = fontsEl.children[curFontId];
+  const font = baseFont ? (baseFont.cloneNode(true) as Element) : ce("font");
+  const flag = (tag: string, on: boolean | undefined) => {
+    const ex = firstByLocal(font, tag);
+    if (on && !ex) font.appendChild(ce(tag));
+    else if (!on && ex) font.removeChild(ex);
+  };
+  flag("b", bold);
+  flag("i", italic);
+  if (color) {
+    const col = firstByLocal(font, "color") ?? (font.appendChild(ce("color")) as Element);
+    col.removeAttribute("theme");
+    col.removeAttribute("tint");
+    col.setAttribute("rgb", argbOf(color));
+  }
+  const fontId = poolIndex(fontsEl, font);
+
+  // Fill (solid) when set; else keep the current fill.
+  let fillId = curFillId;
+  if (bg) {
+    const fill = ce("fill");
+    const pat = ce("patternFill");
+    pat.setAttribute("patternType", "solid");
+    const fg = ce("fgColor");
+    fg.setAttribute("rgb", argbOf(bg));
+    pat.appendChild(fg);
+    fill.appendChild(pat);
+    fillId = poolIndex(fillsEl, fill);
+  }
+
+  // Border: a full box (or cleared) only when the change touches borders.
+  let borderId = curBorderId;
+  if (change.border !== undefined) {
+    const bd = ce("border");
+    for (const side of ["left", "right", "top", "bottom"]) {
+      const s = ce(side);
+      if (border) {
+        s.setAttribute("style", "thin");
+        const cc = ce("color");
+        cc.setAttribute("rgb", "FF000000");
+        s.appendChild(cc);
+      }
+      bd.appendChild(s);
+    }
+    borderId = poolIndex(bordersEl, bd);
+  }
+
+  const xf = ce("xf");
+  xf.setAttribute("numFmtId", numFmtId);
+  xf.setAttribute("fontId", String(fontId));
+  xf.setAttribute("fillId", String(fillId));
+  xf.setAttribute("borderId", String(borderId));
+  xf.setAttribute("xfId", "0");
+  xf.setAttribute("applyFont", "1");
+  if (bg) xf.setAttribute("applyFill", "1");
+  if (borderId) xf.setAttribute("applyBorder", "1");
+  if (align) {
+    xf.setAttribute("applyAlignment", "1");
+    const a = ce("alignment");
+    a.setAttribute("horizontal", align);
+    xf.appendChild(a);
+  }
+  const sIdx = poolIndex(cellXfsEl, xf);
+
+  cell.style = String(sIdx);
+  ensureXlsxCellEl(sheet, cell).setAttribute("s", String(sIdx));
+  cell.cellStyle = {
+    bold,
+    italic,
+    color,
+    bg,
+    align,
+    borders: border ? { top: "#000", right: "#000", bottom: "#000", left: "#000" } : undefined,
+  };
+  cell.edited = true;
+  wb.stylesDirty = true;
+}
+
 function writeXlsx(wb: Workbook): void {
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
@@ -602,6 +739,7 @@ function writeXlsx(wb: Workbook): void {
     }
     if (touched && sheet.path) wb.files[sheet.path] = serializeXml(sheet.doc);
   }
+  if (wb.stylesDirty && wb.stylesDoc) wb.files["xl/styles.xml"] = serializeXml(wb.stylesDoc);
 }
 
 // ---------------------------------------------------------------------------
@@ -1105,8 +1243,10 @@ export interface SheetEditor {
 
 const ROWS_MIN = 24;
 const COLS_MIN = 12;
-const ROWS_CAP = 400;
-const COLS_CAP = 60;
+const ROWS_CAP = 5000;
+const COLS_CAP = 256;
+const ROW_CHUNK = 20; // rows added per "+ Row" click
+const COL_CHUNK = 6; // columns added per "+ Col" click
 const STYLE_ID = "sheetedit-style";
 
 function injectStyles(): void {
@@ -1115,6 +1255,19 @@ function injectStyles(): void {
   s.id = STYLE_ID;
   s.textContent = `
     .sheetedit-wrap { display:flex; flex-direction:column; height:100%; background:#1f2227; color:#e6e6e6; font:13px system-ui, sans-serif; }
+    .sheetedit-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:5px; padding:5px 8px; background:#2b2f36; border-bottom:1px solid #1c1f24; }
+    .sheetedit-btn {
+      font:inherit; font-size:13px; background:#3a3f47; color:#e6e6e6; border:1px solid #4a4f57;
+      border-radius:6px; padding:4px 9px; cursor:pointer; min-width:32px; line-height:1.1;
+    }
+    .sheetedit-btn:hover { background:#454b54; }
+    .sheetedit-btn:focus-visible { outline:2px solid #6e7bff; outline-offset:1px; }
+    .sheetedit-tb-sep { width:1px; align-self:stretch; background:#4a4f57; margin:1px 3px; }
+    .sheetedit-color { width:30px; height:28px; padding:0; border:1px solid #4a4f57; border-radius:6px; background:#3a3f47; cursor:pointer; }
+    .sheetedit-btn svg { display:block; width:16px; height:16px; }
+    .sheetedit-table th.colhead, .sheetedit-table th.rownum, .sheetedit-table th.corner { cursor:pointer; }
+    .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:#e3e3e8; }
+    .sheetedit-table td.sheetedit-sel input { background:rgba(110,123,255,0.18); }
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
@@ -1163,17 +1316,132 @@ export function createSheetEditor(
 
   const wrap = document.createElement("div");
   wrap.className = "sheetedit-wrap";
+  const toolbar = document.createElement("div");
+  toolbar.className = "sheetedit-toolbar";
   const gridScroll = document.createElement("div");
   gridScroll.className = "sheetedit-grid";
   const tabs = document.createElement("div");
   tabs.className = "sheetedit-tabs";
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Sheets");
-  wrap.append(gridScroll, tabs);
+  wrap.append(toolbar, gridScroll, tabs);
   container.appendChild(wrap);
 
   let active = 0;
   let inputs = new Map<string, HTMLInputElement>();
+  let tds = new Map<string, HTMLElement>();
+  // Extra rows/columns the user added beyond the sheet's used extent (per active sheet).
+  let extraRows = 0;
+  let extraCols = 0;
+  // Selection rectangle (1-based, inclusive) and the anchor for shift-extend.
+  let sel: { r1: number; c1: number; r2: number; c2: number } | null = null;
+  let anchor: { r: number; c: number } | null = null;
+
+  const paintSel = () => {
+    for (const td of tds.values()) td.classList.remove("sheetedit-sel");
+    if (!sel) return;
+    for (let r = sel.r1; r <= sel.r2; r++)
+      for (let c = sel.c1; c <= sel.c2; c++) tds.get(key(r, c))?.classList.add("sheetedit-sel");
+  };
+  const setSel = (r1: number, c1: number, r2: number, c2: number) => {
+    sel = { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) };
+    paintSel();
+  };
+  const selectCell = (r: number, c: number, extend: boolean) => {
+    if (extend && anchor) setSel(anchor.r, anchor.c, r, c);
+    else {
+      anchor = { r, c };
+      setSel(r, c, r, c);
+    }
+  };
+
+  const tbBtn = (label: string, title: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sheetedit-btn";
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  const tbIcon = (svg: string, title: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sheetedit-btn";
+    b.innerHTML = svg;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", onClick);
+    return b;
+  };
+
+  // Style of the selection's top-left cell (used to toggle bold/italic/borders).
+  const curStyle = () => (sel ? getCell(wb.sheets[active]!, sel.r1, sel.c1)?.cellStyle : undefined);
+  // Apply a style change to every cell in the selection (xlsx only), then re-render.
+  const applyStyle = (change: StyleChange) => {
+    if (wb.kind !== "xlsx" || !sel) return;
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    let n = 0;
+    for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
+      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) setXlsxCellStyle(wb, sheet, ensureCell(sheet, r, c), change);
+    mark();
+    renderGrid();
+  };
+
+  const ICON = {
+    left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h10"/></svg>`,
+    center: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M3 12h10"/></svg>`,
+    right: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M7 8h7M4 12h10"/></svg>`,
+    borders: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="12" height="12"/><path d="M8 2v12M2 8h12"/></svg>`,
+  };
+  const buildToolbar = () => {
+    toolbar.innerHTML = "";
+    const sep = () => {
+      const d = document.createElement("div");
+      d.className = "sheetedit-tb-sep";
+      return d;
+    };
+    const colorInput = (title: string, def: string, apply: (v: string) => void) => {
+      const i = document.createElement("input");
+      i.type = "color";
+      i.title = title;
+      i.setAttribute("aria-label", title);
+      i.className = "sheetedit-color";
+      i.value = def;
+      i.addEventListener("change", () => apply(i.value));
+      return i;
+    };
+    toolbar.append(
+      tbBtn("+ Row", "Add rows", () => {
+        extraRows += ROW_CHUNK;
+        renderGrid();
+      }),
+      tbBtn("+ Col", "Add columns", () => {
+        extraCols += COL_CHUNK;
+        renderGrid();
+      }),
+    );
+    if (wb.kind !== "xlsx") return; // setting styles is xlsx-only for now
+    const bold = tbBtn("B", "Bold", () => applyStyle({ bold: !curStyle()?.bold }));
+    bold.style.fontWeight = "700";
+    const italic = tbBtn("I", "Italic", () => applyStyle({ italic: !curStyle()?.italic }));
+    italic.style.fontStyle = "italic";
+    toolbar.append(
+      sep(),
+      bold,
+      italic,
+      colorInput("Text colour", "#000000", (v) => applyStyle({ color: v })),
+      colorInput("Fill colour", "#ffff00", (v) => applyStyle({ bg: v })),
+      sep(),
+      tbIcon(ICON.left, "Align left", () => applyStyle({ align: "left" })),
+      tbIcon(ICON.center, "Align centre", () => applyStyle({ align: "center" })),
+      tbIcon(ICON.right, "Align right", () => applyStyle({ align: "right" })),
+      sep(),
+      tbIcon(ICON.borders, "Toggle borders", () => applyStyle({ border: !curStyle()?.borders })),
+    );
+  };
 
   const mark = () => {
     if (!dirty) {
@@ -1198,9 +1466,10 @@ export function createSheetEditor(
     const sheet = wb.sheets[active];
     if (!sheet) return;
     inputs = new Map();
+    tds = new Map();
     gridScroll.innerHTML = "";
-    const rows = Math.min(ROWS_CAP, Math.max(ROWS_MIN, sheet.maxRow + 6));
-    const cols = Math.min(COLS_CAP, Math.max(COLS_MIN, sheet.maxCol + 2));
+    const rows = Math.min(ROWS_CAP, Math.max(ROWS_MIN, sheet.maxRow + 6) + extraRows);
+    const cols = Math.min(COLS_CAP, Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols);
 
     const table = document.createElement("table");
     table.className = "sheetedit-table";
@@ -1226,10 +1495,18 @@ export function createSheetEditor(
     const head = document.createElement("tr");
     const corner = document.createElement("th");
     corner.className = "corner";
+    corner.title = "Select all";
+    corner.addEventListener("click", () => setSel(1, 1, rows, cols));
     head.appendChild(corner);
     for (let c = 1; c <= cols; c++) {
       const th = document.createElement("th");
+      th.className = "colhead";
       th.textContent = colToLetters(c);
+      th.title = `Select column ${colToLetters(c)}`;
+      th.addEventListener("click", () => {
+        anchor = { r: 1, c };
+        setSel(1, c, rows, c);
+      });
       head.appendChild(th);
     }
     table.appendChild(head);
@@ -1248,10 +1525,16 @@ export function createSheetEditor(
       const rn = document.createElement("th");
       rn.className = "rownum";
       rn.textContent = String(r);
+      rn.title = `Select row ${r}`;
+      rn.addEventListener("click", () => {
+        anchor = { r, c: 1 };
+        setSel(r, 1, r, cols);
+      });
       tr.appendChild(rn);
       for (let c = 1; c <= cols; c++) {
         if (covered.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
         const td = document.createElement("td");
+        tds.set(key(r, c), td);
         const sp = spanAt.get(key(r, c));
         if (sp) {
           if (sp.rs > 1) td.rowSpan = sp.rs;
@@ -1283,7 +1566,15 @@ export function createSheetEditor(
           if (cs.align) input.style.textAlign = cs.align;
         }
         const ki = key(r, c);
+        // Shift-click extends the selection from the anchor (no caret/edit).
+        input.addEventListener("mousedown", (e) => {
+          if (e.shiftKey) {
+            e.preventDefault();
+            selectCell(r, c, true);
+          }
+        });
         input.addEventListener("focus", () => {
+          selectCell(r, c, false); // tapping a cell selects it; toolbar styles target the selection
           const live = getCell(sheet, r, c);
           if (!live) return;
           // Show the editable underlying value (formula or raw), not the formatted display.
@@ -1323,6 +1614,7 @@ export function createSheetEditor(
       table.appendChild(tr);
     }
     gridScroll.appendChild(table);
+    paintSel(); // restore the selection highlight after a re-render
   };
 
   const renderTabs = () => {
@@ -1337,6 +1629,10 @@ export function createSheetEditor(
       b.addEventListener("click", () => {
         if (i === active) return;
         active = i;
+        extraRows = 0; // each sheet starts at its own extent
+        extraCols = 0;
+        sel = null;
+        anchor = null;
         renderTabs();
         renderGrid();
       });
@@ -1344,6 +1640,7 @@ export function createSheetEditor(
     });
   };
 
+  buildToolbar();
   renderTabs();
   renderGrid();
 

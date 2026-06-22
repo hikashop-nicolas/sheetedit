@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { a1ToOdf, odfToA1, readWorkbook, recalc, setCellInput, writeWorkbook } from "./index";
+import { a1ToOdf, odfToA1, readWorkbook, recalc, setCellInput, setXlsxCellStyle, writeWorkbook } from "./index";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -318,5 +318,27 @@ describe("xlsx cell styles", () => {
     expect(b1.borders?.left).toBe("#000000");
     expect(b1.borders?.bottom).toBe("#000000");
     expect(b1.borders?.top).toBeUndefined();
+  });
+
+  it("writes a style change into the pools and round-trips", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    // A1 starts bold/red/yellow/centre; turn bold off and change the fill.
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:1")!, { bold: false, bg: "#00ff00" });
+    const wb2 = readWorkbook(writeWorkbook(wb));
+    const a1 = wb2.sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.bold).toBeFalsy();
+    expect(a1.bg).toBe("#00ff00");
+    expect(a1.color).toBe("#ff0000"); // unchanged attributes are preserved
+    expect(a1.align).toBe("center");
+  });
+
+  it("adds an all-sides border via a style change", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:1")!, { border: true });
+    const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.borders?.top).toBe("#000000");
+    expect(a1.borders?.right).toBe("#000000");
   });
 });

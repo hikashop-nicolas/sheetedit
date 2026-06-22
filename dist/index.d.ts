@@ -65,8 +65,25 @@ export interface Workbook {
     files: Record<string, Uint8Array>;
     contentDoc?: Document;
     contentPath?: string;
+    stylesDoc?: Document;
+    stylesDirty?: boolean;
+}
+/** A style change to apply to a cell (only the set fields change). */
+export interface StyleChange {
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    bg?: string;
+    align?: "left" | "center" | "right";
+    border?: boolean;
 }
 export declare function colToLetters(col: number): string;
+/**
+ * Apply a style change to a cell, managing the xlsx style pools: derive a new font /
+ * fill / border from the cell's current format plus the change, find-or-create each in
+ * styles.xml, find-or-create the combined <xf>, and point the cell at it.
+ */
+export declare function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change: StyleChange): void;
 /** ODF formula (`of:=[.A1]+[.B1]`) -> A1 (`A1+B1`). */
 export declare function odfToA1(odf: string): string;
 /** A1 (`A1+B1`) -> ODF formula (`of:=[.A1]+[.B1]`). Used only for user-typed formulas. */
