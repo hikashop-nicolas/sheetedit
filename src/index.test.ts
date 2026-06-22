@@ -6,6 +6,10 @@ import {
   readWorkbook,
   recalc,
   setCellInput,
+  setOdsCellStyle,
+  setOdsColWidth,
+  setOdsMerge,
+  setOdsRowHeight,
   setXlsxCellStyle,
   setXlsxColWidth,
   setXlsxMerge,
@@ -391,5 +395,97 @@ describe("xlsx cell styles", () => {
     setXlsxMerge(sheet, 2, 1, 2, 3, false);
     const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
     expect((back.merges ?? []).some((m) => m.r1 === 2 && m.c1 === 1 && m.r2 === 2 && m.c2 === 3)).toBe(false);
+  });
+});
+
+const ODS_STYLED = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">
+ <office:automatic-styles>
+  <style:style style:name="co1" style:family="table-column"><style:table-column-properties style:column-width="3cm"/></style:style>
+  <style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="1cm"/></style:style>
+  <style:style style:name="ce1" style:family="table-cell">
+   <style:table-cell-properties fo:background-color="#4472c4" fo:border="0.5pt solid #000000"/>
+   <style:text-properties fo:color="#ffffff" fo:font-weight="bold"/>
+   <style:paragraph-properties fo:text-align="center"/>
+  </style:style>
+ </office:automatic-styles>
+ <office:body><office:spreadsheet>
+  <table:table table:name="Sheet1">
+   <table:table-column table:style-name="co1"/>
+   <table:table-column table:number-columns-repeated="2"/>
+   <table:table-row table:style-name="ro1">
+    <table:table-cell table:style-name="ce1" table:number-columns-spanned="2" office:value-type="string" office:string-value="Title"><text:p>Title</text:p></table:table-cell>
+    <table:covered-table-cell/>
+    <table:table-cell office:value-type="float" office:value="9"><text:p>9</text:p></table:table-cell>
+   </table:table-row>
+  </table:table>
+ </office:spreadsheet></office:body>
+</office:document-content>`;
+
+function makeStyledOds(): Uint8Array {
+  const repacked: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {
+    mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+    "content.xml": strToU8(ODS_STYLED),
+  };
+  return zipSync(repacked as Record<string, Uint8Array>);
+}
+
+describe("ods cell styles", () => {
+  it("resolves cell style, column width, row height and merges", () => {
+    const sheet = readWorkbook(makeStyledOds()).sheets[0]!;
+    const a1 = sheet.cells.get("1:1")!.cellStyle!;
+    expect(a1.bold).toBe(true);
+    expect(a1.color).toBe("#ffffff");
+    expect(a1.bg).toBe("#4472c4");
+    expect(a1.align).toBe("center");
+    expect(a1.borders?.top).toBe("#000000");
+    // 3cm ~ 113px.
+    expect(sheet.colWidths?.get(1)).toBe(113);
+    // 1cm ~ 38px.
+    expect(sheet.rowHeights?.get(1)).toBe(38);
+    expect(sheet.merges).toContainEqual({ r1: 1, c1: 1, r2: 1, c2: 2 });
+  });
+
+  it("writes a cell style and round-trips", () => {
+    const wb = readWorkbook(makeStyledOds());
+    const sheet = wb.sheets[0]!;
+    setOdsCellStyle(wb, sheet, sheet.cells.get("1:3")!, { bold: true, bg: "#ff0000", align: "right" });
+    const c1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:3")!.cellStyle!;
+    expect(c1.bold).toBe(true);
+    expect(c1.bg).toBe("#ff0000");
+    expect(c1.align).toBe("right");
+  });
+
+  it("writes a per-side border and round-trips", () => {
+    const wb = readWorkbook(makeStyledOds());
+    const sheet = wb.sheets[0]!;
+    setOdsCellStyle(wb, sheet, sheet.cells.get("1:3")!, { borderSides: { bottom: true } });
+    const c1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:3")!.cellStyle!;
+    expect(c1.borders?.bottom).toBe("#000000");
+    expect(c1.borders?.top).toBeUndefined();
+  });
+
+  it("writes a column width and a row height, round-tripping", () => {
+    const wb = readWorkbook(makeStyledOds());
+    const sheet = wb.sheets[0]!;
+    setOdsColWidth(wb, sheet, 3, 200);
+    setOdsRowHeight(wb, sheet, 1, 50);
+    const out = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(out.colWidths?.get(3)).toBe(200);
+    expect(out.rowHeights?.get(1)).toBe(50);
+    // Column 1's original 3cm width is preserved.
+    expect(out.colWidths?.get(1)).toBe(113);
+  });
+
+  it("adds and removes a merge, round-tripping", () => {
+    const wb = readWorkbook(makeOds());
+    const sheet = wb.sheets[0]!;
+    setOdsMerge(sheet, 1, 1, 1, 3, true);
+    const merged = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(merged.merges).toContainEqual({ r1: 1, c1: 1, r2: 1, c2: 3 });
+    expect(merged.cells.get("1:1")!.value).toBe("2"); // top-left value kept
+    setOdsMerge(sheet, 1, 1, 1, 3, false);
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect((back.merges ?? []).length).toBe(0);
   });
 });

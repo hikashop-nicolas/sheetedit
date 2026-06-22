@@ -62,6 +62,8 @@ export interface Sheet {
     /** Column widths or row heights changed and the sheet XML must be re-serialized. */
     layoutDirty?: boolean;
     tableEl?: Element;
+    /** ods: 1-based row -> its table:style-name, preserved/updated so writeOds can re-emit it. */
+    odsRowStyles?: Map<number, string>;
 }
 export interface Workbook {
     kind: "xlsx" | "ods";
@@ -102,6 +104,10 @@ export declare function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell,
 export declare function odfToA1(odf: string): string;
 /** A1 (`A1+B1`) -> ODF formula (`of:=[.A1]+[.B1]`). Used only for user-typed formulas. */
 export declare function a1ToOdf(a1: string): string;
+export declare function setOdsCellStyle(wb: Workbook, _sheet: Sheet, cell: Cell, change: StyleChange): void;
+export declare function setOdsColWidth(wb: Workbook, sheet: Sheet, col: number, px: number): void;
+export declare function setOdsRowHeight(wb: Workbook, sheet: Sheet, row: number, px: number): void;
+export declare function setOdsMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2: number, merge: boolean): void;
 /** Recompute every formula cell's cached value, in dependency order. */
 export declare function recalc(wb: Workbook): void;
 export declare function readWorkbook(bytes: Uint8Array): Workbook;

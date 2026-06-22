@@ -78,6 +78,8 @@ export interface Sheet {
   layoutDirty?: boolean;
   // ods
   tableEl?: Element;
+  /** ods: 1-based row -> its table:style-name, preserved/updated so writeOds can re-emit it. */
+  odsRowStyles?: Map<number, string>;
 }
 
 export interface Workbook {
@@ -775,6 +777,35 @@ function poolIndex(parent: Element, candidate: Element): number {
 
 const argbOf = (css: string): string => "FF" + css.replace("#", "").toUpperCase();
 
+// Compute the resulting CellStyle from the current one plus a change. Shared by the
+// xlsx and ods style writers so both stay consistent; affected borders become black.
+function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
+  const sides = {
+    top: !!cur.borders?.top,
+    right: !!cur.borders?.right,
+    bottom: !!cur.borders?.bottom,
+    left: !!cur.borders?.left,
+  };
+  if (change.border !== undefined) sides.top = sides.right = sides.bottom = sides.left = change.border;
+  if (change.borderSides) Object.assign(sides, change.borderSides);
+  const any = sides.top || sides.right || sides.bottom || sides.left;
+  return {
+    bold: change.bold ?? cur.bold,
+    italic: change.italic ?? cur.italic,
+    color: change.color ?? cur.color,
+    bg: change.bg ?? cur.bg,
+    align: change.align ?? cur.align,
+    borders: any
+      ? {
+          top: sides.top ? "#000000" : undefined,
+          right: sides.right ? "#000000" : undefined,
+          bottom: sides.bottom ? "#000000" : undefined,
+          left: sides.left ? "#000000" : undefined,
+        }
+      : undefined,
+  };
+}
+
 /**
  * Apply a style change to a cell, managing the xlsx style pools: derive a new font /
  * fill / border from the cell's current format plus the change, find-or-create each in
@@ -889,22 +920,7 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
 
   cell.style = String(sIdx);
   ensureXlsxCellEl(sheet, cell).setAttribute("s", String(sIdx));
-  const anySide = sides.top || sides.right || sides.bottom || sides.left;
-  cell.cellStyle = {
-    bold,
-    italic,
-    color,
-    bg,
-    align,
-    borders: anySide
-      ? {
-          top: sides.top ? "#000" : undefined,
-          right: sides.right ? "#000" : undefined,
-          bottom: sides.bottom ? "#000" : undefined,
-          left: sides.left ? "#000" : undefined,
-        }
-      : undefined,
-  };
+  cell.cellStyle = mergeCellStyle(cur, change);
   cell.edited = true;
   wb.stylesDirty = true;
 }
@@ -932,6 +948,8 @@ const ODS = {
   office: "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
   table: "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
   text: "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+  style: "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
+  fo: "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
 };
 const REPEAT_CAP = 1024;
 
@@ -1014,21 +1032,153 @@ function odsCellText(cell: Element): string {
     .join("\n");
 }
 
+// Convert an ODF length ("2.5cm", "96pt", "1in", "0.45mm", "12px") to CSS px.
+function odsLenToPx(len: string | null | undefined): number | undefined {
+  if (!len) return undefined;
+  const m = /^([\d.]+)\s*(cm|mm|in|pt|pc|px)?$/.exec(len.trim());
+  if (!m) return undefined;
+  const v = parseFloat(m[1]!);
+  switch (m[2]) {
+    case "cm":
+      return Math.round((v * 96) / 2.54);
+    case "mm":
+      return Math.round((v * 96) / 25.4);
+    case "in":
+      return Math.round(v * 96);
+    case "pt":
+      return Math.round((v * 96) / 72);
+    case "pc":
+      return Math.round(v * 16);
+    default:
+      return Math.round(v); // px or unitless
+  }
+}
+
+const odsColorOf = (v: string | null): string | undefined =>
+  v && v !== "transparent" && v !== "none" ? (/^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : v) : undefined;
+
+// A border value is like "0.5pt solid #000000" or "none"; keep the colour if it draws.
+function odsBorderColor(v: string | null): string | undefined {
+  if (!v || v === "none" || /(^|\s)0(\.0+)?(pt|cm|mm|in|px)?\s/.test(" " + v + " ")) return undefined;
+  const m = /#[0-9a-fA-F]{6}/.exec(v);
+  return m ? m[0].toLowerCase() : "#000000";
+}
+
+interface OdsStyles {
+  cell: Map<string, CellStyle>; // family table-cell -> resolved style
+  colW: Map<string, number>; // family table-column -> width px
+  rowH: Map<string, number>; // family table-row -> height px
+}
+
+// Parse <style:style> from the given docs (content.xml automatic styles + styles.xml),
+// resolving table-cell parent chains, and the column/row dimension styles.
+function parseOdsStyles(docs: Document[]): OdsStyles {
+  const raw = new Map<string, { el: Element; parent?: string }>();
+  const colW = new Map<string, number>();
+  const rowH = new Map<string, number>();
+  for (const doc of docs) {
+    for (const st of Array.from(doc.getElementsByTagName("style:style"))) {
+      const name = st.getAttribute("style:name");
+      if (!name) continue;
+      const family = st.getAttribute("style:family");
+      if (family === "table-cell") {
+        raw.set(name, { el: st, parent: st.getAttribute("style:parent-style-name") || undefined });
+      } else if (family === "table-column") {
+        const p = st.getElementsByTagName("style:table-column-properties")[0];
+        const w = odsLenToPx(p?.getAttribute("style:column-width"));
+        if (w) colW.set(name, w);
+      } else if (family === "table-row") {
+        const p = st.getElementsByTagName("style:table-row-properties")[0];
+        const h = odsLenToPx(p?.getAttribute("style:row-height"));
+        if (h) rowH.set(name, h);
+      }
+    }
+  }
+  const ownStyle = (el: Element): CellStyle => {
+    const s: CellStyle = {};
+    const cp = el.getElementsByTagName("style:table-cell-properties")[0];
+    if (cp) {
+      const bg = odsColorOf(cp.getAttribute("fo:background-color"));
+      if (bg) s.bg = bg;
+      const all = cp.getAttribute("fo:border");
+      const sides: CellStyle["borders"] = {};
+      const top = odsBorderColor(cp.getAttribute("fo:border-top") ?? all);
+      const right = odsBorderColor(cp.getAttribute("fo:border-right") ?? all);
+      const bottom = odsBorderColor(cp.getAttribute("fo:border-bottom") ?? all);
+      const left = odsBorderColor(cp.getAttribute("fo:border-left") ?? all);
+      if (top) sides.top = top;
+      if (right) sides.right = right;
+      if (bottom) sides.bottom = bottom;
+      if (left) sides.left = left;
+      if (top || right || bottom || left) s.borders = sides;
+    }
+    const tp = el.getElementsByTagName("style:text-properties")[0];
+    if (tp) {
+      if (tp.getAttribute("fo:font-weight") === "bold") s.bold = true;
+      if (tp.getAttribute("fo:font-style") === "italic") s.italic = true;
+      const col = odsColorOf(tp.getAttribute("fo:color"));
+      if (col) s.color = col;
+    }
+    const pp = el.getElementsByTagName("style:paragraph-properties")[0];
+    const ta = pp?.getAttribute("fo:text-align");
+    if (ta === "center") s.align = "center";
+    else if (ta === "end" || ta === "right") s.align = "right";
+    else if (ta === "start" || ta === "left") s.align = "left";
+    return s;
+  };
+  const cell = new Map<string, CellStyle>();
+  const resolve = (name: string, depth = 0): CellStyle => {
+    const cached = cell.get(name);
+    if (cached) return cached;
+    const entry = raw.get(name);
+    if (!entry || depth > 8) return {};
+    const base = entry.parent ? resolve(entry.parent, depth + 1) : {};
+    const merged = { ...base, ...ownStyle(entry.el) };
+    cell.set(name, merged);
+    return merged;
+  };
+  for (const name of raw.keys()) resolve(name);
+  return { cell, colW, rowH };
+}
+
 function readOds(files: Record<string, Uint8Array>): Workbook {
   const contentFile = files["content.xml"];
   if (!contentFile) throw new Error("not an .ods: content.xml missing");
   const contentDoc = parseXml(contentFile);
+  const docs = [contentDoc];
+  if (files["styles.xml"]) docs.push(parseXml(files["styles.xml"]));
+  const styles = parseOdsStyles(docs);
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
-    readOdsTable(sheet, table);
+    readOdsTable(sheet, table, styles);
     wb.sheets.push(sheet);
   }
   return wb;
 }
 
-function readOdsTable(sheet: Sheet, table: Element): void {
+function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
+  // Column widths: walk <table:table-column> (each may repeat) and map to px.
+  const cols = new Map<number, number>();
+  let colIdx = 0;
+  const collectCols = (parent: Element) => {
+    for (const ch of Array.from(parent.children)) {
+      if (ch.localName === "table-column") {
+        const rep = Math.max(1, Number(ch.getAttribute("table:number-columns-repeated") || "1"));
+        const w = styles.colW.get(ch.getAttribute("table:style-name") ?? "");
+        for (let i = 0; i < Math.min(rep, REPEAT_CAP); i++) {
+          colIdx++;
+          if (w) cols.set(colIdx, w);
+        }
+      } else if (ch.localName === "table-header-columns" || ch.localName === "table-columns") {
+        collectCols(ch);
+      }
+    }
+  };
+  collectCols(table);
+  if (cols.size) sheet.colWidths = cols;
+
   let rowNum = 0;
   const rows: Element[] = [];
   const collect = (parent: Element) => {
@@ -1038,17 +1188,27 @@ function readOdsTable(sheet: Sheet, table: Element): void {
     }
   };
   collect(table);
+  const rowHeights = new Map<number, number>();
+  const rowStyles = new Map<number, string>();
+  const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
   for (const rowEl of rows) {
     const rrep = Math.max(1, Number(rowEl.getAttribute("table:number-rows-repeated") || "1"));
-    const parsedCells = parseOdsRow(rowEl);
+    const rowStyle = rowEl.getAttribute("table:style-name") ?? undefined;
+    const rh = styles.rowH.get(rowStyle ?? "");
+    const parsedCells = parseOdsRow(rowEl, styles);
     const rowHasContent = parsedCells.some((c) => c.has);
     const copies = rowHasContent ? Math.min(rrep, REPEAT_CAP) : 0;
     for (let k = 0; k < copies; k++) {
       const r = rowNum + 1 + k;
+      if (rh) rowHeights.set(r, rh);
+      if (rowStyle) rowStyles.set(r, rowStyle);
       for (const pc of parsedCells) {
         if (!pc.has) continue;
+        const c = pc.cell!;
+        if ((pc.colSpan ?? 1) > 1 || (pc.rowSpan ?? 1) > 1) {
+          merges.push({ r1: r, c1: c.col, r2: r + (pc.rowSpan ?? 1) - 1, c2: c.col + (pc.colSpan ?? 1) - 1 });
+        }
         for (let j = 0; j < pc.span; j++) {
-          const c = pc.cell!;
           sheet.cells.set(key(r, c.col + j), { ...c, row: r, col: c.col + j });
           noteExtent(sheet, r, c.col + j);
         }
@@ -1056,15 +1216,20 @@ function readOdsTable(sheet: Sheet, table: Element): void {
     }
     rowNum += rrep;
   }
+  if (rowHeights.size) sheet.rowHeights = rowHeights;
+  if (rowStyles.size) sheet.odsRowStyles = rowStyles;
+  if (merges.length) sheet.merges = merges;
 }
 
 interface ParsedOdsCell {
   has: boolean;
   span: number;
+  colSpan?: number;
+  rowSpan?: number;
   cell?: Cell;
 }
 
-function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
+function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
   const out: ParsedOdsCell[] = [];
   let col = 0;
   for (const cellEl of Array.from(rowEl.children)) {
@@ -1074,6 +1239,8 @@ function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
     const startCol = col + 1;
     col += crep;
     if (local === "covered-table-cell") continue; // merged-away cell
+    const colSpan = Math.max(1, Number(cellEl.getAttribute("table:number-columns-spanned") || "1"));
+    const rowSpan = Math.max(1, Number(cellEl.getAttribute("table:number-rows-spanned") || "1"));
     const valueType = cellEl.getAttribute("office:value-type");
     const formulaRaw = cellEl.getAttribute("table:formula") ?? undefined;
     const style = cellEl.getAttribute("table:style-name") ?? undefined;
@@ -1118,9 +1285,10 @@ function parseOdsRow(rowEl: Element): ParsedOdsCell[] {
       formula: formulaRaw ? odfToA1(formulaRaw) : undefined,
       odfFormula: formulaRaw,
       style,
+      cellStyle: style ? styles.cell.get(style) : undefined,
       el: cellEl,
     };
-    out.push({ has: true, span: Math.min(crep, REPEAT_CAP), cell });
+    out.push({ has: true, span: Math.min(crep, REPEAT_CAP), colSpan, rowSpan, cell });
   }
   return out;
 }
@@ -1159,6 +1327,173 @@ function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element {
   return c;
 }
 
+// --- ods style write-back -------------------------------------------------
+
+function ensureOdsAutoStyles(doc: Document): Element {
+  let el = doc.getElementsByTagName("office:automatic-styles")[0] as Element | undefined;
+  if (!el) {
+    el = doc.createElementNS(ODS.office, "office:automatic-styles");
+    const body = doc.getElementsByTagName("office:body")[0];
+    doc.documentElement.insertBefore(el, body ?? null);
+  }
+  return el;
+}
+
+function findOdsStyleByName(doc: Document, name: string): Element | undefined {
+  for (const s of Array.from(doc.getElementsByTagName("style:style")))
+    if (s.getAttribute("style:name") === name) return s;
+  return undefined;
+}
+
+// Add a built style element to <office:automatic-styles>, reusing an existing one with
+// the same family + serialized properties. Returns the (existing or new) style name.
+function internOdsStyle(doc: Document, autoStyles: Element, family: string, prefix: string, styleEl: Element): string {
+  styleEl.setAttributeNS(ODS.style, "style:family", family);
+  const sig = Array.from(styleEl.children).map(xmlOf).join("");
+  for (const ex of Array.from(autoStyles.children)) {
+    if (ex.localName !== "style" || ex.getAttribute("style:family") !== family) continue;
+    if (Array.from(ex.children).map(xmlOf).join("") === sig) return ex.getAttribute("style:name")!;
+  }
+  const used = new Set(Array.from(doc.getElementsByTagName("style:style")).map((s) => s.getAttribute("style:name")));
+  let n = 1;
+  while (used.has(prefix + n)) n++;
+  const name = prefix + n;
+  styleEl.setAttributeNS(ODS.style, "style:name", name);
+  autoStyles.appendChild(styleEl);
+  return name;
+}
+
+const odsSetOrRemove = (el: Element, qn: string, v: string | undefined) => {
+  if (v == null) el.removeAttribute(qn);
+  else el.setAttributeNS(ODS.fo, qn, v);
+};
+
+// Apply a resolved CellStyle onto an ods cell style element (cloned from the original
+// so number formats / parents survive), creating the property children as needed.
+function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): void {
+  const child = (tag: string): Element => {
+    const ex = st.getElementsByTagName(tag)[0];
+    if (ex) return ex;
+    const el = doc.createElementNS(ODS.style, tag);
+    st.appendChild(el);
+    return el;
+  };
+  const cp = child("style:table-cell-properties");
+  odsSetOrRemove(cp, "fo:background-color", cs.bg);
+  cp.removeAttribute("fo:border"); // use per-side so partial borders are exact
+  const bv = (c?: string) => (c ? `0.5pt solid ${c}` : undefined);
+  odsSetOrRemove(cp, "fo:border-top", bv(cs.borders?.top));
+  odsSetOrRemove(cp, "fo:border-right", bv(cs.borders?.right));
+  odsSetOrRemove(cp, "fo:border-bottom", bv(cs.borders?.bottom));
+  odsSetOrRemove(cp, "fo:border-left", bv(cs.borders?.left));
+  const tp = child("style:text-properties");
+  odsSetOrRemove(tp, "fo:font-weight", cs.bold ? "bold" : undefined);
+  odsSetOrRemove(tp, "fo:font-style", cs.italic ? "italic" : undefined);
+  odsSetOrRemove(tp, "fo:color", cs.color);
+  const pp = child("style:paragraph-properties");
+  odsSetOrRemove(pp, "fo:text-align", cs.align === "center" ? "center" : cs.align === "right" ? "end" : cs.align === "left" ? "start" : undefined);
+  // Drop property children that ended up empty so dedup stays tight.
+  for (const el of [cp, tp, pp]) if (el.attributes.length === 0 && el.children.length === 0) st.removeChild(el);
+}
+
+export function setOdsCellStyle(wb: Workbook, _sheet: Sheet, cell: Cell, change: StyleChange): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  const autoStyles = ensureOdsAutoStyles(doc);
+  const desired = mergeCellStyle(cell.cellStyle ?? {}, change);
+  const orig = cell.style ? findOdsStyleByName(doc, cell.style) : undefined;
+  const st = orig
+    ? (orig.cloneNode(true) as Element)
+    : doc.createElementNS(ODS.style, "style:style");
+  st.removeAttribute("style:name");
+  applyCellStyleToOds(doc, st, desired);
+  cell.style = internOdsStyle(doc, autoStyles, "table-cell", "ce", st);
+  cell.cellStyle = desired;
+  cell.edited = true;
+}
+
+// Build (or reuse) a table-column style of the given width and return its name.
+function odsColStyle(doc: Document, autoStyles: Element, px: number): string {
+  const st = doc.createElementNS(ODS.style, "style:style");
+  const p = doc.createElementNS(ODS.style, "style:table-column-properties");
+  p.setAttributeNS(ODS.fo, "fo:break-before", "auto");
+  p.setAttributeNS(ODS.style, "style:column-width", `${(px / 96) * 2.54}cm`);
+  st.appendChild(p);
+  return internOdsStyle(doc, autoStyles, "table-column", "co", st);
+}
+
+// Set one column's width (px), splitting the <table:table-column> run that covers it.
+export function setOdsColWidth(wb: Workbook, sheet: Sheet, col: number, px: number): void {
+  (sheet.colWidths ??= new Map()).set(col, px);
+  const doc = wb.contentDoc;
+  const table = sheet.tableEl;
+  if (!doc || !table) return;
+  const styleName = odsColStyle(doc, ensureOdsAutoStyles(doc), px);
+  // Walk the column elements, tracking the running column index, and split the run at `col`.
+  let idx = 0;
+  for (const ch of Array.from(table.children)) {
+    if (ch.localName !== "table-column") continue;
+    const rep = Math.max(1, Number(ch.getAttribute("table:number-columns-repeated") || "1"));
+    const start = idx + 1,
+      end = idx + rep;
+    idx = end;
+    if (col < start || col > end) continue;
+    const mk = (from: number, to: number, style?: string) => {
+      const c = ch.cloneNode(false) as Element;
+      const n = to - from + 1;
+      if (n > 1) c.setAttributeNS(ODS.table, "table:number-columns-repeated", String(n));
+      else c.removeAttribute("table:number-columns-repeated");
+      if (style) c.setAttributeNS(ODS.table, "table:style-name", style);
+      return c;
+    };
+    const parent = ch.parentNode!;
+    if (start < col) parent.insertBefore(mk(start, col - 1), ch);
+    parent.insertBefore(mk(col, col, styleName), ch);
+    if (end > col) parent.insertBefore(mk(col + 1, end), ch);
+    parent.removeChild(ch);
+    return;
+  }
+}
+
+// Set one row's height (px) by giving its row a row style (re-emitted by writeOds).
+export function setOdsRowHeight(wb: Workbook, sheet: Sheet, row: number, px: number): void {
+  (sheet.rowHeights ??= new Map()).set(row, px);
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  const st = doc.createElementNS(ODS.style, "style:style");
+  const p = doc.createElementNS(ODS.style, "style:table-row-properties");
+  p.setAttributeNS(ODS.style, "style:row-height", `${(px / 96) * 2.54}cm`);
+  p.setAttributeNS(ODS.fo, "fo:break-before", "auto");
+  st.appendChild(p);
+  const name = internOdsStyle(doc, ensureOdsAutoStyles(doc), "table-row", "ro", st);
+  (sheet.odsRowStyles ??= new Map()).set(row, name);
+}
+
+// Add or remove a merged range; writeOds emits the spans and covered cells.
+export function setOdsMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2: number, merge: boolean): void {
+  const top = Math.min(r1, r2),
+    left = Math.min(c1, c2),
+    bottom = Math.max(r1, r2),
+    right = Math.max(c1, c2);
+  const merges = (sheet.merges ??= []);
+  const idx = merges.findIndex((m) => m.r1 === top && m.c1 === left && m.r2 === bottom && m.c2 === right);
+  if (merge) {
+    if (idx === -1) merges.push({ r1: top, c1: left, r2: bottom, c2: right });
+    // Mark covered cells edited so writeOds regenerates the row with covered-table-cells.
+    for (let r = top; r <= bottom; r++)
+      for (let c = left; c <= right; c++) {
+        const cell = sheet.cells.get(key(r, c));
+        if (cell) cell.edited = true;
+      }
+    const tl = sheet.cells.get(key(top, left));
+    if (tl) tl.edited = true;
+  } else if (idx !== -1) {
+    merges.splice(idx, 1);
+  }
+  const tl = sheet.cells.get(key(top, left));
+  if (tl) tl.edited = true;
+}
+
 function writeOds(wb: Workbook): void {
   const doc = wb.contentDoc!;
   for (const sheet of wb.sheets) {
@@ -1173,20 +1508,43 @@ function writeOds(wb: Workbook): void {
     }
     while (table.firstChild) table.removeChild(table.firstChild);
     for (const k of keep) table.appendChild(k);
+    // Merge bookkeeping: covered positions and the span at each top-left.
+    const covered = new Set<string>();
+    const spanAt = new Map<string, { cs: number; rs: number }>();
+    let mergeMaxCol = 0;
+    for (const m of sheet.merges ?? []) {
+      spanAt.set(key(m.r1, m.c1), { cs: m.c2 - m.c1 + 1, rs: m.r2 - m.r1 + 1 });
+      mergeMaxCol = Math.max(mergeMaxCol, m.c2);
+      for (let r = m.r1; r <= m.r2; r++)
+        for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) covered.add(key(r, c));
+    }
     const maxRow = Math.max(1, sheet.maxRow);
-    const maxCol = Math.max(1, sheet.maxCol);
+    const maxCol = Math.max(1, sheet.maxCol, mergeMaxCol);
     for (let r = 1; r <= maxRow; r++) {
       const rowEl = doc.createElementNS(ODS.table, "table:table-row");
+      const rowStyle = sheet.odsRowStyles?.get(r);
+      if (rowStyle) rowEl.setAttributeNS(ODS.table, "table:style-name", rowStyle);
+      // The last column needing an explicit cell: content or a merge edge on this row.
       let lastContent = 0;
       for (let c = maxCol; c >= 1; c--) {
-        if (getCell(sheet, r, c)) {
+        if (getCell(sheet, r, c) || covered.has(key(r, c)) || spanAt.has(key(r, c))) {
           lastContent = c;
           break;
         }
       }
       for (let c = 1; c <= lastContent; c++) {
+        if (covered.has(key(r, c))) {
+          rowEl.appendChild(doc.createElementNS(ODS.table, "table:covered-table-cell"));
+          continue;
+        }
         const cell = getCell(sheet, r, c);
-        rowEl.appendChild(cell ? makeOdsCell(doc, cell, !!cell.edited) : doc.createElementNS(ODS.table, "table:table-cell"));
+        const el = cell ? makeOdsCell(doc, cell, !!cell.edited) : doc.createElementNS(ODS.table, "table:table-cell");
+        const span = spanAt.get(key(r, c));
+        if (span) {
+          if (span.cs > 1) el.setAttributeNS(ODS.table, "table:number-columns-spanned", String(span.cs));
+          if (span.rs > 1) el.setAttributeNS(ODS.table, "table:number-rows-spanned", String(span.rs));
+        }
+        rowEl.appendChild(el);
       }
       if (lastContent < maxCol) {
         const filler = doc.createElementNS(ODS.table, "table:table-cell");
@@ -1645,6 +2003,9 @@ export function createSheetEditor(
       if (sheet && wb.kind === "xlsx") {
         setXlsxColWidth(sheet, col, w);
         mark();
+      } else if (sheet && wb.kind === "ods") {
+        setOdsColWidth(wb, sheet, col, w);
+        mark();
       } else if (sheet) {
         (sheet.colWidths ??= new Map()).set(col, w);
       }
@@ -1670,6 +2031,9 @@ export function createSheetEditor(
       const sheet = wb.sheets[active];
       if (sheet && wb.kind === "xlsx") {
         setXlsxRowHeight(sheet, row, h);
+        mark();
+      } else if (sheet && wb.kind === "ods") {
+        setOdsRowHeight(wb, sheet, row, h);
         mark();
       } else if (sheet) {
         (sheet.rowHeights ??= new Map()).set(row, h);
@@ -1705,13 +2069,19 @@ export function createSheetEditor(
   // Style of the selection's top-left cell (used to toggle bold/italic/borders).
   const curStyle = () => (sel ? getCell(wb.sheets[active]!, sel.r1, sel.c1)?.cellStyle : undefined);
   // Apply a style change to every cell in the selection (xlsx only), then re-render.
+  // Apply a style change to one cell using the active format's style writer.
+  const setCellStyle = (sheet: Sheet, cell: Cell, change: StyleChange) => {
+    if (wb.kind === "ods") setOdsCellStyle(wb, sheet, cell, change);
+    else setXlsxCellStyle(wb, sheet, cell, change);
+  };
+
   const applyStyle = (change: StyleChange) => {
-    if (wb.kind !== "xlsx" || !sel) return;
+    if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
     let n = 0;
     for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
-      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) setXlsxCellStyle(wb, sheet, ensureCell(sheet, r, c), change);
+      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) setCellStyle(sheet, ensureCell(sheet, r, c), change);
     mark();
     renderGrid();
   };
@@ -1720,7 +2090,7 @@ export function createSheetEditor(
   // position in the rectangle (e.g. "outer" only borders the perimeter).
   type BorderMode = "all" | "outer" | "top" | "bottom" | "left" | "right" | "none";
   const applyBorder = (mode: BorderMode) => {
-    if (wb.kind !== "xlsx" || !sel) return;
+    if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
     const { r1, c1, r2, c2 } = sel;
@@ -1736,7 +2106,7 @@ export function createSheetEditor(
           if ((mode === "outer" || mode === "left") && c === c1) sides.left = true;
           if ((mode === "outer" || mode === "right") && c === c2) sides.right = true;
         }
-        if (Object.keys(sides).length) setXlsxCellStyle(wb, sheet, ensureCell(sheet, r, c), { borderSides: sides });
+        if (Object.keys(sides).length) setCellStyle(sheet, ensureCell(sheet, r, c), { borderSides: sides });
       }
     mark();
     renderGrid();
@@ -1790,8 +2160,12 @@ export function createSheetEditor(
 
   // Merge the selection into one cell, or unmerge when the selection sits on an
   // existing merge. Merging a region first clears any merges it overlaps.
+  const setMerge = (sheet: Sheet, mr1: number, mc1: number, mr2: number, mc2: number, on: boolean) => {
+    if (wb.kind === "ods") setOdsMerge(sheet, mr1, mc1, mr2, mc2, on);
+    else setXlsxMerge(sheet, mr1, mc1, mr2, mc2, on);
+  };
   const toggleMerge = () => {
-    if (wb.kind !== "xlsx" || !sel) return;
+    if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
     const { r1, c1, r2, c2 } = sel;
@@ -1802,10 +2176,10 @@ export function createSheetEditor(
       !(r2 < m.r1 || r1 > m.r2 || c2 < m.c1 || c1 > m.c2);
     const containing = merges.find(within); // selection inside (or equal to) a merge
     if (containing) {
-      setXlsxMerge(sheet, containing.r1, containing.c1, containing.r2, containing.c2, false);
+      setMerge(sheet, containing.r1, containing.c1, containing.r2, containing.c2, false);
     } else if (r1 !== r2 || c1 !== c2) {
-      for (const m of merges.filter(intersects)) setXlsxMerge(sheet, m.r1, m.c1, m.r2, m.c2, false);
-      setXlsxMerge(sheet, r1, c1, r2, c2, true);
+      for (const m of merges.filter(intersects)) setMerge(sheet, m.r1, m.c1, m.r2, m.c2, false);
+      setMerge(sheet, r1, c1, r2, c2, true);
     } else {
       return; // a single, unmerged cell: nothing to do
     }
@@ -1847,7 +2221,7 @@ export function createSheetEditor(
         renderGrid();
       }),
     );
-    if (wb.kind !== "xlsx") return; // setting styles is xlsx-only for now
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return; // styling needs a known style model
     const bold = tbBtn("B", "Bold", () => applyStyle({ bold: !curStyle()?.bold }));
     bold.style.fontWeight = "700";
     const italic = tbBtn("I", "Italic", () => applyStyle({ italic: !curStyle()?.italic }));
