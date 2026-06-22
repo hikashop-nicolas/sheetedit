@@ -8,6 +8,7 @@ import {
   setCellInput,
   setXlsxCellStyle,
   setXlsxColWidth,
+  setXlsxMerge,
   setXlsxRowHeight,
   writeWorkbook,
 } from "./index";
@@ -378,5 +379,17 @@ describe("xlsx cell styles", () => {
     setXlsxRowHeight(sheet, 1, 40);
     const out = readWorkbook(writeWorkbook(wb)).sheets[0]!;
     expect(out.rowHeights?.get(1)).toBe(40);
+  });
+
+  it("adds and removes a merged range, round-tripping", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxMerge(sheet, 2, 1, 2, 3, true); // merge A2:C2
+    const merged = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(merged.merges).toContainEqual({ r1: 2, c1: 1, r2: 2, c2: 3 });
+    // Unmerge it again.
+    setXlsxMerge(sheet, 2, 1, 2, 3, false);
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect((back.merges ?? []).some((m) => m.r1 === 2 && m.c1 === 1 && m.r2 === 2 && m.c2 === 3)).toBe(false);
   });
 });

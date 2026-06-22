@@ -709,6 +709,57 @@ export function setXlsxRowHeight(sheet: Sheet, row: number, px: number): void {
   sheet.layoutDirty = true;
 }
 
+// Add or remove a merged range (1-based, inclusive). The top-left cell shows through;
+// any cells the merge hides keep their data (so unmerging restores it). Updates the
+// worksheet's <mergeCells> element and the in-memory merge list.
+export function setXlsxMerge(
+  sheet: Sheet,
+  r1: number,
+  c1: number,
+  r2: number,
+  c2: number,
+  merge: boolean,
+): void {
+  const top = Math.min(r1, r2),
+    left = Math.min(c1, c2),
+    bottom = Math.max(r1, r2),
+    right = Math.max(c1, c2);
+  const ref = `${colToLetters(left)}${top}:${colToLetters(right)}${bottom}`;
+  const merges = (sheet.merges ??= []);
+  const idx = merges.findIndex((m) => m.r1 === top && m.c1 === left && m.r2 === bottom && m.c2 === right);
+  if (merge) {
+    if (idx === -1) merges.push({ r1: top, c1: left, r2: bottom, c2: right });
+  } else if (idx !== -1) {
+    merges.splice(idx, 1);
+  }
+
+  const doc = sheet.doc;
+  if (!doc) return;
+  const ns = doc.documentElement.namespaceURI || SS_MAIN;
+  let mcEl = doc.getElementsByTagName("mergeCells")[0] as Element | undefined;
+  if (merge) {
+    if (!mcEl) {
+      mcEl = doc.createElementNS(ns, "mergeCells");
+      // <mergeCells> follows <sheetData> in the schema.
+      sheet.sheetData?.parentNode?.insertBefore(mcEl, sheet.sheetData.nextSibling);
+    }
+    const exists = Array.from(mcEl.children).some((m) => m.getAttribute("ref") === ref);
+    if (!exists) {
+      const mc = doc.createElementNS(ns, "mergeCell");
+      mc.setAttribute("ref", ref);
+      mcEl.appendChild(mc);
+    }
+  } else if (mcEl) {
+    for (const m of Array.from(mcEl.children))
+      if (m.getAttribute("ref") === ref) mcEl.removeChild(m);
+  }
+  if (mcEl) {
+    if (mcEl.children.length === 0) mcEl.parentNode?.removeChild(mcEl);
+    else mcEl.setAttribute("count", String(mcEl.children.length));
+  }
+  sheet.layoutDirty = true;
+}
+
 const xmlOf = (el: Element): string => new XMLSerializer().serializeToString(el);
 
 // Find a matching child in a style pool (deduped by serialized form) or append it;
@@ -1737,11 +1788,37 @@ export function createSheetEditor(
     setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
   };
 
+  // Merge the selection into one cell, or unmerge when the selection sits on an
+  // existing merge. Merging a region first clears any merges it overlaps.
+  const toggleMerge = () => {
+    if (wb.kind !== "xlsx" || !sel) return;
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const { r1, c1, r2, c2 } = sel;
+    const merges = sheet.merges ?? [];
+    const within = (m: { r1: number; c1: number; r2: number; c2: number }) =>
+      r1 >= m.r1 && c1 >= m.c1 && r2 <= m.r2 && c2 <= m.c2;
+    const intersects = (m: { r1: number; c1: number; r2: number; c2: number }) =>
+      !(r2 < m.r1 || r1 > m.r2 || c2 < m.c1 || c1 > m.c2);
+    const containing = merges.find(within); // selection inside (or equal to) a merge
+    if (containing) {
+      setXlsxMerge(sheet, containing.r1, containing.c1, containing.r2, containing.c2, false);
+    } else if (r1 !== r2 || c1 !== c2) {
+      for (const m of merges.filter(intersects)) setXlsxMerge(sheet, m.r1, m.c1, m.r2, m.c2, false);
+      setXlsxMerge(sheet, r1, c1, r2, c2, true);
+    } else {
+      return; // a single, unmerged cell: nothing to do
+    }
+    mark();
+    renderGrid();
+  };
+
   const ICON = {
     left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h10"/></svg>`,
     center: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M3 12h10"/></svg>`,
     right: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M7 8h7M4 12h10"/></svg>`,
     borders: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="12" height="12"/><path d="M8 2v12M2 8h12"/></svg>`,
+    merge: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8"/><path d="M5 6 7.5 8 5 10M11 6 8.5 8 11 10"/></svg>`,
   };
   const buildToolbar = () => {
     toolbar.innerHTML = "";
@@ -1788,7 +1865,7 @@ export function createSheetEditor(
       sep(),
     );
     const borderBtn = tbIcon(ICON.borders, "Borders", () => openBorderPopover(borderBtn));
-    toolbar.append(borderBtn);
+    toolbar.append(borderBtn, tbIcon(ICON.merge, "Merge or unmerge cells", toggleMerge));
   };
 
   const mark = () => {

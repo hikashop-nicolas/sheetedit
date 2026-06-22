@@ -91,6 +91,7 @@ export interface StyleChange {
 export declare function colToLetters(col: number): string;
 export declare function setXlsxColWidth(sheet: Sheet, col: number, px: number): void;
 export declare function setXlsxRowHeight(sheet: Sheet, row: number, px: number): void;
+export declare function setXlsxMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2: number, merge: boolean): void;
 /**
  * Apply a style change to a cell, managing the xlsx style pools: derive a new font /
  * fill / border from the cell's current format plus the change, find-or-create each in
