@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import FormulaParser from "fast-formula-parser";
+import { t } from "./i18n";
 const key = (row, col) => `${row}:${col}`;
 function getCell(sheet, row, col) {
     return sheet.cells.get(key(row, col));
@@ -1816,7 +1817,7 @@ export function createSheetEditor(container, bytes, options = {}) {
     const tabs = document.createElement("div");
     tabs.className = "sheetedit-tabs";
     tabs.setAttribute("role", "tablist");
-    tabs.setAttribute("aria-label", "Sheets");
+    tabs.setAttribute("aria-label", t("sheets"));
     wrap.append(toolbar, gridScroll, tabs);
     container.appendChild(wrap);
     let active = 0;
@@ -2086,18 +2087,18 @@ export function createSheetEditor(container, bytes, options = {}) {
             document.removeEventListener("pointerdown", onOutside, true);
         };
         const onOutside = (e) => {
-            const t = e.target;
-            if (!pop.contains(t) && !btn.contains(t))
+            const tgt = e.target;
+            if (!pop.contains(tgt) && !btn.contains(tgt))
                 close();
         };
         const opts = [
-            ["All borders", "all"],
-            ["Outer border", "outer"],
-            ["Top", "top"],
-            ["Bottom", "bottom"],
-            ["Left", "left"],
-            ["Right", "right"],
-            ["No border", "none"],
+            [t("borderAll"), "all"],
+            [t("borderOuter"), "outer"],
+            [t("borderTop"), "top"],
+            [t("borderBottom"), "bottom"],
+            [t("borderLeft"), "left"],
+            [t("borderRight"), "right"],
+            [t("borderNone"), "none"],
         ];
         for (const [label, mode] of opts) {
             const b = document.createElement("button");
@@ -2174,22 +2175,22 @@ export function createSheetEditor(container, bytes, options = {}) {
             i.addEventListener("change", () => apply(i.value));
             return i;
         };
-        toolbar.append(tbBtn("+ Row", "Add rows", () => {
+        toolbar.append(tbBtn(t("addRow"), t("addRows"), () => {
             extraRows += ROW_CHUNK;
             renderGrid();
-        }), tbBtn("+ Col", "Add columns", () => {
+        }), tbBtn(t("addCol"), t("addCols"), () => {
             extraCols += COL_CHUNK;
             renderGrid();
         }));
         if (wb.kind !== "xlsx" && wb.kind !== "ods")
             return; // styling needs a known style model
-        const bold = tbBtn("B", "Bold", () => applyStyle({ bold: !curStyle()?.bold }));
+        const bold = tbBtn("B", t("bold"), () => applyStyle({ bold: !curStyle()?.bold }));
         bold.style.fontWeight = "700";
-        const italic = tbBtn("I", "Italic", () => applyStyle({ italic: !curStyle()?.italic }));
+        const italic = tbBtn("I", t("italic"), () => applyStyle({ italic: !curStyle()?.italic }));
         italic.style.fontStyle = "italic";
-        toolbar.append(sep(), bold, italic, colorInput("Text colour", "#000000", (v) => applyStyle({ color: v })), colorInput("Fill colour", "#ffff00", (v) => applyStyle({ bg: v })), sep(), tbIcon(ICON.left, "Align left", () => applyStyle({ align: "left" })), tbIcon(ICON.center, "Align centre", () => applyStyle({ align: "center" })), tbIcon(ICON.right, "Align right", () => applyStyle({ align: "right" })), sep());
-        const borderBtn = tbIcon(ICON.borders, "Borders", () => openBorderPopover(borderBtn));
-        toolbar.append(borderBtn, tbIcon(ICON.merge, "Merge or unmerge cells", toggleMerge));
+        toolbar.append(sep(), bold, italic, colorInput(t("textColour"), "#000000", (v) => applyStyle({ color: v })), colorInput(t("fillColour"), "#ffff00", (v) => applyStyle({ bg: v })), sep(), tbIcon(ICON.left, t("alignLeft"), () => applyStyle({ align: "left" })), tbIcon(ICON.center, t("alignCentre"), () => applyStyle({ align: "center" })), tbIcon(ICON.right, t("alignRight"), () => applyStyle({ align: "right" })), sep());
+        const borderBtn = tbIcon(ICON.borders, t("borders"), () => openBorderPopover(borderBtn));
+        toolbar.append(borderBtn, tbIcon(ICON.merge, t("merge"), toggleMerge));
     };
     const mark = () => {
         if (!dirty) {
@@ -2241,14 +2242,14 @@ export function createSheetEditor(container, bytes, options = {}) {
         const head = document.createElement("tr");
         const corner = document.createElement("th");
         corner.className = "corner";
-        corner.title = "Select all";
+        corner.title = t("selectAll");
         corner.addEventListener("click", () => setSel(1, 1, rows, cols));
         head.appendChild(corner);
         for (let c = 1; c <= cols; c++) {
             const th = document.createElement("th");
             th.className = "colhead";
             th.textContent = colToLetters(c);
-            th.title = `Select column ${colToLetters(c)} (drag the right edge to resize)`;
+            th.title = t("selectColumn", { col: colToLetters(c) });
             th.addEventListener("click", () => {
                 if (resizing)
                     return;
@@ -2281,7 +2282,7 @@ export function createSheetEditor(container, bytes, options = {}) {
             const rn = document.createElement("th");
             rn.className = "rownum";
             rn.textContent = String(r);
-            rn.title = `Select row ${r} (drag the bottom edge to resize)`;
+            rn.title = t("selectRow", { row: r });
             rn.addEventListener("click", () => {
                 if (resizing)
                     return;
