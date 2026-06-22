@@ -309,6 +309,20 @@ function readXlsx(files) {
                 if (cw.size)
                     sheet.colWidths = cw;
             }
+            // Row heights: <row r ht customHeight/>. ht is in points; convert to px (~4/3 px/pt).
+            if (sheetData) {
+                const rh = new Map();
+                for (const rowEl of Array.from(sheetData.children)) {
+                    if (rowEl.localName !== "row")
+                        continue;
+                    const r = Number(rowEl.getAttribute("r") || "0");
+                    const ht = Number(rowEl.getAttribute("ht") || "0");
+                    if (r && ht)
+                        rh.set(r, Math.round((ht * 4) / 3));
+                }
+                if (rh.size)
+                    sheet.rowHeights = rh;
+            }
             // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.
             const mergeEls = doc.getElementsByTagName("mergeCell");
             if (mergeEls.length) {
@@ -526,6 +540,100 @@ function writeXlsxCell(sheet, cell) {
         c.appendChild(is);
     }
 }
+// Set a single column's width (px) in the worksheet's <cols>, creating <cols>/<col>
+// as needed and splitting any existing run that covers the column. Keeps colWidths in sync.
+export function setXlsxColWidth(sheet, col, px) {
+    if (!sheet.colWidths)
+        sheet.colWidths = new Map();
+    sheet.colWidths.set(col, px);
+    const doc = sheet.doc;
+    if (!doc)
+        return;
+    const ns = doc.documentElement.namespaceURI || SS_MAIN;
+    const width = Math.max(0, (px - 5) / 7);
+    let colsEl = doc.getElementsByTagName("cols")[0];
+    if (!colsEl) {
+        colsEl = doc.createElementNS(ns, "cols");
+        // <cols> must precede <sheetData> per the schema.
+        sheet.sheetData?.parentNode?.insertBefore(colsEl, sheet.sheetData);
+    }
+    // Narrow any run that spans `col` so we can give `col` its own entry.
+    for (const c of Array.from(colsEl.children)) {
+        if (c.localName !== "col")
+            continue;
+        const min = Number(c.getAttribute("min") || "0");
+        const max = Number(c.getAttribute("max") || String(min));
+        if (col < min || col > max)
+            continue;
+        if (min === max) {
+            c.setAttribute("width", String(width));
+            c.setAttribute("customWidth", "1");
+            sheet.layoutDirty = true;
+            return;
+        }
+        // Split: left part [min..col-1], right part [col+1..max], plus the single col.
+        if (col > min) {
+            const left = c.cloneNode(true);
+            left.setAttribute("min", String(min));
+            left.setAttribute("max", String(col - 1));
+            colsEl.insertBefore(left, c);
+        }
+        if (col < max) {
+            const right = c.cloneNode(true);
+            right.setAttribute("min", String(col + 1));
+            right.setAttribute("max", String(max));
+            colsEl.insertBefore(right, c);
+        }
+        c.setAttribute("min", String(col));
+        c.setAttribute("max", String(col));
+        c.setAttribute("width", String(width));
+        c.setAttribute("customWidth", "1");
+        sheet.layoutDirty = true;
+        return;
+    }
+    const colEl = doc.createElementNS(ns, "col");
+    colEl.setAttribute("min", String(col));
+    colEl.setAttribute("max", String(col));
+    colEl.setAttribute("width", String(width));
+    colEl.setAttribute("customWidth", "1");
+    colsEl.appendChild(colEl);
+    sheet.layoutDirty = true;
+}
+// Set a single row's height (px) on its <row>, creating the row element if absent.
+export function setXlsxRowHeight(sheet, row, px) {
+    if (!sheet.rowHeights)
+        sheet.rowHeights = new Map();
+    sheet.rowHeights.set(row, px);
+    const doc = sheet.doc;
+    const sd = sheet.sheetData;
+    if (!doc || !sd)
+        return;
+    const ns = doc.documentElement.namespaceURI || SS_MAIN;
+    const pt = (px * 3) / 4;
+    let rowEl;
+    for (const re of Array.from(sd.children)) {
+        if (re.localName === "row" && Number(re.getAttribute("r") || "0") === row) {
+            rowEl = re;
+            break;
+        }
+    }
+    if (!rowEl) {
+        rowEl = doc.createElementNS(ns, "row");
+        rowEl.setAttribute("r", String(row));
+        // Insert keeping rows in ascending order.
+        let next = null;
+        for (const re of Array.from(sd.children)) {
+            if (re.localName === "row" && Number(re.getAttribute("r") || "0") > row) {
+                next = re;
+                break;
+            }
+        }
+        sd.insertBefore(rowEl, next);
+    }
+    rowEl.setAttribute("ht", String(pt));
+    rowEl.setAttribute("customHeight", "1");
+    sheet.layoutDirty = true;
+}
 const xmlOf = (el) => new XMLSerializer().serializeToString(el);
 // Find a matching child in a style pool (deduped by serialized form) or append it;
 // returns its index and keeps the pool's count attribute in sync.
@@ -568,7 +676,23 @@ export function setXlsxCellStyle(wb, sheet, cell, change) {
     const color = change.color ?? cur.color;
     const bg = change.bg ?? cur.bg;
     const align = change.align ?? cur.align;
-    const border = change.border ?? !!cur.borders;
+    // Border sides: start from the current borders, apply the all-sides toggle and/or per-side change.
+    const curSides = {
+        top: !!cur.borders?.top,
+        right: !!cur.borders?.right,
+        bottom: !!cur.borders?.bottom,
+        left: !!cur.borders?.left,
+    };
+    let sides = curSides;
+    let borderChanged = false;
+    if (change.border !== undefined) {
+        sides = { top: change.border, right: change.border, bottom: change.border, left: change.border };
+        borderChanged = true;
+    }
+    if (change.borderSides) {
+        sides = { ...sides, ...change.borderSides };
+        borderChanged = true;
+    }
     // Font: clone the current one and toggle bold/italic/colour.
     const baseFont = fontsEl.children[curFontId];
     const font = baseFont ? baseFont.cloneNode(true) : ce("font");
@@ -600,13 +724,13 @@ export function setXlsxCellStyle(wb, sheet, cell, change) {
         fill.appendChild(pat);
         fillId = poolIndex(fillsEl, fill);
     }
-    // Border: a full box (or cleared) only when the change touches borders.
+    // Border: rebuild the per-side border element only when the change touches borders.
     let borderId = curBorderId;
-    if (change.border !== undefined) {
+    if (borderChanged) {
         const bd = ce("border");
         for (const side of ["left", "right", "top", "bottom"]) {
             const s = ce(side);
-            if (border) {
+            if (sides[side]) {
                 s.setAttribute("style", "thin");
                 const cc = ce("color");
                 cc.setAttribute("rgb", "FF000000");
@@ -636,13 +760,21 @@ export function setXlsxCellStyle(wb, sheet, cell, change) {
     const sIdx = poolIndex(cellXfsEl, xf);
     cell.style = String(sIdx);
     ensureXlsxCellEl(sheet, cell).setAttribute("s", String(sIdx));
+    const anySide = sides.top || sides.right || sides.bottom || sides.left;
     cell.cellStyle = {
         bold,
         italic,
         color,
         bg,
         align,
-        borders: border ? { top: "#000", right: "#000", bottom: "#000", left: "#000" } : undefined,
+        borders: anySide
+            ? {
+                top: sides.top ? "#000" : undefined,
+                right: sides.right ? "#000" : undefined,
+                bottom: sides.bottom ? "#000" : undefined,
+                left: sides.left ? "#000" : undefined,
+            }
+            : undefined,
     };
     cell.edited = true;
     wb.stylesDirty = true;
@@ -658,7 +790,7 @@ function writeXlsx(wb) {
                 touched = true;
             }
         }
-        if (touched && sheet.path)
+        if ((touched || sheet.layoutDirty) && sheet.path)
             wb.files[sheet.path] = serializeXml(sheet.doc);
     }
     if (wb.stylesDirty && wb.stylesDoc)
@@ -1193,6 +1325,9 @@ function injectStyles() {
     .sheetedit-table th.colhead, .sheetedit-table th.rownum, .sheetedit-table th.corner { cursor:pointer; }
     .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:#e3e3e8; }
     .sheetedit-table td.sheetedit-sel input { background:rgba(110,123,255,0.18); }
+    .sheetedit-pop { position:fixed; z-index:30; background:#2b2f36; border:1px solid #4a4f57; border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
+    .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:#e6e6e6; border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
+    .sheetedit-pop-item:hover { background:#3a3f47; }
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
@@ -1208,6 +1343,11 @@ function injectStyles() {
     }
     .sheetedit-table th.corner { left:0; z-index:3; }
     .sheetedit-table th.rownum { position:sticky; left:0; z-index:1; top:auto; text-align:right; background:#f1f1f4; }
+    /* Resize grips: a thin strip on the header border, wide enough to grab on touch. */
+    .sheetedit-colgrip { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:4; touch-action:none; }
+    .sheetedit-rowgrip { position:absolute; left:0; bottom:-4px; width:100%; height:9px; cursor:row-resize; z-index:4; touch-action:none; }
+    .sheetedit-colgrip:hover { box-shadow:inset -2px 0 0 0 #6e7bff; }
+    .sheetedit-rowgrip:hover { box-shadow:inset 0 -2px 0 0 #6e7bff; }
     .sheetedit-table input {
       border:0; background:transparent; color:#1a1a1a; font:inherit; padding:3px 8px;
       width:100%; box-sizing:border-box; outline:none;
@@ -1274,6 +1414,146 @@ export function createSheetEditor(container, bytes, options = {}) {
             setSel(r, c, r, c);
         }
     };
+    // Rectangular range selection by dragging: mouse drag, or touch long-press then drag.
+    // A plain tap still focuses a cell for editing; header/corner taps select a whole line.
+    const cellAtPoint = (x, y) => {
+        const el = document.elementFromPoint(x, y);
+        const td = el?.closest("td");
+        const rc = td?.dataset.rc;
+        if (!rc)
+            return null;
+        const [r, c] = rc.split(":").map(Number);
+        return { r, c };
+    };
+    let dragAnchor = null;
+    let dragActive = false;
+    let justDragged = false;
+    let lpTimer = null;
+    let lpStart = null;
+    gridScroll.addEventListener("pointerdown", (e) => {
+        if (resizing)
+            return;
+        const cell = cellAtPoint(e.clientX, e.clientY);
+        if (!cell)
+            return;
+        if (e.pointerType === "touch") {
+            lpStart = { x: e.clientX, y: e.clientY };
+            lpTimer = window.setTimeout(() => {
+                lpTimer = null;
+                dragActive = true;
+                dragAnchor = cell;
+                anchor = cell;
+                document.activeElement?.blur?.();
+                setSel(cell.r, cell.c, cell.r, cell.c);
+            }, 250);
+        }
+        else {
+            dragAnchor = cell; // mouse: a click still edits; a drag selects
+        }
+    });
+    gridScroll.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "touch") {
+            if (lpTimer != null && lpStart) {
+                if (Math.abs(e.clientX - lpStart.x) > 8 || Math.abs(e.clientY - lpStart.y) > 8) {
+                    clearTimeout(lpTimer); // moved before the long-press fired: it is a scroll
+                    lpTimer = null;
+                }
+                return;
+            }
+            if (!dragActive || !dragAnchor)
+                return;
+            const cell = cellAtPoint(e.clientX, e.clientY);
+            if (cell) {
+                e.preventDefault();
+                setSel(dragAnchor.r, dragAnchor.c, cell.r, cell.c);
+            }
+        }
+        else {
+            if (!dragAnchor || e.buttons === 0)
+                return;
+            const cell = cellAtPoint(e.clientX, e.clientY);
+            if (!cell || (cell.r === dragAnchor.r && cell.c === dragAnchor.c && !dragActive))
+                return;
+            if (!dragActive) {
+                dragActive = true;
+                anchor = dragAnchor;
+                document.activeElement?.blur?.();
+            }
+            e.preventDefault();
+            setSel(dragAnchor.r, dragAnchor.c, cell.r, cell.c);
+        }
+    }, { passive: false });
+    const endDrag = () => {
+        if (lpTimer != null) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+        }
+        dragAnchor = null;
+        if (dragActive) {
+            justDragged = true; // swallow the trailing tap so it does not enter edit mode
+            setTimeout(() => (justDragged = false), 350);
+        }
+        dragActive = false;
+    };
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    // Column-width / row-height drag from the header borders. `resizing` suppresses the
+    // cell drag-select while a resize is in progress.
+    let resizing = false;
+    const startColResize = (e, col, colEl, startW) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resizing = true;
+        const x0 = e.clientX;
+        const onMove = (ev) => {
+            const w = Math.max(24, Math.round(startW + (ev.clientX - x0)));
+            colEl.style.width = `${w}px`;
+        };
+        const onUp = (ev) => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            const w = Math.max(24, Math.round(startW + (ev.clientX - x0)));
+            const sheet = wb.sheets[active];
+            if (sheet && wb.kind === "xlsx") {
+                setXlsxColWidth(sheet, col, w);
+                mark();
+            }
+            else if (sheet) {
+                (sheet.colWidths ??= new Map()).set(col, w);
+            }
+            renderGrid();
+            setTimeout(() => (resizing = false), 0);
+        };
+        window.addEventListener("pointermove", onMove, { passive: false });
+        window.addEventListener("pointerup", onUp);
+    };
+    const startRowResize = (e, row, rowEl, startH) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resizing = true;
+        const y0 = e.clientY;
+        const onMove = (ev) => {
+            const h = Math.max(16, Math.round(startH + (ev.clientY - y0)));
+            rowEl.style.height = `${h}px`;
+        };
+        const onUp = (ev) => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            const h = Math.max(16, Math.round(startH + (ev.clientY - y0)));
+            const sheet = wb.sheets[active];
+            if (sheet && wb.kind === "xlsx") {
+                setXlsxRowHeight(sheet, row, h);
+                mark();
+            }
+            else if (sheet) {
+                (sheet.rowHeights ??= new Map()).set(row, h);
+            }
+            renderGrid();
+            setTimeout(() => (resizing = false), 0);
+        };
+        window.addEventListener("pointermove", onMove, { passive: false });
+        window.addEventListener("pointerup", onUp);
+    };
     const tbBtn = (label, title, onClick) => {
         const b = document.createElement("button");
         b.type = "button";
@@ -1309,6 +1589,83 @@ export function createSheetEditor(container, bytes, options = {}) {
                 setXlsxCellStyle(wb, sheet, ensureCell(sheet, r, c), change);
         mark();
         renderGrid();
+    };
+    const applyBorder = (mode) => {
+        if (wb.kind !== "xlsx" || !sel)
+            return;
+        const sheet = wb.sheets[active];
+        if (!sheet)
+            return;
+        const { r1, c1, r2, c2 } = sel;
+        let n = 0;
+        for (let r = r1; r <= r2 && n < 4000; r++)
+            for (let c = c1; c <= c2 && n < 4000; c++, n++) {
+                let sides = {};
+                if (mode === "all")
+                    sides = { top: true, right: true, bottom: true, left: true };
+                else if (mode === "none")
+                    sides = { top: false, right: false, bottom: false, left: false };
+                else {
+                    if ((mode === "outer" || mode === "top") && r === r1)
+                        sides.top = true;
+                    if ((mode === "outer" || mode === "bottom") && r === r2)
+                        sides.bottom = true;
+                    if ((mode === "outer" || mode === "left") && c === c1)
+                        sides.left = true;
+                    if ((mode === "outer" || mode === "right") && c === c2)
+                        sides.right = true;
+                }
+                if (Object.keys(sides).length)
+                    setXlsxCellStyle(wb, sheet, ensureCell(sheet, r, c), { borderSides: sides });
+            }
+        mark();
+        renderGrid();
+    };
+    let borderPop = null;
+    const openBorderPopover = (btn) => {
+        if (borderPop) {
+            borderPop.remove();
+            borderPop = null;
+            return;
+        }
+        const pop = document.createElement("div");
+        pop.className = "sheetedit-pop";
+        const close = () => {
+            pop.remove();
+            borderPop = null;
+            document.removeEventListener("pointerdown", onOutside, true);
+        };
+        const onOutside = (e) => {
+            const t = e.target;
+            if (!pop.contains(t) && !btn.contains(t))
+                close();
+        };
+        const opts = [
+            ["All borders", "all"],
+            ["Outer border", "outer"],
+            ["Top", "top"],
+            ["Bottom", "bottom"],
+            ["Left", "left"],
+            ["Right", "right"],
+            ["No border", "none"],
+        ];
+        for (const [label, mode] of opts) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "sheetedit-pop-item";
+            b.textContent = label;
+            b.addEventListener("click", () => {
+                applyBorder(mode);
+                close();
+            });
+            pop.appendChild(b);
+        }
+        document.body.appendChild(pop);
+        borderPop = pop;
+        const r = btn.getBoundingClientRect();
+        pop.style.left = `${Math.round(r.left)}px`;
+        pop.style.top = `${Math.round(r.bottom + 4)}px`;
+        setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
     };
     const ICON = {
         left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h10"/></svg>`,
@@ -1346,7 +1703,9 @@ export function createSheetEditor(container, bytes, options = {}) {
         bold.style.fontWeight = "700";
         const italic = tbBtn("I", "Italic", () => applyStyle({ italic: !curStyle()?.italic }));
         italic.style.fontStyle = "italic";
-        toolbar.append(sep(), bold, italic, colorInput("Text colour", "#000000", (v) => applyStyle({ color: v })), colorInput("Fill colour", "#ffff00", (v) => applyStyle({ bg: v })), sep(), tbIcon(ICON.left, "Align left", () => applyStyle({ align: "left" })), tbIcon(ICON.center, "Align centre", () => applyStyle({ align: "center" })), tbIcon(ICON.right, "Align right", () => applyStyle({ align: "right" })), sep(), tbIcon(ICON.borders, "Toggle borders", () => applyStyle({ border: !curStyle()?.borders })));
+        toolbar.append(sep(), bold, italic, colorInput("Text colour", "#000000", (v) => applyStyle({ color: v })), colorInput("Fill colour", "#ffff00", (v) => applyStyle({ bg: v })), sep(), tbIcon(ICON.left, "Align left", () => applyStyle({ align: "left" })), tbIcon(ICON.center, "Align centre", () => applyStyle({ align: "center" })), tbIcon(ICON.right, "Align right", () => applyStyle({ align: "right" })), sep());
+        const borderBtn = tbIcon(ICON.borders, "Borders", () => openBorderPopover(borderBtn));
+        toolbar.append(borderBtn);
     };
     const mark = () => {
         if (!dirty) {
@@ -1384,11 +1743,13 @@ export function createSheetEditor(container, bytes, options = {}) {
         rnCol.style.width = "44px";
         colgroup.appendChild(rnCol);
         let totalW = 44;
+        const colEls = [];
         for (let c = 1; c <= cols; c++) {
             const w = sheet.colWidths?.get(c) ?? 96;
             const col = document.createElement("col");
             col.style.width = `${w}px`;
             colgroup.appendChild(col);
+            colEls.push(col);
             totalW += w;
         }
         table.appendChild(colgroup);
@@ -1403,11 +1764,18 @@ export function createSheetEditor(container, bytes, options = {}) {
             const th = document.createElement("th");
             th.className = "colhead";
             th.textContent = colToLetters(c);
-            th.title = `Select column ${colToLetters(c)}`;
+            th.title = `Select column ${colToLetters(c)} (drag the right edge to resize)`;
             th.addEventListener("click", () => {
+                if (resizing)
+                    return;
                 anchor = { r: 1, c };
                 setSel(1, c, rows, c);
             });
+            const grip = document.createElement("div");
+            grip.className = "sheetedit-colgrip";
+            const colEl = colEls[c - 1];
+            grip.addEventListener("pointerdown", (e) => startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? 96));
+            th.appendChild(grip);
             head.appendChild(th);
         }
         table.appendChild(head);
@@ -1423,19 +1791,29 @@ export function createSheetEditor(container, bytes, options = {}) {
         }
         for (let r = 1; r <= rows; r++) {
             const tr = document.createElement("tr");
+            const rh = sheet.rowHeights?.get(r);
+            if (rh)
+                tr.style.height = `${rh}px`;
             const rn = document.createElement("th");
             rn.className = "rownum";
             rn.textContent = String(r);
-            rn.title = `Select row ${r}`;
+            rn.title = `Select row ${r} (drag the bottom edge to resize)`;
             rn.addEventListener("click", () => {
+                if (resizing)
+                    return;
                 anchor = { r, c: 1 };
                 setSel(r, 1, r, cols);
             });
+            const rgrip = document.createElement("div");
+            rgrip.className = "sheetedit-rowgrip";
+            rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, rh ?? 22));
+            rn.appendChild(rgrip);
             tr.appendChild(rn);
             for (let c = 1; c <= cols; c++) {
                 if (covered.has(key(r, c)))
                     continue; // part of a merge; the top-left cell spans it
                 const td = document.createElement("td");
+                td.dataset.rc = key(r, c);
                 tds.set(key(r, c), td);
                 const sp = spanAt.get(key(r, c));
                 if (sp) {
@@ -1486,6 +1864,10 @@ export function createSheetEditor(container, bytes, options = {}) {
                     }
                 });
                 input.addEventListener("focus", () => {
+                    if (justDragged) {
+                        input.blur(); // a range was just drag-selected; do not enter edit on the trailing tap
+                        return;
+                    }
                     selectCell(r, c, false); // tapping a cell selects it; toolbar styles target the selection
                     const live = getCell(sheet, r, c);
                     if (!live)

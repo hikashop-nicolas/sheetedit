@@ -47,6 +47,8 @@ export interface Sheet {
     maxCol: number;
     /** 1-based column -> width in px (from the file's <cols>), when specified. */
     colWidths?: Map<number, number>;
+    /** 1-based row -> height in px (from the file's <row ht>), when specified. */
+    rowHeights?: Map<number, number>;
     /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
     merges?: {
         r1: number;
@@ -57,6 +59,8 @@ export interface Sheet {
     doc?: Document;
     sheetData?: Element;
     path?: string;
+    /** Column widths or row heights changed and the sheet XML must be re-serialized. */
+    layoutDirty?: boolean;
     tableEl?: Element;
 }
 export interface Workbook {
@@ -76,8 +80,17 @@ export interface StyleChange {
     bg?: string;
     align?: "left" | "center" | "right";
     border?: boolean;
+    /** Per-side borders to set; each specified side is turned on/off, others kept. */
+    borderSides?: {
+        top?: boolean;
+        right?: boolean;
+        bottom?: boolean;
+        left?: boolean;
+    };
 }
 export declare function colToLetters(col: number): string;
+export declare function setXlsxColWidth(sheet: Sheet, col: number, px: number): void;
+export declare function setXlsxRowHeight(sheet: Sheet, row: number, px: number): void;
 /**
  * Apply a style change to a cell, managing the xlsx style pools: derive a new font /
  * fill / border from the cell's current format plus the change, find-or-create each in

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { a1ToOdf, odfToA1, readWorkbook, recalc, setCellInput, setXlsxCellStyle, writeWorkbook } from "./index";
+import {
+  a1ToOdf,
+  odfToA1,
+  readWorkbook,
+  recalc,
+  setCellInput,
+  setXlsxCellStyle,
+  setXlsxColWidth,
+  setXlsxRowHeight,
+  writeWorkbook,
+} from "./index";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -340,5 +350,33 @@ describe("xlsx cell styles", () => {
     const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
     expect(a1.borders?.top).toBe("#000000");
     expect(a1.borders?.right).toBe("#000000");
+  });
+
+  it("sets a single border side via borderSides and round-trips", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:1")!, { borderSides: { left: true } });
+    const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.borders?.left).toBe("#000000");
+    expect(a1.borders?.top).toBeUndefined();
+    expect(a1.borders?.right).toBeUndefined();
+  });
+
+  it("writes a column width and round-trips", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxColWidth(sheet, 3, 215); // ~30 chars
+    const out = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(out.colWidths?.get(3)).toBe(215);
+    // The pre-existing width on column B is preserved.
+    expect(out.colWidths?.get(2)).toBe(145);
+  });
+
+  it("writes a row height and round-trips", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxRowHeight(sheet, 1, 40);
+    const out = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(out.rowHeights?.get(1)).toBe(40);
   });
 });
