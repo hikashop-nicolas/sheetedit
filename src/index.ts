@@ -58,6 +58,10 @@ export interface Cell {
   edited?: boolean;
   /** Recalc changed the cached value. */
   recomputed?: boolean;
+  /** xlsx: shared-formula group (@si) this cell belongs to. */
+  sharedSi?: string;
+  /** The formula itself was added/changed/removed (not just its cached value). */
+  fDirty?: boolean;
 }
 
 export interface Sheet {
@@ -193,6 +197,61 @@ function parseA1Ref(ref: string): { row: number; col: number } | null {
   const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(ref);
   if (!m) return null;
   return { col: lettersToCol(m[1]!), row: Number(m[2]) };
+}
+
+const MAX_COL = 16384; // XFD
+const MAX_ROW = 1048576;
+const REF_TOKEN = /(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})(?![\dA-Za-z_(])/g;
+
+function shiftRefsInChunk(chunk: string, dr: number, dc: number): string {
+  return chunk.replace(REF_TOKEN, (m, cAbs: string, letters: string, rAbs: string, digits: string, off: number) => {
+    const prev = off > 0 ? chunk[off - 1]! : "";
+    if (/[A-Za-z0-9_$.[\]]/.test(prev)) return m; // inside a longer name (LOG10, tax2026, Table1[...])
+    const col0 = lettersToCol(letters.toUpperCase());
+    const row0 = Number(digits);
+    if (col0 > MAX_COL || row0 > MAX_ROW) return m; // not a real cell ref (defined name)
+    const col = cAbs ? col0 : col0 + dc;
+    const row = rAbs ? row0 : row0 + dr;
+    if (col < 1 || row < 1 || col > MAX_COL || row > MAX_ROW) return "#REF!";
+    return cAbs + colToLetters(col) + rAbs + String(row);
+  });
+}
+
+/**
+ * Shift the relative A1 references in a formula by (dr, dc): the translation a
+ * shared-formula child applies to its master's formula. Skips string literals
+ * and quoted sheet names; absolute parts ($) stay put.
+ */
+export function shiftFormula(formula: string, dr: number, dc: number): string {
+  if (!dr && !dc) return formula;
+  let out = "";
+  let i = 0;
+  while (i < formula.length) {
+    const ch = formula[i]!;
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < formula.length) {
+        if (formula[j] === ch) {
+          if (formula[j + 1] === ch) j += 2; // doubled quote = escaped
+          else {
+            j++;
+            break;
+          }
+        } else j++;
+      }
+      out += formula.slice(i, j);
+      i = j;
+      continue;
+    }
+    let next = formula.length;
+    for (const q of ['"', "'"]) {
+      const p = formula.indexOf(q, i);
+      if (p !== -1 && p < next) next = p;
+    }
+    out += shiftRefsInChunk(formula.slice(i, next), dr, dc);
+    i = next;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +507,11 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
 }
 
 function readSheetData(sheet: Sheet, sheetData: Element, shared: string[], styles: XlsxStyles): void {
+  // Shared formulas: the master <f t="shared" si ref> holds the text; children are
+  // empty <f t="shared" si/>. Resolve each child to the master's formula shifted by
+  // its offset so recalc (and a possible de-share on save) can treat it normally.
+  const sharedMasters = new Map<string, { row: number; col: number; formula: string }>();
+  const sharedChildren: Cell[] = [];
   for (const rowEl of Array.from(sheetData.getElementsByTagName("row"))) {
     const rAttr = rowEl.getAttribute("r");
     let rowNum = rAttr ? Number(rAttr) : 0;
@@ -514,9 +578,21 @@ function readSheetData(sheet: Sheet, sheetData: Element, shared: string[], style
         }
       }
       if (cell.style != null) cell.cellStyle = styles.xfStyles[Number(cell.style)];
+      if (fEl?.getAttribute("t") === "shared") {
+        const si = fEl.getAttribute("si");
+        if (si != null) {
+          cell.sharedSi = si;
+          if (formula) sharedMasters.set(si, { row, col, formula });
+          else sharedChildren.push(cell);
+        }
+      }
       sheet.cells.set(key(row, col), cell);
       noteExtent(sheet, row, col);
     }
+  }
+  for (const cell of sharedChildren) {
+    const m = sharedMasters.get(cell.sharedSi!);
+    if (m) cell.formula = shiftFormula(m.formula, cell.row - m.row, cell.col - m.col);
   }
 }
 
@@ -566,11 +642,16 @@ function ensureXlsxCellEl(sheet: Sheet, cell: Cell): Element {
   return cEl;
 }
 
-function writeXlsxCell(sheet: Sheet, cell: Cell): void {
+function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): void {
   const doc = sheet.doc!;
   const ns = doc.documentElement.namespaceURI || SS_MAIN;
   const c = ensureXlsxCellEl(sheet, cell);
-  removeByLocal(c, "f");
+  // When only the cached value changed, keep the original <f> untouched so
+  // t="shared"/"array", @si and @ref survive. A formula edit (or a group
+  // de-share) rewrites <f> as a plain formula instead.
+  const oldF = firstByLocal(c, "f");
+  const keepF = cell.formula != null && oldF != null && !cell.fDirty && !plainFormula;
+  if (!keepF) removeByLocal(c, "f");
   removeByLocal(c, "v");
   removeByLocal(c, "is");
   const addV = (text: string) => {
@@ -579,9 +660,11 @@ function writeXlsxCell(sheet: Sheet, cell: Cell): void {
     c.appendChild(v);
   };
   if (cell.formula != null) {
-    const f = doc.createElementNS(ns, "f");
-    f.textContent = cell.formula;
-    c.appendChild(f);
+    if (!keepF) {
+      const f = doc.createElementNS(ns, "f");
+      f.textContent = cell.formula;
+      c.appendChild(f);
+    }
     if (cell.kind === "n") {
       c.removeAttribute("t");
       if (cell.value !== "") addV(cell.value);
@@ -929,10 +1012,16 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
 function writeXlsx(wb: Workbook): void {
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
+    // A formula change inside a shared group would leave the other members'
+    // @si dangling, so rewrite the whole group as plain formulas (de-share).
+    const dirtySi = new Set<string>();
+    for (const cell of sheet.cells.values()) if (cell.sharedSi != null && cell.fDirty) dirtySi.add(cell.sharedSi);
     let touched = false;
     for (const cell of sheet.cells.values()) {
-      if (cell.edited || cell.recomputed) {
-        writeXlsxCell(sheet, cell);
+      const deshare = cell.sharedSi != null && dirtySi.has(cell.sharedSi);
+      if (cell.edited || cell.recomputed || deshare) {
+        writeXlsxCell(sheet, cell, deshare);
+        if (deshare) cell.sharedSi = undefined;
         touched = true;
       }
     }
@@ -1719,10 +1808,62 @@ export function readWorkbook(bytes: Uint8Array): Workbook {
   throw new Error("unrecognized workbook: expected .xlsx or .ods");
 }
 
+// After a formula was added/changed/removed, xl/calcChain.xml is stale (a known
+// Excel "repair" trigger) and cached values may be too: drop the chain, detach its
+// content-type/relationship entries, and ask for a full recalc on open.
+function dropStaleCalcChain(wb: Workbook): void {
+  let formulasChanged = false;
+  outer: for (const s of wb.sheets)
+    for (const c of s.cells.values())
+      if (c.fDirty) {
+        formulasChanged = true;
+        break outer;
+      }
+  if (!formulasChanged) return;
+  if (wb.files["xl/calcChain.xml"]) {
+    delete wb.files["xl/calcChain.xml"];
+    const ct = wb.files["[Content_Types].xml"];
+    if (ct) {
+      const doc = parseXml(ct);
+      for (const o of Array.from(doc.getElementsByTagName("Override")))
+        if (o.getAttribute("PartName") === "/xl/calcChain.xml") o.parentNode?.removeChild(o);
+      wb.files["[Content_Types].xml"] = serializeXml(doc);
+    }
+    const relsPath = "xl/_rels/workbook.xml.rels";
+    if (wb.files[relsPath]) {
+      const doc = parseXml(wb.files[relsPath]!);
+      for (const r of Array.from(doc.getElementsByTagName("Relationship")))
+        if ((r.getAttribute("Target") ?? "").endsWith("calcChain.xml")) r.parentNode?.removeChild(r);
+      wb.files[relsPath] = serializeXml(doc);
+    }
+  }
+  const wbXml = wb.files["xl/workbook.xml"];
+  if (wbXml) {
+    const doc = parseXml(wbXml);
+    const root = doc.documentElement;
+    let calcPr = firstByLocal(root, "calcPr");
+    if (!calcPr) {
+      calcPr = doc.createElementNS(root.namespaceURI, "calcPr");
+      // CT_Workbook is a strict sequence: insert before the first element that follows calcPr.
+      const after = ["oleSize", "customWorkbookViews", "pivotCaches", "smartTagPr", "smartTagTypes", "webPublishing", "fileRecoveryPr", "webPublishObjects", "extLst"];
+      let anchor: Element | null = null;
+      for (const ch of Array.from(root.children))
+        if (after.includes(ch.localName)) {
+          anchor = ch;
+          break;
+        }
+      root.insertBefore(calcPr, anchor);
+    }
+    calcPr.setAttribute("fullCalcOnLoad", "1");
+    wb.files["xl/workbook.xml"] = serializeXml(doc);
+  }
+}
+
 export function writeWorkbook(wb: Workbook): Uint8Array {
   recalc(wb);
   if (wb.kind === "xlsx") {
     writeXlsx(wb);
+    dropStaleCalcChain(wb);
     return zipSync(wb.files);
   }
   writeOds(wb);
@@ -1741,13 +1882,16 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   const existing = getCell(sheet, row, col);
   if (raw.startsWith("=")) {
     const cell = ensureCell(sheet, row, col);
-    cell.formula = raw.slice(1).trim();
+    const nf = raw.slice(1).trim();
+    if (cell.formula !== nf) cell.fDirty = true;
+    cell.formula = nf;
     cell.odfFormula = undefined;
     cell.edited = true;
     return;
   }
   if (existing == null && raw === "") return;
   const cell = ensureCell(sheet, row, col);
+  if (cell.formula != null) cell.fDirty = true;
   cell.formula = undefined;
   cell.odfFormula = undefined;
   cell.edited = true;
@@ -2402,7 +2546,14 @@ export function createSheetEditor(
           // Show the editable underlying value (formula or raw), not the formatted display.
           input.value = live.formula != null ? "=" + live.formula : live.value;
         });
+        let cancelEdit = false;
         const commit = () => {
+          if (cancelEdit) {
+            // Escape: discard whatever is in the input, restore the display.
+            cancelEdit = false;
+            input.value = displayValue(sheet, r, c);
+            return;
+          }
           const raw = input.value;
           const live = getCell(sheet, r, c);
           const before = live ? (live.formula != null ? "=" + live.formula : live.value) : "";
@@ -2425,7 +2576,7 @@ export function createSheetEditor(
             const below = inputs.get(key(r + 1, c));
             below?.focus();
           } else if (e.key === "Escape") {
-            input.value = displayValue(sheet, r, c);
+            cancelEdit = true;
             input.blur();
           }
         });

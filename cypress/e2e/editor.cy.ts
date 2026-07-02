@@ -37,6 +37,17 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="C2"]').focus().should("have.value", "=B2*2");
   });
 
+  it("Escape cancels an edit without committing the display text", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="C2"]').focus().clear().type("=B2*99").type("{esc}");
+    cy.get('input[aria-label="C2"]').should("have.value", "6"); // display restored
+    cy.get('input[aria-label="C2"]').focus().should("have.value", "=B2*2"); // formula intact
+    // Escape on a formatted cell must not commit the "$3.50" display as a string.
+    cy.get('input[aria-label="D2"]').focus().type("{esc}");
+    cy.get('input[aria-label="D2"]').should("have.value", "$3.50");
+    cy.get('input[aria-label="D2"]').focus().should("have.value", "3.5");
+  });
+
   it("edits, exports a valid .xlsx, and round-trips with recalculated values", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.window().then((win) => {

@@ -6,6 +6,7 @@ import {
   readWorkbook,
   recalc,
   setCellInput,
+  shiftFormula,
   setOdsCellStyle,
   setOdsColWidth,
   setOdsMerge,
@@ -487,5 +488,109 @@ describe("ods cell styles", () => {
     setOdsMerge(sheet, 1, 1, 1, 3, false);
     const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
     expect((back.merges ?? []).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shared formulas (xlsx <f t="shared">)
+// ---------------------------------------------------------------------------
+
+const SHARED_SHEET = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+ <sheetData>
+  <row r="1"><c r="A1"><v>2</v></c><c r="B1"><f t="shared" ref="B1:B3" si="0">A1*10</f><v>20</v></c></row>
+  <row r="2"><c r="A2"><v>3</v></c><c r="B2"><f t="shared" si="0"/><v>30</v></c></row>
+  <row r="3"><c r="A3"><v>4</v></c><c r="B3"><f t="shared" si="0"/><v>40</v></c></row>
+ </sheetData>
+</worksheet>`;
+
+function makeSharedXlsx(): Uint8Array {
+  return zipSync({
+    "[Content_Types].xml": strToU8(
+      `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>`,
+    ),
+    "_rels/.rels": strToU8("<Relationships/>"),
+    "xl/workbook.xml": strToU8(
+      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    ),
+    "xl/_rels/workbook.xml.rels": strToU8(
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>`,
+    ),
+    "xl/worksheets/sheet1.xml": strToU8(SHARED_SHEET),
+    "xl/calcChain.xml": strToU8(`<calcChain/>`),
+  });
+}
+
+describe("shiftFormula", () => {
+  it("shifts relative refs and keeps absolute parts", () => {
+    expect(shiftFormula("A1*10", 1, 0)).toBe("A2*10");
+    expect(shiftFormula("$A$1+B2", 2, 3)).toBe("$A$1+E4");
+    expect(shiftFormula("A$1+$B2", 1, 1)).toBe("B$1+$B3");
+    expect(shiftFormula("SUM(A1:B2)", 1, 1)).toBe("SUM(B2:C3)");
+  });
+  it("leaves strings, function names and defined names alone", () => {
+    expect(shiftFormula('IF(A1>0,"A1 ok","no")', 1, 0)).toBe('IF(A2>0,"A1 ok","no")');
+    expect(shiftFormula("LOG10(A1)", 1, 0)).toBe("LOG10(A2)");
+    expect(shiftFormula("myname1+A1", 1, 0)).toBe("myname1+A2");
+    expect(shiftFormula("ZZZ9999999+A1", 1, 0)).toBe("ZZZ9999999+A2");
+  });
+  it("shifts sheet-qualified refs", () => {
+    expect(shiftFormula("Sheet2!A1+1", 1, 1)).toBe("Sheet2!B2+1");
+    expect(shiftFormula("'My Sheet'!A1", 0, 1)).toBe("'My Sheet'!B1");
+  });
+  it("marks out-of-range results as #REF!", () => {
+    expect(shiftFormula("A1", -1, 0)).toBe("#REF!");
+  });
+});
+
+describe("xlsx shared formulas", () => {
+  it("resolves child formulas from the master and recalcs them", () => {
+    const wb = readWorkbook(makeSharedXlsx());
+    const s = wb.sheets[0]!;
+    expect(s.cells.get("2:2")?.formula).toBe("A2*10");
+    expect(s.cells.get("3:2")?.formula).toBe("A3*10");
+    setCellInput(s, 2, 1, "7"); // A2 = 7
+    recalc(wb);
+    expect(s.cells.get("2:2")?.value).toBe("70"); // child recalculated
+  });
+
+  it("keeps shared <f> attributes when only cached values change", () => {
+    const wb = readWorkbook(makeSharedXlsx());
+    setCellInput(wb.sheets[0]!, 2, 1, "7"); // value edit, not a formula edit
+    const ws = strFromU8(unzipSync(writeWorkbook(wb))["xl/worksheets/sheet1.xml"]);
+    expect(ws).toContain('t="shared" ref="B1:B3" si="0"');
+    expect(ws).toContain("<v>70</v>");
+  });
+
+  it("de-shares the whole group when a member formula is edited", () => {
+    const wb = readWorkbook(makeSharedXlsx());
+    const s = wb.sheets[0]!;
+    setCellInput(s, 1, 2, "=A1*100"); // edit the master's formula
+    const out = writeWorkbook(wb);
+    const ws = strFromU8(unzipSync(out)["xl/worksheets/sheet1.xml"]);
+    expect(ws).not.toContain('t="shared"');
+    expect(ws).not.toContain("si=");
+    // children keep working, as plain translated formulas
+    const wb2 = readWorkbook(out);
+    expect(wb2.sheets[0]!.cells.get("2:2")?.formula).toBe("A2*10");
+    expect(wb2.sheets[0]!.cells.get("1:2")?.formula).toBe("A1*100");
+  });
+
+  it("drops calcChain.xml and sets fullCalcOnLoad when a formula changes", () => {
+    const wb = readWorkbook(makeSharedXlsx());
+    setCellInput(wb.sheets[0]!, 1, 4, "=A1+A2"); // new formula
+    const files = unzipSync(writeWorkbook(wb));
+    expect(files["xl/calcChain.xml"]).toBeUndefined();
+    expect(strFromU8(files["[Content_Types].xml"])).not.toContain("calcChain");
+    expect(strFromU8(files["xl/_rels/workbook.xml.rels"])).not.toContain("calcChain");
+    expect(strFromU8(files["xl/workbook.xml"])).toContain('fullCalcOnLoad="1"');
+  });
+
+  it("keeps calcChain.xml when no formula changed", () => {
+    const wb = readWorkbook(makeSharedXlsx());
+    setCellInput(wb.sheets[0]!, 2, 1, "7"); // value edit only
+    const files = unzipSync(writeWorkbook(wb));
+    expect(files["xl/calcChain.xml"]).toBeDefined();
+    expect(strFromU8(files["xl/workbook.xml"])).not.toContain("fullCalcOnLoad");
   });
 });
