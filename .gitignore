@@ -6,3 +6,4 @@ demo-dist/
 cypress/screenshots/
 cypress/videos/
 cypress/downloads/
+dist/
