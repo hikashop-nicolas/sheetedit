@@ -85,6 +85,17 @@ export interface Sheet {
   tableEl?: Element;
   /** ods: 1-based row -> its table:style-name, preserved/updated so writeOds can re-emit it. */
   odsRowStyles?: Map<number, string>;
+  /** ods: original <table:table-row> per expanded row index, so row attributes
+      (visibility, default-cell-style-name, ...) survive a rebuild. */
+  odsRowEls?: Map<number, Element>;
+  /** ods: repeated content rows beyond REPEAT_CAP, preserved verbatim as runs. */
+  odsRowRuns?: { from: number; to: number; el: Element }[];
+  /** ods: original covered-table-cell elements that carry content or attributes, by "r:c". */
+  odsCoveredEls?: Map<string, Element>;
+  /** ods: expanded row range of the original table:table-header-rows group. */
+  odsHeaderRows?: { el: Element; from: number; to: number };
+  /** ods: rows must be re-emitted (cell/merge/row-height edits); untouched sheets keep their XML. */
+  odsDirty?: boolean;
 }
 
 export interface Workbook {
@@ -1270,30 +1281,53 @@ function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
   if (cols.size) sheet.colWidths = cols;
 
   let rowNum = 0;
-  const rows: Element[] = [];
-  const collect = (parent: Element) => {
+  const rows: { el: Element; header: boolean }[] = [];
+  let headerGroupEl: Element | undefined;
+  const collect = (parent: Element, header = false) => {
     for (const ch of Array.from(parent.children)) {
-      if (ch.localName === "table-row") rows.push(ch);
-      else if (ch.localName === "table-header-rows" || ch.localName === "table-rows") collect(ch);
+      if (ch.localName === "table-row") rows.push({ el: ch, header });
+      else if (ch.localName === "table-header-rows" || ch.localName === "table-rows") {
+        if (ch.localName === "table-header-rows") headerGroupEl = ch;
+        collect(ch, header || ch.localName === "table-header-rows");
+      }
     }
   };
   collect(table);
   const rowHeights = new Map<number, number>();
   const rowStyles = new Map<number, string>();
+  const rowEls = new Map<number, Element>();
+  const rowRuns: { from: number; to: number; el: Element }[] = [];
+  const coveredEls = new Map<string, Element>();
   const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
-  for (const rowEl of rows) {
+  let headerFrom = 0;
+  let headerTo = 0;
+  for (const { el: rowEl, header } of rows) {
     const rrep = Math.max(1, Number(rowEl.getAttribute("table:number-rows-repeated") || "1"));
     const rowStyle = rowEl.getAttribute("table:style-name") ?? undefined;
     const rh = styles.rowH.get(rowStyle ?? "");
     const parsedCells = parseOdsRow(rowEl, styles);
     const rowHasContent = parsedCells.some((c) => c.has);
     const copies = rowHasContent ? Math.min(rrep, REPEAT_CAP) : 0;
+    if (header) {
+      if (!headerFrom) headerFrom = rowNum + 1;
+      headerTo = Math.max(headerTo, rowNum + rrep);
+    }
+    // Keep the original row element per expanded index so its attributes
+    // (visibility, default-cell-style-name, ...) survive a rebuild.
+    const worthKeeping = Array.from(rowEl.attributes).some((a) => a.name !== "table:number-rows-repeated");
+    if (worthKeeping) for (let k = 0; k < Math.min(rrep, REPEAT_CAP); k++) rowEls.set(rowNum + 1 + k, rowEl);
+    // A content run repeated beyond the cap: the un-expanded tail is preserved verbatim.
+    if (rowHasContent && rrep > REPEAT_CAP) rowRuns.push({ from: rowNum + 1 + REPEAT_CAP, to: rowNum + rrep, el: rowEl });
     for (let k = 0; k < copies; k++) {
       const r = rowNum + 1 + k;
       if (rh) rowHeights.set(r, rh);
       if (rowStyle) rowStyles.set(r, rowStyle);
       for (const pc of parsedCells) {
-        if (!pc.has) continue;
+        if (!pc.has) {
+          // A covered (merged-away) cell may still carry content/attributes; keep it.
+          if (pc.coveredEl) for (let j = 0; j < pc.span; j++) coveredEls.set(key(r, pc.startCol + j), pc.coveredEl);
+          continue;
+        }
         const c = pc.cell!;
         if ((pc.colSpan ?? 1) > 1 || (pc.rowSpan ?? 1) > 1) {
           merges.push({ r1: r, c1: c.col, r2: r + (pc.rowSpan ?? 1) - 1, c2: c.col + (pc.colSpan ?? 1) - 1 });
@@ -1308,15 +1342,22 @@ function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
   }
   if (rowHeights.size) sheet.rowHeights = rowHeights;
   if (rowStyles.size) sheet.odsRowStyles = rowStyles;
+  if (rowEls.size) sheet.odsRowEls = rowEls;
+  if (rowRuns.length) sheet.odsRowRuns = rowRuns;
+  if (coveredEls.size) sheet.odsCoveredEls = coveredEls;
+  if (headerGroupEl && headerFrom) sheet.odsHeaderRows = { el: headerGroupEl, from: headerFrom, to: headerTo };
   if (merges.length) sheet.merges = merges;
 }
 
 interface ParsedOdsCell {
   has: boolean;
   span: number;
+  startCol: number;
   colSpan?: number;
   rowSpan?: number;
   cell?: Cell;
+  /** A covered-table-cell that carries content or attributes, preserved on save. */
+  coveredEl?: Element;
 }
 
 function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
@@ -1328,7 +1369,12 @@ function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
     const crep = Math.max(1, Number(cellEl.getAttribute("table:number-columns-repeated") || "1"));
     const startCol = col + 1;
     col += crep;
-    if (local === "covered-table-cell") continue; // merged-away cell
+    if (local === "covered-table-cell") {
+      // Merged-away cell: keep it when it carries anything beyond the repeat count.
+      const worth = cellEl.children.length > 0 || Array.from(cellEl.attributes).some((a) => a.name !== "table:number-columns-repeated");
+      out.push({ has: false, span: Math.min(crep, REPEAT_CAP), startCol, coveredEl: worth ? cellEl : undefined });
+      continue;
+    }
     const colSpan = Math.max(1, Number(cellEl.getAttribute("table:number-columns-spanned") || "1"));
     const rowSpan = Math.max(1, Number(cellEl.getAttribute("table:number-rows-spanned") || "1"));
     const valueType = cellEl.getAttribute("office:value-type");
@@ -1363,7 +1409,7 @@ function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
     }
     const has = value !== "" || formulaRaw != null || style != null;
     if (!has) {
-      out.push({ has: false, span: crep });
+      out.push({ has: false, span: crep, startCol });
       continue;
     }
     const cell: Cell = {
@@ -1378,7 +1424,7 @@ function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
       cellStyle: style ? styles.cell.get(style) : undefined,
       el: cellEl,
     };
-    out.push({ has: true, span: Math.min(crep, REPEAT_CAP), colSpan, rowSpan, cell });
+    out.push({ has: true, span: Math.min(crep, REPEAT_CAP), startCol, colSpan, rowSpan, cell });
   }
   return out;
 }
@@ -1557,10 +1603,12 @@ export function setOdsRowHeight(wb: Workbook, sheet: Sheet, row: number, px: num
   st.appendChild(p);
   const name = internOdsStyle(doc, ensureOdsAutoStyles(doc), "table-row", "ro", st);
   (sheet.odsRowStyles ??= new Map()).set(row, name);
+  sheet.odsDirty = true;
 }
 
 // Add or remove a merged range; writeOds emits the spans and covered cells.
 export function setOdsMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2: number, merge: boolean): void {
+  sheet.odsDirty = true;
   const top = Math.min(r1, r2),
     left = Math.min(c1, c2),
     bottom = Math.max(r1, r2),
@@ -1589,6 +1637,15 @@ function writeOds(wb: Workbook): void {
   for (const sheet of wb.sheets) {
     const table = sheet.tableEl;
     if (!table) continue;
+    // An untouched sheet keeps its original XML verbatim (repeats, header groups,
+    // row attributes, covered cells); only touched sheets are re-emitted.
+    let cellsDirty = false;
+    for (const cell of sheet.cells.values())
+      if (cell.edited || cell.recomputed) {
+        cellsDirty = true;
+        break;
+      }
+    if (!cellsDirty && !sheet.odsDirty) continue;
     // preserve structural children (column definitions etc.), drop existing rows
     const keep: Element[] = [];
     for (const ch of Array.from(table.children)) {
@@ -1610,8 +1667,38 @@ function writeOds(wb: Workbook): void {
     }
     const maxRow = Math.max(1, sheet.maxRow);
     const maxCol = Math.max(1, sheet.maxCol, mergeMaxCol);
-    for (let r = 1; r <= maxRow; r++) {
-      const rowEl = doc.createElementNS(ODS.table, "table:table-row");
+    // Repeated content runs beyond the expansion cap, re-emitted verbatim.
+    const runAt = new Map<number, { to: number; el: Element }>();
+    let lastRow = maxRow;
+    for (const rr of sheet.odsRowRuns ?? []) {
+      runAt.set(rr.from, { to: rr.to, el: rr.el });
+      lastRow = Math.max(lastRow, rr.to);
+    }
+    // Original header-rows group: its rows are re-wrapped in a fresh group element.
+    const hdr = sheet.odsHeaderRows;
+    const headerEl = hdr ? (hdr.el.cloneNode(false) as Element) : null;
+    const appendRow = (rowEl: Element, r: number) => {
+      if (hdr && headerEl && r >= hdr.from && r <= hdr.to) {
+        if (!headerEl.parentNode) table.appendChild(headerEl);
+        headerEl.appendChild(rowEl);
+      } else table.appendChild(rowEl);
+    };
+    for (let r = 1; r <= lastRow; r++) {
+      const run = runAt.get(r);
+      if (run) {
+        // The preserved tail of a repeated content run: one clone with its repeat count.
+        const clone = run.el.cloneNode(true) as Element;
+        const n = run.to - r + 1;
+        if (n > 1) clone.setAttributeNS(ODS.table, "table:number-rows-repeated", String(n));
+        else clone.removeAttribute("table:number-rows-repeated");
+        appendRow(clone, r);
+        r = run.to;
+        continue;
+      }
+      if (r > maxRow) continue; // gaps past the content extent existed only as empty runs
+      const orig = sheet.odsRowEls?.get(r);
+      const rowEl = orig ? (orig.cloneNode(false) as Element) : doc.createElementNS(ODS.table, "table:table-row");
+      rowEl.removeAttribute("table:number-rows-repeated");
       const rowStyle = sheet.odsRowStyles?.get(r);
       if (rowStyle) rowEl.setAttributeNS(ODS.table, "table:style-name", rowStyle);
       // The last column needing an explicit cell: content or a merge edge on this row.
@@ -1624,7 +1711,10 @@ function writeOds(wb: Workbook): void {
       }
       for (let c = 1; c <= lastContent; c++) {
         if (covered.has(key(r, c))) {
-          rowEl.appendChild(doc.createElementNS(ODS.table, "table:covered-table-cell"));
+          const origCov = sheet.odsCoveredEls?.get(key(r, c));
+          const cov = origCov ? (origCov.cloneNode(true) as Element) : doc.createElementNS(ODS.table, "table:covered-table-cell");
+          cov.removeAttribute("table:number-columns-repeated");
+          rowEl.appendChild(cov);
           continue;
         }
         const cell = getCell(sheet, r, c);
@@ -1641,7 +1731,7 @@ function writeOds(wb: Workbook): void {
         filler.setAttributeNS(ODS.table, "table:number-columns-repeated", String(maxCol - lastContent));
         rowEl.appendChild(filler);
       }
-      table.appendChild(rowEl);
+      appendRow(rowEl, r);
     }
   }
   wb.files["content.xml"] = serializeXml(doc);

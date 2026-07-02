@@ -594,3 +594,88 @@ describe("xlsx shared formulas", () => {
     expect(strFromU8(files["xl/workbook.xml"])).not.toContain("fullCalcOnLoad");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ods preservation (untouched sheets verbatim; touched sheets keep structure)
+// ---------------------------------------------------------------------------
+
+const ODS_PRESERVE = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+ <office:body><office:spreadsheet>
+  <table:table table:name="Touched">
+   <table:table-header-rows>
+    <table:table-row><table:table-cell office:value-type="string" office:string-value="head"><text:p>head</text:p></table:table-cell></table:table-row>
+   </table:table-header-rows>
+   <table:table-row table:visibility="collapse" table:default-cell-style-name="Default"><table:table-cell office:value-type="float" office:value="1"><text:p>1</text:p></table:table-cell></table:table-row>
+   <table:table-row><table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="1" office:value-type="string" office:string-value="merged"><text:p>merged</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="99"><text:p>99</text:p></table:covered-table-cell></table:table-row>
+  </table:table>
+  <table:table table:name="Untouched">
+   <table:table-row table:number-rows-repeated="3"><table:table-cell office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell></table:table-row>
+  </table:table>
+ </office:spreadsheet></office:body>
+</office:document-content>`;
+
+function makePreserveOds(): Uint8Array {
+  const repacked: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {
+    mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+    "content.xml": strToU8(ODS_PRESERVE),
+  };
+  return zipSync(repacked as Record<string, Uint8Array>);
+}
+
+describe("ods preservation", () => {
+  it("keeps untouched sheets verbatim (repeats not expanded)", () => {
+    const wb = readWorkbook(makePreserveOds());
+    setCellInput(wb.sheets[0]!, 1, 1, "edited"); // touch only the first sheet
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    const untouched = content.slice(content.indexOf('table:name="Untouched"'));
+    expect(untouched).toContain('table:number-rows-repeated="3"');
+  });
+
+  it("keeps row attributes on the touched sheet", () => {
+    const wb = readWorkbook(makePreserveOds());
+    setCellInput(wb.sheets[0]!, 1, 1, "edited");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    const touched = content.slice(content.indexOf('table:name="Touched"'), content.indexOf('table:name="Untouched"'));
+    expect(touched).toContain('table:visibility="collapse"');
+    expect(touched).toContain('table:default-cell-style-name="Default"');
+  });
+
+  it("re-wraps header rows in table:table-header-rows on the touched sheet", () => {
+    const wb = readWorkbook(makePreserveOds());
+    setCellInput(wb.sheets[0]!, 2, 1, "edited");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    const touched = content.slice(content.indexOf('table:name="Touched"'), content.indexOf('table:name="Untouched"'));
+    expect(touched).toContain("<table:table-header-rows>");
+    // the header row (with "head") sits inside the group
+    const hdrStart = touched.indexOf("<table:table-header-rows>");
+    const hdrEnd = touched.indexOf("</table:table-header-rows>");
+    expect(touched.slice(hdrStart, hdrEnd)).toContain("head");
+  });
+
+  it("keeps covered-cell content on the touched sheet", () => {
+    const wb = readWorkbook(makePreserveOds());
+    setCellInput(wb.sheets[0]!, 1, 1, "edited");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    const touched = content.slice(content.indexOf('table:name="Touched"'), content.indexOf('table:name="Untouched"'));
+    expect(touched).toContain("covered-table-cell");
+    expect(touched).toContain('office:value="99"'); // hidden merged-away value survives
+  });
+
+  it("preserves the tail of a content run repeated beyond the expansion cap", () => {
+    const content = ODS_PRESERVE.replace(
+      'table:number-rows-repeated="3"',
+      'table:number-rows-repeated="1030"',
+    );
+    const repacked: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    };
+    const wb = readWorkbook(zipSync(repacked as Record<string, Uint8Array>));
+    setCellInput(wb.sheets[1]!, 1, 1, "edited"); // touch the repeated sheet itself
+    const out = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    const sheet2 = out.slice(out.indexOf('table:name="Untouched"'));
+    expect(sheet2).toContain('table:number-rows-repeated="6"'); // 1030 - 1024 tail kept
+    expect(sheet2).toContain('office:value="7"');
+  });
+});
