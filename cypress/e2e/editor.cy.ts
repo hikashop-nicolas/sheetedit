@@ -60,6 +60,49 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="B3"]').should("have.value", "");
   });
 
+  it("inserts =SUM(range) after a selected column run", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="B2"]').focus(); // anchor
+    cy.get('input[aria-label="B3"]').trigger("mousedown", { shiftKey: true }); // extend B2:B3
+    cy.get(".sheetedit-fxsum").click();
+    // The result cell is focused for review, showing the editable formula.
+    cy.focused().should("have.attr", "aria-label", "B4");
+    cy.focused().should("have.value", "=SUM(B2:B3)");
+    cy.focused().blur();
+    cy.get('input[aria-label="B4"]').should("have.value", "7"); // 3 + 4
+  });
+
+  it("picks a range for a pending formula while editing", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="E1"]').focus();
+    cy.get(".sheetedit-fxsum").click(); // editing a single cell: enter pick mode
+    cy.get(".sheetedit-fxbar").should("have.class", "is-picking");
+    cy.get('input[aria-label="B2"]').closest("td").trigger("pointerdown", { pointerType: "mouse", buttons: 1 });
+    cy.get('input[aria-label="B3"]').closest("td").trigger("pointermove", { pointerType: "mouse", buttons: 1 });
+    cy.window().then((win) => win.dispatchEvent(new win.PointerEvent("pointerup", { pointerType: "mouse" })));
+    cy.get('input[aria-label="E1"]').should("have.value", "=SUM(B2:B3)");
+    cy.get(".sheetedit-fxbar").should("not.have.class", "is-picking");
+    cy.focused().type("{enter}");
+    cy.get('input[aria-label="E1"]').should("have.value", "7");
+  });
+
+  it("edits through the formula bar", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="C2"]').focus();
+    cy.get(".sheetedit-fxref").should("have.text", "C2");
+    cy.get(".sheetedit-fxinput").should("have.value", "=B2*2");
+    cy.get(".sheetedit-fxinput").clear().type("=B2*3{enter}");
+    cy.get('input[aria-label="C2"]').should("have.value", "9");
+  });
+
+  it("collapses the style cluster into a group button when narrow", () => {
+    cy.viewport(340, 600);
+    open("cypress/fixtures/sample.xlsx");
+    cy.get(".sheetedit-tb-slot").contains("button", "Aa"); // collapsed to the group button
+    cy.get(".sheetedit-tb-slot button").contains("Aa").click();
+    cy.get(".sheetedit-tb-groupmenu").should("be.visible").find("button").should("have.length.greaterThan", 4);
+  });
+
   it("Escape cancels an edit without committing the display text", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C2"]').focus().clear().type("=B2*99").type("{esc}");

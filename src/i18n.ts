@@ -31,6 +31,12 @@ const en: Dict = {
   selectColumn: "Select column {col} (drag the right edge to resize)",
   selectRow: "Select row {row} (drag the bottom edge to resize)",
   openFailed: "This file could not be opened as a spreadsheet. It may be corrupted or password-protected. Saving returns the file unchanged.",
+  formulaBar: "Formula",
+  activeCell: "Active cell",
+  insertSum: "Insert SUM of a range",
+  functions: "Functions",
+  pickRange: "Select a range of cells…",
+  formatting: "Formatting",
 };
 
 const fr: Dict = {
@@ -59,6 +65,12 @@ const fr: Dict = {
   selectColumn: "Sélectionner la colonne {col} (glisser le bord droit pour redimensionner)",
   selectRow: "Sélectionner la ligne {row} (glisser le bord inférieur pour redimensionner)",
   openFailed: "Ce fichier n'a pas pu être ouvert comme classeur. Il est peut-être corrompu ou protégé par mot de passe. L'enregistrement renvoie le fichier inchangé.",
+  formulaBar: "Formule",
+  activeCell: "Cellule active",
+  insertSum: "Insérer la somme d'une plage",
+  functions: "Fonctions",
+  pickRange: "Sélectionnez une plage de cellules…",
+  formatting: "Mise en forme",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr };
