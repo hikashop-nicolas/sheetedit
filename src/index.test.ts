@@ -679,3 +679,32 @@ describe("ods preservation", () => {
     expect(sheet2).toContain('office:value="7"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// error surface
+// ---------------------------------------------------------------------------
+
+describe("error surface", () => {
+  it("rejects CFB containers (encrypted xlsx / legacy xls) with a clear message", () => {
+    const cfb = new Uint8Array(16);
+    cfb.set([0xd0, 0xcf, 0x11, 0xe0]);
+    expect(() => readWorkbook(cfb)).toThrow(/password-protected or legacy/);
+  });
+
+  it("rejects a non-archive with a clear message", () => {
+    expect(() => readWorkbook(new Uint8Array([1, 2, 3, 4, 5]))).toThrow(/not a valid workbook/);
+  });
+
+  it("rejects corrupt essential XML with a clear message", () => {
+    const bad = zipSync({
+      "xl/workbook.xml": strToU8("<workbook><unclosed"),
+    });
+    expect(() => readWorkbook(bad)).toThrow(/corrupt workbook XML/);
+  });
+
+  it("degrades gracefully when an optional part is corrupt", () => {
+    // styles.xml is already the invalid "<<STYLES-MARKER>>" in the base fixture.
+    const wb = readWorkbook(makeXlsx());
+    expect(wb.sheets[0]!.cells.get("1:1")?.value).toBe("2");
+  });
+});

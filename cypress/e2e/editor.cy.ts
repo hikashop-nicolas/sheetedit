@@ -37,6 +37,29 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="C2"]').focus().should("have.value", "=B2*2");
   });
 
+  it("navigates cells with arrow keys", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A1"]').focus();
+    cy.focused().type("{downArrow}");
+    cy.focused().should("have.attr", "aria-label", "A2");
+    cy.focused().type("{upArrow}");
+    cy.focused().should("have.attr", "aria-label", "A1");
+  });
+
+  // Note: TSV paste is verified manually in a real browser; Cypress's synthetic
+  // ClipboardEvent does not reach the page's paste listener with usable data.
+
+  it("clears a multi-cell selection with Delete", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A2"]').focus(); // anchor
+    cy.get('input[aria-label="B3"]').trigger("mousedown", { shiftKey: true }); // extend A2:B3
+    cy.focused().trigger("keydown", { key: "Delete" });
+    cy.get('input[aria-label="A2"]').should("have.value", "");
+    cy.get('input[aria-label="B2"]').should("have.value", "");
+    cy.get('input[aria-label="A3"]').should("have.value", "");
+    cy.get('input[aria-label="B3"]').should("have.value", "");
+  });
+
   it("Escape cancels an edit without committing the display text", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C2"]').focus().clear().type("=B2*99").type("{esc}");

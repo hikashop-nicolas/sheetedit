@@ -269,8 +269,19 @@ export function shiftFormula(formula: string, dr: number, dc: number): string {
 // XML helpers
 // ---------------------------------------------------------------------------
 
-const parseXml = (file: Uint8Array): Document =>
-  new DOMParser().parseFromString(strFromU8(file), "application/xml");
+const parseXml = (file: Uint8Array): Document => {
+  const doc = new DOMParser().parseFromString(strFromU8(file), "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("corrupt workbook XML");
+  return doc;
+};
+// Optional parts (styles, rels): a broken one degrades instead of failing the open.
+const parseXmlOpt = (file: Uint8Array): Document | undefined => {
+  try {
+    return parseXml(file);
+  } catch {
+    return undefined;
+  }
+};
 
 function serializeXml(doc: Document): Uint8Array {
   let s = new XMLSerializer().serializeToString(doc);
@@ -295,7 +306,8 @@ const SS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
 function readSharedStrings(file: Uint8Array | undefined): string[] {
   if (!file) return [];
-  const doc = parseXml(file);
+  const doc = parseXmlOpt(file);
+  if (!doc) return [];
   return Array.from(doc.getElementsByTagName("si")).map((si) =>
     Array.from(si.getElementsByTagName("t"))
       .map((t) => t.textContent ?? "")
@@ -336,7 +348,9 @@ function readTheme(file: Uint8Array | undefined): string[] {
   const fallback = ["#ffffff", "#000000", "#e7e6e6", "#44546a", "#4472c4", "#ed7d31", "#a5a5a5", "#ffc000", "#5b9bd5", "#70ad47", "#0563c1", "#954f72"];
   if (!file) return fallback;
   try {
-    const scheme = findByLocal(parseXml(file), "clrScheme");
+    const themeDoc = parseXmlOpt(file);
+    if (!themeDoc) return [];
+    const scheme = findByLocal(themeDoc, "clrScheme");
     if (!scheme) return fallback;
     const byName: Record<string, string> = {};
     for (const el of Array.from(scheme.children)) {
@@ -441,8 +455,9 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const wbDoc = parseXml(wbXml);
   const rels = new Map<string, string>();
   const relsFile = files["xl/_rels/workbook.xml.rels"];
-  if (relsFile) {
-    for (const r of Array.from(parseXml(relsFile).getElementsByTagName("Relationship"))) {
+  const relsDoc = relsFile ? parseXmlOpt(relsFile) : undefined;
+  if (relsDoc) {
+    for (const r of Array.from(relsDoc.getElementsByTagName("Relationship"))) {
       const id = r.getAttribute("Id");
       const target = r.getAttribute("Target");
       if (id && target) rels.set(id, target);
@@ -450,7 +465,7 @@ function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
   const theme = readTheme(files["xl/theme/theme1.xml"]);
-  wb.stylesDoc = files["xl/styles.xml"] ? parseXml(files["xl/styles.xml"]) : undefined;
+  wb.stylesDoc = files["xl/styles.xml"] ? parseXmlOpt(files["xl/styles.xml"]) : undefined;
   const styles = readXlsxStyles(wb.stylesDoc, theme);
 
   let n = 0;
@@ -908,7 +923,7 @@ function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
  */
 export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change: StyleChange): void {
   const doc = wb.stylesDoc;
-  if (!doc) return;
+  if (!doc || !sheet.doc || !sheet.sheetData) return; // chartsheets have no cells to style
   const ns = doc.documentElement.namespaceURI || SS_MAIN;
   const ce = (name: string) => doc.createElementNS(ns, name);
   const root = doc.documentElement;
@@ -1247,7 +1262,8 @@ function readOds(files: Record<string, Uint8Array>): Workbook {
   if (!contentFile) throw new Error("not an .ods: content.xml missing");
   const contentDoc = parseXml(contentFile);
   const docs = [contentDoc];
-  if (files["styles.xml"]) docs.push(parseXml(files["styles.xml"]));
+  const odsStylesDoc = files["styles.xml"] ? parseXmlOpt(files["styles.xml"]) : undefined;
+  if (odsStylesDoc) docs.push(odsStylesDoc);
   const styles = parseOdsStyles(docs);
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
@@ -1889,7 +1905,15 @@ export function recalc(wb: Workbook): void {
 // ---------------------------------------------------------------------------
 
 export function readWorkbook(bytes: Uint8Array): Workbook {
-  const files = unzipSync(bytes);
+  // Encrypted .xlsx and legacy binary .xls are CFB containers, not zips.
+  if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)
+    throw new Error("password-protected or legacy binary workbook");
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(bytes);
+  } catch {
+    throw new Error("not a valid workbook file (unreadable archive)");
+  }
   if (files["xl/workbook.xml"]) return readXlsx(files);
   if (files["content.xml"]) {
     const mt = files["mimetype"] ? strFromU8(files["mimetype"]) : "";
@@ -1913,23 +1937,26 @@ function dropStaleCalcChain(wb: Workbook): void {
   if (wb.files["xl/calcChain.xml"]) {
     delete wb.files["xl/calcChain.xml"];
     const ct = wb.files["[Content_Types].xml"];
-    if (ct) {
-      const doc = parseXml(ct);
+    const ctDoc = ct ? parseXmlOpt(ct) : undefined;
+    if (ctDoc) {
+      const doc = ctDoc;
       for (const o of Array.from(doc.getElementsByTagName("Override")))
         if (o.getAttribute("PartName") === "/xl/calcChain.xml") o.parentNode?.removeChild(o);
       wb.files["[Content_Types].xml"] = serializeXml(doc);
     }
     const relsPath = "xl/_rels/workbook.xml.rels";
-    if (wb.files[relsPath]) {
-      const doc = parseXml(wb.files[relsPath]!);
+    const relsDoc2 = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]!) : undefined;
+    if (relsDoc2) {
+      const doc = relsDoc2;
       for (const r of Array.from(doc.getElementsByTagName("Relationship")))
         if ((r.getAttribute("Target") ?? "").endsWith("calcChain.xml")) r.parentNode?.removeChild(r);
       wb.files[relsPath] = serializeXml(doc);
     }
   }
   const wbXml = wb.files["xl/workbook.xml"];
-  if (wbXml) {
-    const doc = parseXml(wbXml);
+  const wbDoc2 = wbXml ? parseXmlOpt(wbXml) : undefined;
+  if (wbDoc2) {
+    const doc = wbDoc2;
     const root = doc.documentElement;
     let calcPr = firstByLocal(root, "calcPr");
     if (!calcPr) {
@@ -2072,6 +2099,7 @@ function injectStyles(): void {
     }
     .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
     .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px #6e7bff; background:#eef0ff; }
+    .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:#2b2f36; border-top:1px solid #1c1f24; overflow-x:auto; }
     .sheetedit-tab {
       font:inherit; background:#3a3f47; color:#cfd3da; border:1px solid #4a4f57; border-bottom:none;
@@ -2092,7 +2120,29 @@ export function createSheetEditor(
   let dirty = false;
   injectStyles();
 
-  const wb = readWorkbook(bytes);
+  let wb: Workbook;
+  try {
+    wb = readWorkbook(bytes);
+  } catch (e) {
+    // A file that cannot be opened must never lead to a blank editable grid
+    // overwriting it: show the reason and return the original bytes on save.
+    console.warn("[sheetedit] failed to open workbook", e);
+    const errWrap = document.createElement("div");
+    errWrap.className = "sheetedit-wrap";
+    const banner = document.createElement("div");
+    banner.className = "sheetedit-error";
+    banner.setAttribute("role", "alert");
+    banner.textContent = t("openFailed");
+    errWrap.appendChild(banner);
+    container.appendChild(errWrap);
+    return {
+      getBytes: () => Promise.resolve(original.slice()),
+      isDirty: () => false,
+      destroy() {
+        errWrap.remove();
+      },
+    };
+  }
   // Trust the file's cached results on open (like Excel/LibreOffice); recalc only runs
   // after an edit. Recomputing on load would overwrite valid cached values whose inputs
   // are blank in this session (e.g. a DATEDIF age before a birthdate is entered).
@@ -2496,6 +2546,43 @@ export function createSheetEditor(
     }
   };
 
+  // Clear every cell in a selection rectangle (multi-cell Delete).
+  const clearRange = (range: { r1: number; c1: number; r2: number; c2: number }) => {
+    const sheet = wb.sheets[active]!;
+    for (let r = range.r1; r <= range.r2; r++)
+      for (let c = range.c1; c <= range.c2; c++) setCellInput(sheet, r, c, "");
+    recalc(wb);
+    mark();
+    refreshDisplays(sheet);
+  };
+  // Copy a multi-cell selection as TSV (a single cell keeps the native copy).
+  const copyRange = (e: ClipboardEvent) => {
+    if (!sel || (sel.r1 === sel.r2 && sel.c1 === sel.c2)) return;
+    const sheet = wb.sheets[active]!;
+    const lines: string[] = [];
+    for (let r = sel.r1; r <= sel.r2; r++) {
+      const vals: string[] = [];
+      for (let c = sel.c1; c <= sel.c2; c++) vals.push(getCell(sheet, r, c)?.value ?? "");
+      lines.push(vals.join("\t"));
+    }
+    e.clipboardData?.setData("text/plain", lines.join("\n"));
+    e.preventDefault();
+  };
+  // Paste a TSV block (e.g. an Excel range) across cells, starting at the focused one.
+  const pasteTsv = (e: ClipboardEvent, r0: number, c0: number) => {
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text.includes("\t") && !text.includes("\n")) return; // single value: native paste
+    e.preventDefault();
+    const sheet = wb.sheets[active]!;
+    const rows = text.replace(/\r\n?/g, "\n").split("\n");
+    if (rows.length && rows[rows.length - 1] === "") rows.pop(); // Excel's trailing newline
+    rows.forEach((line, i) => line.split("\t").forEach((val, j) => setCellInput(sheet, r0 + i, c0 + j, val)));
+    recalc(wb);
+    mark();
+    renderGrid(); // the paste may extend the used range; rebuild
+    inputs.get(key(r0, c0))?.focus();
+  };
+
   const renderGrid = () => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
@@ -2660,16 +2747,33 @@ export function createSheetEditor(
         };
         input.addEventListener("blur", commit);
         input.addEventListener("keydown", (e) => {
+          const moveTo = (rr: number, cc: number) => {
+            const target = inputs.get(key(rr, cc));
+            if (!target) return;
+            e.preventDefault();
+            input.blur();
+            target.focus();
+          };
           if (e.key === "Enter") {
             e.preventDefault();
             input.blur();
-            const below = inputs.get(key(r + 1, c));
-            below?.focus();
+            inputs.get(key(r + 1, c))?.focus();
           } else if (e.key === "Escape") {
             cancelEdit = true;
             input.blur();
+          } else if (e.key === "ArrowDown") moveTo(r + 1, c);
+          else if (e.key === "ArrowUp") moveTo(r - 1, c);
+          // Left/right leave the cell only from the caret's edge, so in-cell editing stays natural.
+          else if (e.key === "ArrowLeft" && input.selectionStart === 0 && input.selectionEnd === 0) moveTo(r, c - 1);
+          else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) moveTo(r, c + 1);
+          else if (e.key === "Home" && (e.ctrlKey || e.metaKey)) moveTo(1, 1);
+          else if ((e.key === "Delete" || e.key === "Backspace") && sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
+            e.preventDefault();
+            clearRange(sel);
           }
         });
+        input.addEventListener("copy", copyRange);
+        input.addEventListener("paste", (e) => pasteTsv(e, r, c));
         td.appendChild(input);
         tr.appendChild(td);
         inputs.set(ki, input);

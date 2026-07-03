@@ -30,6 +30,7 @@ const en: Dict = {
   selectAll: "Select all",
   selectColumn: "Select column {col} (drag the right edge to resize)",
   selectRow: "Select row {row} (drag the bottom edge to resize)",
+  openFailed: "This file could not be opened as a spreadsheet. It may be corrupted or password-protected. Saving returns the file unchanged.",
 };
 
 const fr: Dict = {
@@ -57,6 +58,7 @@ const fr: Dict = {
   selectAll: "Tout sélectionner",
   selectColumn: "Sélectionner la colonne {col} (glisser le bord droit pour redimensionner)",
   selectRow: "Sélectionner la ligne {row} (glisser le bord inférieur pour redimensionner)",
+  openFailed: "Ce fichier n'a pas pu être ouvert comme classeur. Il est peut-être corrompu ou protégé par mot de passe. L'enregistrement renvoie le fichier inchangé.",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr };
