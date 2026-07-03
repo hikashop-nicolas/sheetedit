@@ -27,6 +27,8 @@ export const tbIcon = (svg: string, title: string, onClick: () => void): HTMLBut
 };
 
 export const ICON = {
+  undo: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 3 6l3 3"/><path d="M3 6h6a4 4 0 0 1 0 8H7"/></svg>`,
+  redo: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 3 3 3-3 3"/><path d="M13 6H7a4 4 0 0 0 0 8h2"/></svg>`,
   left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h10"/></svg>`,
   center: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M3 12h10"/></svg>`,
   right: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M7 8h7M4 12h10"/></svg>`,
@@ -44,6 +46,8 @@ export function buildToolbar(ctx: {
   wrap: HTMLElement;
   /** xlsx/ods: the style model is known, so the styling cluster is shown. */
   styled: boolean;
+  onUndo(): void;
+  onRedo(): void;
   addRows(): void;
   addCols(): void;
   applyStyle(change: StyleChange): void;
@@ -68,7 +72,15 @@ export function buildToolbar(ctx: {
     i.addEventListener("change", () => apply(i.value));
     return i;
   };
+  const undoBtn = tbIcon(ICON.undo, t("undo"), ctx.onUndo);
+  const redoBtn = tbIcon(ICON.redo, t("redo"), ctx.onRedo);
+  // Keep the grid's focus (and pending selection) when clicking undo/redo.
+  undoBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  redoBtn.addEventListener("mousedown", (e) => e.preventDefault());
   toolbar.append(
+    undoBtn,
+    redoBtn,
+    sep(),
     tbBtn(t("addRow"), t("addRows"), ctx.addRows),
     tbBtn(t("addCol"), t("addCols"), ctx.addCols),
   );

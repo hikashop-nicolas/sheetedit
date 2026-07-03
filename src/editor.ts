@@ -1,6 +1,8 @@
 import { t } from "./i18n";
 import { createFormulaBar } from "./formulabar";
 import { buildToolbar } from "./toolbar";
+import { setupFloatBar } from "./floatbar";
+import { UndoHistory, applyFields, snapFields, type UndoCellChange } from "./history";
 import type { Cell, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
 import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "./ods";
@@ -88,6 +90,8 @@ export function injectStyles(): void {
     .sheetedit-fxinput { flex:1; min-width:60px; background:#1c1f24; border:1px solid #3a4047; border-radius:5px; color:#e7eaf0; font:13px ui-monospace,monospace; padding:4px 8px; }
     .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:#4f8ef7; }
     .sheetedit-fxmenu[hidden], .sheetedit-tb-groupmenu[hidden] { display:none; }
+    .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:#2b2f36; border:1px solid #1c1f24; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+    .sheetedit-floatbar[hidden] { display:none; }
     .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:#2b2f36; border-top:1px solid #1c1f24; overflow-x:auto; }
     .sheetedit-tab {
@@ -395,9 +399,13 @@ export function createSheetEditor(
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
+    const positions: { r: number; c: number }[] = [];
     let n = 0;
     for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
-      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) setCellStyle(sheet, ensureCell(sheet, r, c), change);
+      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) positions.push({ r, c });
+    recordCells(positions, () => {
+      for (const pos of positions) setCellStyle(sheet, ensureCell(sheet, pos.r, pos.c), change);
+    });
     mark();
     renderGrid();
   };
@@ -410,9 +418,12 @@ export function createSheetEditor(
     const sheet = wb.sheets[active];
     if (!sheet) return;
     const { r1, c1, r2, c2 } = sel;
+    const positions: { r: number; c: number }[] = [];
     let n = 0;
-    for (let r = r1; r <= r2 && n < 4000; r++)
-      for (let c = c1; c <= c2 && n < 4000; c++, n++) {
+    for (let r = r1; r <= r2 && n < 4000; r++) for (let c = c1; c <= c2 && n < 4000; c++, n++) positions.push({ r, c });
+    recordCells(positions, () => {
+      for (const pos of positions) {
+        const { r, c } = pos;
         let sides: StyleChange["borderSides"] = {};
         if (mode === "all") sides = { top: true, right: true, bottom: true, left: true };
         else if (mode === "none") sides = { top: false, right: false, bottom: false, left: false };
@@ -424,6 +435,7 @@ export function createSheetEditor(
         }
         if (Object.keys(sides).length) setCellStyle(sheet, ensureCell(sheet, r, c), { borderSides: sides });
       }
+    });
     mark();
     renderGrid();
   };
@@ -491,14 +503,34 @@ export function createSheetEditor(
     const intersects = (m: { r1: number; c1: number; r2: number; c2: number }) =>
       !(r2 < m.r1 || r1 > m.r2 || c2 < m.c1 || c1 > m.c2);
     const containing = merges.find(within); // selection inside (or equal to) a merge
+    const ops: { r1: number; c1: number; r2: number; c2: number; on: boolean }[] = [];
     if (containing) {
-      setMerge(sheet, containing.r1, containing.c1, containing.r2, containing.c2, false);
+      ops.push({ r1: containing.r1, c1: containing.c1, r2: containing.r2, c2: containing.c2, on: false });
     } else if (r1 !== r2 || c1 !== c2) {
-      for (const m of merges.filter(intersects)) setMerge(sheet, m.r1, m.c1, m.r2, m.c2, false);
-      setMerge(sheet, r1, c1, r2, c2, true);
+      for (const m of merges.filter(intersects)) ops.push({ r1: m.r1, c1: m.c1, r2: m.r2, c2: m.c2, on: false });
+      ops.push({ r1, c1, r2, c2, on: true });
     } else {
       return; // a single, unmerged cell: nothing to do
     }
+    const positions: { r: number; c: number }[] = [];
+    let np = 0;
+    for (const o of ops)
+      for (let r = o.r1; r <= o.r2 && np < 4000; r++) for (let c = o.c1; c <= o.c2 && np < 4000; c++, np++) positions.push({ r, c });
+    const sh = sheet;
+    recordCells(
+      positions,
+      () => {
+        for (const o of ops) setMerge(sh, o.r1, o.c1, o.r2, o.c2, o.on);
+      },
+      {
+        undoExtra: () => {
+          for (const o of [...ops].reverse()) setMerge(sh, o.r1, o.c1, o.r2, o.c2, !o.on);
+        },
+        redoExtra: () => {
+          for (const o of ops) setMerge(sh, o.r1, o.c1, o.r2, o.c2, o.on);
+        },
+      },
+    );
     mark();
     renderGrid();
   };
@@ -507,6 +539,8 @@ export function createSheetEditor(
     toolbar,
     wrap,
     styled: wb.kind === "xlsx" || wb.kind === "ods",
+    onUndo: () => doUndo(),
+    onRedo: () => doRedo(),
     addRows: () => {
       extraRows += ROW_CHUNK;
       renderGrid();
@@ -540,10 +574,48 @@ export function createSheetEditor(
     }
   };
 
+  // --- undo / redo ------------------------------------------------------------
+  const history = new UndoHistory();
+  const recordCells = (
+    positions: { r: number; c: number }[],
+    mutate: () => void,
+    extra?: { undoExtra?: () => void; redoExtra?: () => void },
+  ) => {
+    const sheet = wb.sheets[active]!;
+    const changes: UndoCellChange[] = positions.map((pos) => ({ r: pos.r, c: pos.c, before: snapFields(getCell(sheet, pos.r, pos.c)), after: null }));
+    mutate();
+    for (const ch of changes) ch.after = snapFields(getCell(sheet, ch.r, ch.c));
+    history.push({ sheet: active, cells: changes, ...extra });
+  };
+  const applyStep = (step: { sheet: number; cells: UndoCellChange[]; undoExtra?: () => void; redoExtra?: () => void }, dir: "undo" | "redo") => {
+    if (step.sheet !== active) {
+      active = step.sheet;
+      extraRows = 0;
+      extraCols = 0;
+      sel = null;
+      anchor = null;
+      renderTabs();
+    }
+    const sheet = wb.sheets[step.sheet]!;
+    for (const ch of step.cells) applyFields(sheet, ch.r, ch.c, dir === "undo" ? ch.before : ch.after);
+    (dir === "undo" ? step.undoExtra : step.redoExtra)?.();
+    recalc(wb);
+    mark();
+    renderGrid();
+  };
+  const doUndo = () => {
+    const step = history.popUndo();
+    if (step) applyStep(step, "undo");
+  };
+  const doRedo = () => {
+    const step = history.popRedo();
+    if (step) applyStep(step, "redo");
+  };
+
   // Commit a raw value into a cell and refresh (shared by the grid and the formula bar).
   const commitValue = (r: number, c: number, raw: string) => {
     const sheet = wb.sheets[active]!;
-    setCellInput(sheet, r, c, raw);
+    recordCells([{ r, c }], () => setCellInput(sheet, r, c, raw));
     recalc(wb);
     mark();
     refreshDisplays(sheet);
@@ -602,8 +674,11 @@ export function createSheetEditor(
   // Clear every cell in a selection rectangle (multi-cell Delete).
   const clearRange = (range: { r1: number; c1: number; r2: number; c2: number }) => {
     const sheet = wb.sheets[active]!;
-    for (let r = range.r1; r <= range.r2; r++)
-      for (let c = range.c1; c <= range.c2; c++) setCellInput(sheet, r, c, "");
+    const positions: { r: number; c: number }[] = [];
+    for (let r = range.r1; r <= range.r2; r++) for (let c = range.c1; c <= range.c2; c++) positions.push({ r, c });
+    recordCells(positions, () => {
+      for (const pos of positions) setCellInput(sheet, pos.r, pos.c, "");
+    });
     recalc(wb);
     mark();
     refreshDisplays(sheet);
@@ -629,7 +704,12 @@ export function createSheetEditor(
     const sheet = wb.sheets[active]!;
     const rows = text.replace(/\r\n?/g, "\n").split("\n");
     if (rows.length && rows[rows.length - 1] === "") rows.pop(); // Excel's trailing newline
-    rows.forEach((line, i) => line.split("\t").forEach((val, j) => setCellInput(sheet, r0 + i, c0 + j, val)));
+    const grid2 = rows.map((line) => line.split("\t"));
+    const positions: { r: number; c: number }[] = [];
+    grid2.forEach((vals, i) => vals.forEach((_v, j) => positions.push({ r: r0 + i, c: c0 + j })));
+    recordCells(positions, () => {
+      grid2.forEach((vals, i) => vals.forEach((val, j) => setCellInput(sheet, r0 + i, c0 + j, val)));
+    });
     recalc(wb);
     mark();
     renderGrid(); // the paste may extend the used range; rebuild
@@ -781,6 +861,9 @@ export function createSheetEditor(
         input.addEventListener("input", () => fxbar.setValue(input.value));
         let cancelEdit = false;
         const commit = () => {
+          // A re-render may have replaced this input while it was focused; a late blur
+          // on the stale element must not commit its outdated value.
+          if (inputs.get(ki) !== input) return;
           if (barGrab) return; // focus is moving into the formula bar: the edit continues there
           if (cancelEdit) {
             // Escape: discard whatever is in the input, restore the display.
@@ -795,10 +878,7 @@ export function createSheetEditor(
             input.value = displayValue(sheet, r, c);
             return;
           }
-          setCellInput(sheet, r, c, raw);
-          recalc(wb);
-          mark();
-          refreshDisplays(sheet);
+          commitValue(r, c, raw);
           input.value = displayValue(sheet, r, c);
           input.parentElement?.classList.toggle("num", getCell(sheet, r, c)?.kind === "n");
         };
@@ -827,6 +907,16 @@ export function createSheetEditor(
           else if ((e.key === "Delete" || e.key === "Backspace") && sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
             e.preventDefault();
             clearRange(sel);
+          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+            // Mid-edit, native text undo applies; otherwise grid-level undo/redo.
+            if (input.value === rawOf(r, c)) {
+              e.preventDefault();
+              if (e.shiftKey) doRedo();
+              else doUndo();
+            }
+          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+            e.preventDefault();
+            doRedo();
           }
         });
         input.addEventListener("copy", copyRange);
@@ -864,6 +954,20 @@ export function createSheetEditor(
     });
   };
 
+  // Floating style bar near the selection (approach-triggered, like richdoc).
+  const selRectNow = (): DOMRect | null => {
+    if (!sel || pickCb || dragActive) return null;
+    const tl = tds.get(key(sel.r1, sel.c1));
+    const br = tds.get(key(sel.r2, sel.c2));
+    if (!tl || !br) return null;
+    const a = tl.getBoundingClientRect();
+    const b = br.getBoundingClientRect();
+    return new DOMRect(a.left, a.top, b.right - a.left, b.bottom - a.top);
+  };
+  const floatBar = wb.kind === "xlsx" || wb.kind === "ods"
+    ? setupFloatBar({ wrap, bounds: () => gridScroll.getBoundingClientRect(), selRect: selRectNow, curStyle, applyStyle })
+    : { teardown: () => undefined };
+
   renderTabs();
   renderGrid();
 
@@ -876,6 +980,7 @@ export function createSheetEditor(
     },
     destroy() {
       toolbarHandle.teardown();
+      floatBar.teardown();
       wrap.remove();
     },
   };

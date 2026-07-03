@@ -37,6 +37,8 @@ const en: Dict = {
   functions: "Functions",
   pickRange: "Select a range of cells…",
   formatting: "Formatting",
+  undo: "Undo (Ctrl+Z)",
+  redo: "Redo (Ctrl+Shift+Z)",
 };
 
 const fr: Dict = {
@@ -71,6 +73,8 @@ const fr: Dict = {
   functions: "Fonctions",
   pickRange: "Sélectionnez une plage de cellules…",
   formatting: "Mise en forme",
+  undo: "Annuler (Ctrl+Z)",
+  redo: "Rétablir (Ctrl+Maj+Z)",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr };

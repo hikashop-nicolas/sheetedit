@@ -103,6 +103,29 @@ describe("sheetedit", () => {
     cy.get(".sheetedit-tb-groupmenu").should("be.visible").find("button").should("have.length.greaterThan", 4);
   });
 
+  it("undoes and redoes a cell edit", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="B2"]').clear().type("42").blur();
+    cy.get('input[aria-label="C2"]').should("have.value", "84"); // B2*2 recalculated
+    cy.get('input[aria-label="A1"]').focus().type("{cmd+z}");
+    cy.get('input[aria-label="B2"]').should("have.value", "3"); // original restored
+    cy.get('input[aria-label="C2"]').should("have.value", "6");
+    cy.get('input[aria-label="A1"]').focus().type("{cmd+shift+z}");
+    cy.get('input[aria-label="B2"]').should("have.value", "42");
+    cy.get('input[aria-label="C2"]').should("have.value", "84");
+  });
+
+  it("undoes a range clear via the toolbar button", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A2"]').focus(); // anchor
+    cy.get('input[aria-label="B3"]').trigger("mousedown", { shiftKey: true }); // extend A2:B3
+    cy.focused().trigger("keydown", { key: "Delete" });
+    cy.get('input[aria-label="B2"]').should("have.value", "");
+    cy.get('button[aria-label="Undo (Ctrl+Z)"]').click();
+    cy.get('input[aria-label="B2"]').should("have.value", "3");
+    cy.get('input[aria-label="A2"]').should("have.value", "apples");
+  });
+
   it("Escape cancels an edit without committing the display text", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C2"]').focus().clear().type("=B2*99").type("{esc}");
