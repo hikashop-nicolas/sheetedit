@@ -77,7 +77,43 @@ const fr: Dict = {
   redo: "Rétablir (Ctrl+Maj+Z)",
 };
 
-const LOCALES: Record<string, Dict> = { en, fr };
+const ja: Dict = {
+  sheets: "シート",
+  addRow: "+ 行",
+  addCol: "+ 列",
+  addRows: "行を追加",
+  addCols: "列を追加",
+  bold: "太字",
+  italic: "斜体",
+  textColour: "文字の色",
+  fillColour: "塗りつぶしの色",
+  alignLeft: "左揃え",
+  alignCentre: "中央揃え",
+  alignRight: "右揃え",
+  borders: "罫線",
+  merge: "セルの結合/結合解除",
+  borderAll: "格子",
+  borderOuter: "外枠",
+  borderTop: "上",
+  borderBottom: "下",
+  borderLeft: "左",
+  borderRight: "右",
+  borderNone: "罫線なし",
+  selectAll: "すべて選択",
+  selectColumn: "列 {col} を選択（右端をドラッグでサイズ変更）",
+  selectRow: "行 {row} を選択（下端をドラッグでサイズ変更）",
+  openFailed: "このファイルはスプレッドシートとして開けませんでした。破損しているか、パスワードで保護されている可能性があります。保存してもファイルは変更されません。",
+  formulaBar: "数式",
+  activeCell: "アクティブセル",
+  insertSum: "範囲の合計を挿入",
+  functions: "関数",
+  pickRange: "セル範囲を選択…",
+  formatting: "書式設定",
+  undo: "元に戻す (Ctrl+Z)",
+  redo: "やり直し (Ctrl+Shift+Z)",
+};
+
+const LOCALES: Record<string, Dict> = { en, fr, ja };
 
 let active: Dict | null = null;
 
