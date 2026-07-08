@@ -930,7 +930,7 @@ export function createSheetEditor(
   let heightPrefix: number[] = [];
   let widthCols: number[] = [];
   let widthPrefix: number[] = [];
-  let tableEl: HTMLTableElement | null = null;
+  let tableElRef: HTMLTableElement | null = null;
   let coveredSet = new Set<string>();
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
 
@@ -1116,9 +1116,20 @@ export function createSheetEditor(
       Explicit coordinates let a full rebuild render for a scroll position the
       empty container cannot hold yet (the browser clamps scrollTop at 0 until
       the spacers exist). */
+  let renderingWindow = false;
   const renderWindow = (force = false, yAt?: number, xAt?: number): void => {
     const sheet = wb.sheets[active];
-    if (!sheet || !tableEl) return;
+    if (!sheet || !tableElRef || renderingWindow) return;
+    renderingWindow = true;
+    try {
+      renderWindowInner(force, yAt, xAt);
+    } finally {
+      renderingWindow = false;
+    }
+  };
+  const renderWindowInner = (force: boolean, yAt?: number, xAt?: number): void => {
+    const sheet = wb.sheets[active]!;
+    const tableEl = tableElRef!;
     const y = yAt ?? gridScroll.scrollTop;
     const x = Math.max(0, (xAt ?? gridScroll.scrollLeft) - rnW()); // grid area starts after the row-number column
     let r1 = Math.max(1, lineAt(y, totalRows, yOfRow) - OVERSCAN);
@@ -1233,7 +1244,7 @@ export function createSheetEditor(
       const inp = inputs.get(key(pin.r, pin.c));
       if (inp && document.activeElement !== inp) {
         skipFocusValue = true;
-        inp.focus();
+        inp.focus({ preventScroll: true }); // focus-scroll would fight the window logic
         skipFocusValue = false;
         inp.value = pin.val;
         fxbar.setValue(pin.val);
@@ -1263,7 +1274,7 @@ export function createSheetEditor(
       renderWindow(true);
       inp = inputs.get(key(r, c));
     }
-    inp?.focus();
+    inp?.focus({ preventScroll: true });
   };
 
   // A plain timeout throttle: requestAnimationFrame stalls in occluded windows,
@@ -1326,7 +1337,7 @@ export function createSheetEditor(
 
     const table = document.createElement("table");
     table.className = "sheetedit-table";
-    tableEl = table;
+    tableElRef = table;
     gridScroll.appendChild(table);
 
     winR1 = 1;
