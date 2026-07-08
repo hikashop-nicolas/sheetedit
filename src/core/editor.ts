@@ -92,6 +92,11 @@ export function injectStyles(): void {
       width:100%; box-sizing:border-box; outline:none;
     }
     .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
+    .sheetedit-table td.sheetedit-calcerr { position:relative; }
+    .sheetedit-table td.sheetedit-calcerr::after {
+      content:""; position:absolute; top:0; right:0; z-index:1; pointer-events:none;
+      border:5px solid transparent; border-top-color:#d33d3d; border-right-color:#d33d3d;
+    }
     .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px #6e7bff; background:#eef0ff; }
     .sheetedit-tb-slot { display:inline-flex; align-items:center; gap:5px; }
     .sheetedit-tb-groupmenu { position:absolute; z-index:30; display:flex; align-items:center; gap:5px; padding:6px 8px; background:#2b2f36; border:1px solid #1c1f24; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
@@ -615,6 +620,9 @@ export function createSheetEditor(
       input.value = displayValue(sheet, r!, c!);
       const cell = getCell(sheet, r!, c!);
       input.parentElement?.classList.toggle("num", cell?.kind === "n");
+      input.parentElement?.classList.toggle("sheetedit-calcerr", !!cell?.calcFailed);
+      if (cell?.calcFailed) input.title = t(cell.calcFailed === "circular" ? "calcCircular" : cell.calcFailed === "name" ? "calcName" : "calcEval");
+      else input.removeAttribute("title");
     }
   };
 
@@ -1004,6 +1012,10 @@ export function createSheetEditor(
       input.type = "text";
       input.value = cellDisplay(cell);
       input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
+      if (cell?.calcFailed) {
+        td.classList.add("sheetedit-calcerr");
+        input.title = t(cell.calcFailed === "circular" ? "calcCircular" : cell.calcFailed === "name" ? "calcName" : "calcEval");
+      }
       // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
       const cs = cell?.cellStyle;
       if (cs) {

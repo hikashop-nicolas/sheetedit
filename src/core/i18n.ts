@@ -53,6 +53,9 @@ const en: Dict = {
   colsDel: "Delete {n} columns",
   convertXlsx: "Convert to XLSX",
   convertXlsxTitle: "Convert this file to a real workbook (styles, formats, sheets)",
+  calcName: "Unknown function name: this formula cannot be computed, the file's saved value is shown.",
+  calcEval: "This formula could not be evaluated; the file's saved value is shown.",
+  calcCircular: "Circular reference: this cell depends on its own result; its value may be stale.",
 };
 
 const fr: Dict = {
@@ -103,6 +106,9 @@ const fr: Dict = {
   colsDel: "Supprimer {n} colonnes",
   convertXlsx: "Convertir en XLSX",
   convertXlsxTitle: "Convertir ce fichier en vrai classeur (styles, formats, feuilles)",
+  calcName: "Nom de fonction inconnu : cette formule ne peut pas être calculée, la valeur enregistrée du fichier est affichée.",
+  calcEval: "Cette formule n'a pas pu être évaluée ; la valeur enregistrée du fichier est affichée.",
+  calcCircular: "Référence circulaire : cette cellule dépend de son propre résultat ; sa valeur peut être obsolète.",
 };
 
 const ja: Dict = {
@@ -153,6 +159,9 @@ const ja: Dict = {
   colsDel: "{n} 列を削除",
   convertXlsx: "XLSX に変換",
   convertXlsxTitle: "このファイルを本来のワークブック（スタイル・書式・シート対応）に変換",
+  calcName: "不明な関数名：この数式は計算できないため、ファイルに保存された値を表示しています。",
+  calcEval: "この数式は評価できませんでした。ファイルに保存された値を表示しています。",
+  calcCircular: "循環参照：このセルは自身の結果に依存しているため、値が古い可能性があります。",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja };

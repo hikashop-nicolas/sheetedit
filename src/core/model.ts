@@ -46,6 +46,10 @@ export interface Cell {
   sharedSi?: string;
   /** The formula itself was added/changed/removed (not just its cached value). */
   fDirty?: boolean;
+  /** Transient (never saved): the last recalc could not honestly evaluate this
+      formula. "name" = unknown function (typo), "eval" = parse/evaluation
+      failure, "circular" = the cell takes part in a reference cycle. */
+  calcFailed?: "name" | "eval" | "circular";
 }
 
 export interface Sheet {
