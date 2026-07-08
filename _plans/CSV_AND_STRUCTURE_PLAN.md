@@ -1,5 +1,10 @@
 # sheetedit: CSV/TSV support + richdoc-style structure
 
+Status: SHIPPED 2026-07-08. Phase 1 (structure refactor), Phase 2 (csv
+adapter, commits through d7ab8f5) and Phase 3 (omnitext routing, omnitext
+commit 0b8cc72) are all live; CI green, verified end to end in the built app.
+Kept as the design record.
+
 Goal: open .csv/.tsv in the real spreadsheet editor (grid, formula bar, keyboard,
 undo, row/column ops) with every unsupported control removed and a "Convert to
 XLSX" button instead; and reorganize the source like richdoc (per-format adapter
