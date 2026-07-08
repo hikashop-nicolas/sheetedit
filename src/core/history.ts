@@ -15,6 +15,9 @@ export interface CellFields {
   style?: string;
   cellStyle?: CellStyle;
   fDirty?: boolean;
+  numFmt?: string | number;
+  odsValueType?: string;
+  odsCurrency?: string;
 }
 
 export interface UndoCellChange {
@@ -45,6 +48,9 @@ export function snapFields(cell: Cell | undefined): CellFields | null {
       ? { ...cell.cellStyle, borders: cell.cellStyle.borders ? { ...cell.cellStyle.borders } : undefined }
       : undefined,
     fDirty: cell.fDirty,
+    numFmt: cell.numFmt,
+    odsValueType: cell.odsValueType,
+    odsCurrency: cell.odsCurrency,
   };
 }
 
@@ -59,6 +65,10 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
     cur.display = undefined;
     cur.formula = undefined;
     cur.odfFormula = undefined;
+    if (cur.numFmt != null) cur.numFmtDirty = true;
+    cur.numFmt = undefined;
+    cur.odsValueType = undefined;
+    cur.odsCurrency = undefined;
     cur.edited = true;
     cur.fDirty = cur.fDirty || hadFormula;
     return;
@@ -72,6 +82,10 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
   cell.odfFormula = f.odfFormula;
   cell.style = f.style;
   cell.cellStyle = f.cellStyle;
+  if (cell.numFmt !== f.numFmt) cell.numFmtDirty = true;
+  cell.numFmt = f.numFmt;
+  cell.odsValueType = f.odsValueType;
+  cell.odsCurrency = f.odsCurrency;
   cell.edited = true;
   cell.fDirty = cell.fDirty || f.fDirty || formulaChanges;
 }

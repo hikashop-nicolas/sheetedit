@@ -50,6 +50,13 @@ export interface Cell {
       formula. "name" = unknown function (typo), "eval" = parse/evaluation
       failure, "circular" = the cell takes part in a reference cycle. */
   calcFailed?: "name" | "eval" | "circular";
+  /** numFmt changed (typed date / picker) and must be persisted to styles on save. */
+  numFmtDirty?: boolean;
+  /** ods: original office:value-type ("date", "time", "percentage", "currency"),
+      preserved so an edit keeps the cell's type. */
+  odsValueType?: string;
+  /** ods: office:currency code ("EUR", ...) for currency cells. */
+  odsCurrency?: string;
 }
 
 export interface Sheet {

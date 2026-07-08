@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { hasTimeFmt, isDateFmt, isTimeOnlyFmt, serialToEditText } from "./dates";
 import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
 import { setupFindBar } from "./ui/findbar";
@@ -7,12 +8,12 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
-import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { readWorkbook, setCellInput, writeWorkbook } from "./workbook";
-import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
+import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -123,6 +124,8 @@ export function injectStyles(): void {
     .sheetedit-fxinput { flex:1; min-width:60px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:4px 8px; }
     .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:var(--sheetedit-accent, #4f8ef7); }
     .sheetedit-fxmenu[hidden], .sheetedit-tb-groupmenu[hidden] { display:none; }
+    .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
+    .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
     .sheetedit-floatbar[hidden] { display:none; }
     .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
@@ -194,7 +197,20 @@ export function createSheetEditor(
     g.r1 === g.r2 && g.c1 === g.c2 ? refName(g.r1, g.c1) : `${refName(g.r1, g.c1)}:${refName(g.r2, g.c2)}`;
   const rawOf = (r: number, c: number): string => {
     const live = getCell(wb.sheets[active]!, r, c);
-    return live ? (live.formula != null ? "=" + live.formula : live.value) : "";
+    if (!live) return "";
+    if (live.formula != null) return "=" + live.formula;
+    // Date cells edit as a date, not as the underlying serial number.
+    if (live.kind === "n" && isDateFmt(live.numFmt)) {
+      const serial = Number(live.value);
+      if (isTimeOnlyFmt(live.numFmt) && serial >= 0 && serial < 1) {
+        const secs = Math.round(serial * 86400);
+        const p2 = (n: number) => String(n).padStart(2, "0");
+        return `${p2(Math.floor(secs / 3600))}:${p2(Math.floor((secs % 3600) / 60))}:${p2(secs % 60)}`;
+      }
+      const text = serialToEditText(serial, hasTimeFmt(live.numFmt));
+      if (text != null) return text;
+    }
+    return live.value;
   };
   const fxbar = createFormulaBar({
     onInput: (v) => {
@@ -553,6 +569,26 @@ export function createSheetEditor(
     renderGrid();
   };
 
+  // Apply a number format preset to the selection (General when fmt is undefined).
+  const applyNumFmt = (fmt: string | number | undefined, currency?: string) => {
+    if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const positions: { r: number; c: number }[] = [];
+    let n = 0;
+    for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
+      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) positions.push({ r, c });
+    recordCells(positions, () => {
+      for (const pos of positions) {
+        const cell = ensureCell(sheet, pos.r, pos.c);
+        if (wb.kind === "ods") setOdsCellNumFmt(wb, sheet, cell, fmt, currency);
+        else setXlsxCellNumFmt(wb, sheet, cell, fmt);
+      }
+    });
+    mark();
+    renderGrid();
+  };
+
   // Apply a border mode across the selection, computing per-cell sides from each cell's
   // position in the rectangle (e.g. "outer" only borders the perimeter).
   type BorderMode = "all" | "outer" | "top" | "bottom" | "left" | "right" | "none";
@@ -712,6 +748,7 @@ export function createSheetEditor(
     },
     findReplace: () => findBar.toggle(),
     applyStyle,
+    applyNumFmt,
     curStyle,
     openBorderPopover,
     toggleMerge,
@@ -1210,8 +1247,7 @@ export function createSheetEditor(
           return;
         }
         const raw = input.value;
-        const live = getCell(sheet, r, c);
-        const before = live ? (live.formula != null ? "=" + live.formula : live.value) : "";
+        const before = rawOf(r, c);
         if (raw === before) {
           input.value = displayValue(sheet, r, c);
           return;

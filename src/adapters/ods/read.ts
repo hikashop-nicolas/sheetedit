@@ -1,5 +1,6 @@
 import type { Cell, CellKind, CellStyle, Sheet, Workbook } from "../../core/model";
-import { key, noteExtent, parseXml, parseXmlOpt } from "../../core/model";
+import { formatNumber, key, noteExtent, numToStr, parseXml, parseXmlOpt } from "../../core/model";
+import { durationToSerial, isoToSerial } from "../../core/dates";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
@@ -225,11 +226,19 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
     let value = "";
     let kind: CellKind = "blank";
     let display: string | undefined;
+    let numFmt: string | undefined;
+    let odsValueType: string | undefined;
+    let odsCurrency: string | undefined;
     if (valueType === "float" || valueType === "percentage" || valueType === "currency") {
       value = cellEl.getAttribute("office:value") ?? text;
       // ODF stores the producer's formatted text in <text:p>; use it as the display.
       if (text !== "" && text !== value) display = text;
       kind = "n";
+      if (valueType !== "float") {
+        odsValueType = valueType;
+        odsCurrency = cellEl.getAttribute("office:currency") ?? undefined;
+        if (valueType === "percentage") numFmt = "0.00%";
+      }
     } else if (valueType === "boolean") {
       value = cellEl.getAttribute("office:boolean-value") === "true" ? "TRUE" : "FALSE";
       kind = "b";
@@ -237,13 +246,33 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       value = cellEl.getAttribute("office:string-value") ?? odsCellText(cellEl);
       kind = "s";
     } else if (valueType === "date") {
-      value = cellEl.getAttribute("office:date-value") ?? text;
+      // Model dates as serials so arithmetic and re-formatting work; the
+      // producer's formatted <text:p> stays as the display.
+      const iso = cellEl.getAttribute("office:date-value") ?? "";
+      const serial = iso === "" ? null : isoToSerial(iso);
+      if (serial != null) {
+        value = numToStr(serial);
+        kind = "n";
+        odsValueType = "date";
+        numFmt = iso.includes("T") ? "yyyy-mm-dd hh:mm:ss" : "yyyy-mm-dd";
+      } else {
+        value = iso || text;
+        kind = value === "" ? "blank" : "s";
+      }
       if (text !== "" && text !== value) display = text;
-      kind = "s";
     } else if (valueType === "time") {
-      value = cellEl.getAttribute("office:time-value") ?? text;
+      const dur = cellEl.getAttribute("office:time-value") ?? "";
+      const serial = dur === "" ? null : durationToSerial(dur);
+      if (serial != null) {
+        value = numToStr(serial);
+        kind = "n";
+        odsValueType = "time";
+        numFmt = "hh:mm:ss";
+      } else {
+        value = dur || text;
+        kind = value === "" ? "blank" : "s";
+      }
       if (text !== "" && text !== value) display = text;
-      kind = "s";
     } else {
       value = odsCellText(cellEl);
       kind = value === "" ? "blank" : "s";
@@ -258,7 +287,10 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       col: startCol,
       value,
       kind,
-      display,
+      display: display ?? (kind === "n" && numFmt != null ? formatNumber(numFmt, value) ?? undefined : undefined),
+      numFmt,
+      odsValueType,
+      odsCurrency,
       formula: formulaRaw ? odfToA1(formulaRaw) : undefined,
       odfFormula: formulaRaw,
       style,

@@ -1,6 +1,8 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { Sheet, Workbook } from "./model";
-import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, parseXmlOpt, serializeXml } from "./model";
+import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, numToStr, parseXmlOpt, serializeXml } from "./model";
+import { isDateFmt, parseDateInput } from "./dates";
+import { localeCode } from "./i18n";
 import { readCsv, writeCsv } from "../adapters/csv";
 import { readOds, writeOds } from "../adapters/ods";
 import { recalc } from "./recalc";
@@ -145,12 +147,36 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   cell.formula = undefined;
   cell.odfFormula = undefined;
   cell.edited = true;
+  // A CSV stores exactly what the user typed; typed dates/percents stay text.
+  const csv = sheet.csvRows != null;
+  const commaDecimal = !csv && localeCode() === "fr" && /^[-+]?\d+,\d+$/.test(raw.trim());
+  const pct = !csv && /^[-+]?\d+(?:[.,]\d+)?\s?%$/.test(raw.trim());
+  const date = csv || isNumeric(raw) || commaDecimal || pct ? null : parseDateInput(raw, localeCode() === "fr" ? "dmy" : "mdy");
   if (raw === "") {
     cell.value = "";
     cell.kind = "blank";
-  } else if (isNumeric(raw)) {
-    cell.value = raw.trim();
+  } else if (isNumeric(raw) || commaDecimal) {
+    cell.value = raw.trim().replace(",", ".");
     cell.kind = "n";
+  } else if (pct) {
+    // "50%" -> 0.5 with a percent format (decimals follow the typed precision).
+    const num = Number(raw.trim().replace(",", ".").replace(/\s?%$/, ""));
+    cell.value = numToStr(num / 100);
+    cell.kind = "n";
+    if (!/%/.test(String(cell.numFmt ?? ""))) {
+      cell.numFmt = /[.,]/.test(raw) ? "0.00%" : "0%";
+      cell.numFmtDirty = true;
+      cell.odsValueType = "percentage";
+    }
+  } else if (date) {
+    cell.value = numToStr(date.serial);
+    cell.kind = "n";
+    // Keep an existing date format; otherwise adopt one matching what was typed.
+    if (!isDateFmt(cell.numFmt)) {
+      cell.numFmt = date.fmt;
+      cell.numFmtDirty = true;
+    }
+    cell.odsValueType = date.timeOnly ? "time" : "date";
   } else if (raw.toUpperCase() === "TRUE" || raw.toUpperCase() === "FALSE") {
     cell.value = raw.toUpperCase();
     cell.kind = "b";

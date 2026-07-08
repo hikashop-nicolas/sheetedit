@@ -1,6 +1,7 @@
 import type { Cell, Sheet, Workbook } from "../../core/model";
 import { colToLetters, firstByLocal, removeByLocal, serializeXml } from "../../core/model";
 import { SS_MAIN, ensureXlsxCellEl } from "./shared";
+import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
 // ---------------------------------------------------------------------------
@@ -212,6 +213,11 @@ export function setXlsxMerge(
 export function writeXlsx(wb: Workbook): void {
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
+    // Typed dates/percents adopted a number format in the model; persist it to
+    // styles.xml for edited cells (a read-side default on untouched cells stays
+    // model-only so their XML is not rewritten).
+    for (const cell of sheet.cells.values())
+      if (cell.numFmtDirty && cell.edited) setXlsxCellNumFmt(wb, sheet, cell, cell.numFmt);
     // A formula change inside a shared group would leave the other members'
     // @si dangling, so rewrite the whole group as plain formulas (de-share).
     const dirtySi = new Set<string>();

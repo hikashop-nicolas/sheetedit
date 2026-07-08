@@ -1,5 +1,6 @@
 import type { Cell, Sheet, Workbook } from "../../core/model";
 import { getCell, key, serializeXml } from "../../core/model";
+import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
 import { ensureOdsAutoStyles, internOdsStyle, odsColStyle } from "./styles";
 // ---------------------------------------------------------------------------
@@ -25,10 +26,28 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
     c.appendChild(p);
   };
   if (cell.kind === "n") {
-    c.setAttributeNS(ODS.office, "office:value-type", "float");
-    c.setAttributeNS(ODS.office, "office:value", cell.value);
-    addText(cell.value);
-  } else if (cell.kind === "b") {
+    // Keep the cell's original ODF type (date/time/percentage/currency), or the
+    // type a typed date adopted, so an edit does not degrade the cell to a float.
+    const vt = cell.odsValueType ?? (isDateFmt(cell.numFmt) ? (isTimeOnlyFmt(cell.numFmt) ? "time" : "date") : undefined);
+    const serial = Number(cell.value);
+    if (vt === "date" && Number.isFinite(serial) && serialToIso(serial) != null) {
+      c.setAttributeNS(ODS.office, "office:value-type", "date");
+      c.setAttributeNS(ODS.office, "office:date-value", serialToIso(serial)!);
+    } else if (vt === "time" && Number.isFinite(serial)) {
+      c.setAttributeNS(ODS.office, "office:value-type", "time");
+      c.setAttributeNS(ODS.office, "office:time-value", serialToDuration(serial));
+    } else if (vt === "percentage" || vt === "currency") {
+      c.setAttributeNS(ODS.office, "office:value-type", vt);
+      if (vt === "currency" && cell.odsCurrency) c.setAttributeNS(ODS.office, "office:currency", cell.odsCurrency);
+      c.setAttributeNS(ODS.office, "office:value", cell.value);
+    } else {
+      c.setAttributeNS(ODS.office, "office:value-type", "float");
+      c.setAttributeNS(ODS.office, "office:value", cell.value);
+    }
+    addText(cell.display ?? cell.value);
+    return c;
+  }
+  if (cell.kind === "b") {
     c.setAttributeNS(ODS.office, "office:value-type", "boolean");
     c.setAttributeNS(ODS.office, "office:boolean-value", cell.value === "TRUE" ? "true" : "false");
     addText(cell.value);

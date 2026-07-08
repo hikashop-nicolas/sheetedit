@@ -68,6 +68,15 @@ const en: Dict = {
   calcName: "Unknown function name: this formula cannot be computed, the file's saved value is shown.",
   calcEval: "This formula could not be evaluated; the file's saved value is shown.",
   calcCircular: "Circular reference: this cell depends on its own result; its value may be stale.",
+  numFormat: "Number format",
+  fmtGeneral: "Automatic",
+  fmtNumber: "Number (0.00)",
+  fmtThousands: "Thousands (1,234.00)",
+  fmtPercent: "Percent (%)",
+  fmtCurrency: "Currency",
+  fmtDate: "Date",
+  fmtDateTime: "Date and time",
+  fmtTime: "Time",
 };
 
 const fr: Dict = {
@@ -133,6 +142,15 @@ const fr: Dict = {
   calcName: "Nom de fonction inconnu : cette formule ne peut pas être calculée, la valeur enregistrée du fichier est affichée.",
   calcEval: "Cette formule n'a pas pu être évaluée ; la valeur enregistrée du fichier est affichée.",
   calcCircular: "Référence circulaire : cette cellule dépend de son propre résultat ; sa valeur peut être obsolète.",
+  numFormat: "Format de nombre",
+  fmtGeneral: "Automatique",
+  fmtNumber: "Nombre (0,00)",
+  fmtThousands: "Milliers (1 234,00)",
+  fmtPercent: "Pourcentage (%)",
+  fmtCurrency: "Monnaie",
+  fmtDate: "Date",
+  fmtDateTime: "Date et heure",
+  fmtTime: "Heure",
 };
 
 const ja: Dict = {
@@ -198,24 +216,46 @@ const ja: Dict = {
   calcName: "不明な関数名：この数式は計算できないため、ファイルに保存された値を表示しています。",
   calcEval: "この数式は評価できませんでした。ファイルに保存された値を表示しています。",
   calcCircular: "循環参照：このセルは自身の結果に依存しているため、値が古い可能性があります。",
+  numFormat: "表示形式",
+  fmtGeneral: "自動",
+  fmtNumber: "数値 (0.00)",
+  fmtThousands: "桁区切り (1,234.00)",
+  fmtPercent: "パーセント (%)",
+  fmtCurrency: "通貨",
+  fmtDate: "日付",
+  fmtDateTime: "日付と時刻",
+  fmtTime: "時刻",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja };
 
 let active: Dict | null = null;
+let activeCode = "en";
 
 function detect(): Dict {
   const prefs = (typeof navigator !== "undefined" && navigator.languages) || ["en"];
   for (const tag of prefs) {
     const base = tag.toLowerCase().split("-")[0]!;
-    if (LOCALES[base]) return LOCALES[base]!;
+    if (LOCALES[base]) {
+      activeCode = base;
+      return LOCALES[base]!;
+    }
   }
+  activeCode = "en";
   return en;
 }
 
 /** Force a locale (host escape hatch). Unknown codes fall back to English. */
 export function setLocale(code: string): void {
-  active = LOCALES[code.toLowerCase().split("-")[0]!] ?? en;
+  const base = code.toLowerCase().split("-")[0]!;
+  active = LOCALES[base] ?? en;
+  activeCode = LOCALES[base] ? base : "en";
+}
+
+/** The active base locale code ("en", "fr", "ja"): number/date input conventions. */
+export function localeCode(): string {
+  if (!active) active = detect();
+  return activeCode;
 }
 
 export function t(key: string, params?: Record<string, string | number>): string {

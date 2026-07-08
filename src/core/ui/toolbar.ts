@@ -1,4 +1,5 @@
-import { t } from "../i18n";
+import { localeCode, t } from "../i18n";
+import { numFmtPresets } from "../dates";
 import type { CellStyle, StyleChange } from "../model";
 
 // The style toolbar, split out of the editor. The styling controls form one
@@ -55,6 +56,7 @@ export function buildToolbar(ctx: {
   addRows(): void;
   addCols(): void;
   applyStyle(change: StyleChange): void;
+  applyNumFmt(fmt: string | number | undefined, currency?: string): void;
   curStyle(): CellStyle | undefined;
   openBorderPopover(anchor: HTMLElement): void;
   toggleMerge(): void;
@@ -97,7 +99,41 @@ export function buildToolbar(ctx: {
   const italic = tbBtn("I", t("italic"), () => ctx.applyStyle({ italic: !ctx.curStyle()?.italic }));
   italic.style.fontStyle = "italic";
   const borderBtn = tbIcon(ICON.borders, t("borders"), () => ctx.openBorderPopover(borderBtn));
+
+  // Number-format picker: a button opening a preset menu (General, number,
+  // percent, currency, date, time), shapes localized via numFmtPresets.
+  const fmtBtn = tbBtn("123 ▾", t("numFormat"), () => {
+    const r = fmtBtn.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    fmtMenu.style.top = `${r.bottom - wr.top + 2}px`;
+    fmtMenu.style.left = `${r.left - wr.left}px`;
+    fmtMenu.hidden = !fmtMenu.hidden;
+  });
+  fmtBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  const fmtMenu = document.createElement("div");
+  fmtMenu.className = "sheetedit-tb-groupmenu sheetedit-fmtmenu";
+  fmtMenu.hidden = true;
+  for (const preset of numFmtPresets(localeCode())) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "sheetedit-btn";
+    item.textContent = t(preset.key);
+    item.addEventListener("mousedown", (e) => e.preventDefault());
+    item.addEventListener("click", () => {
+      fmtMenu.hidden = true;
+      ctx.applyNumFmt(preset.fmt, preset.currency);
+    });
+    fmtMenu.appendChild(item);
+  }
+  wrap.append(fmtMenu);
+  const closeFmtMenu = (e: MouseEvent) => {
+    if (!fmtMenu.hidden && !fmtMenu.contains(e.target as Node) && !fmtBtn.contains(e.target as Node)) fmtMenu.hidden = true;
+  };
+  document.addEventListener("click", closeFmtMenu);
+
   const styleControls: HTMLElement[] = [
+    fmtBtn,
+    sep(),
     bold,
     italic,
     colorInput(t("textColour"), "#000000", (v) => ctx.applyStyle({ color: v })),
@@ -160,7 +196,9 @@ export function buildToolbar(ctx: {
     teardown() {
       observer.disconnect();
       document.removeEventListener("click", closeMenu);
+      document.removeEventListener("click", closeFmtMenu);
       menu.remove();
+      fmtMenu.remove();
     },
   };
 }

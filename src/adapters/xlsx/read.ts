@@ -1,5 +1,6 @@
 import type { Cell, CellKind, CellStyle, Sheet, Workbook } from "../../core/model";
-import { firstByLocal, formatNumber, key, noteExtent, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
+import { firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
+import { isDateFmt, isoToSerial } from "../../core/dates";
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
 // ---------------------------------------------------------------------------
@@ -281,6 +282,17 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]
       } else if (t === "e") {
         value = vEl?.textContent ?? "";
         kind = "e";
+      } else if (t === "d") {
+        // ISO 8601 date cell: model it as a serial so formulas and formats work.
+        const iso = vEl?.textContent ?? "";
+        const serial = iso === "" ? null : isoToSerial(iso);
+        if (serial != null) {
+          value = numToStr(serial);
+          kind = "n";
+        } else {
+          value = iso;
+          kind = iso === "" ? "blank" : "s";
+        }
       } else {
         value = vEl?.textContent ?? "";
         kind = value === "" ? "blank" : "n";
@@ -300,6 +312,13 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]
         if (fmt != null) {
           cell.numFmt = fmt;
           const d = formatNumber(fmt, value);
+          if (d != null) cell.display = d;
+        }
+        // A t="d" cell whose style has no date format still must display as a date.
+        if (t === "d" && !isDateFmt(cell.numFmt)) {
+          cell.numFmt = (vEl?.textContent ?? "").includes("T") ? "yyyy-mm-dd hh:mm:ss" : "yyyy-mm-dd";
+          cell.numFmtDirty = true;
+          const d = formatNumber(cell.numFmt, value);
           if (d != null) cell.display = d;
         }
       }

@@ -1,5 +1,6 @@
 import type { Cell, CellStyle, Sheet, StyleChange, Workbook } from "../../core/model";
-import { mergeCellStyle } from "../../core/model";
+import { formatNumber, mergeCellStyle } from "../../core/model";
+import { isDateFmt, isTimeOnlyFmt } from "../../core/dates";
 import { xmlOf } from "../xlsx/shared";
 import { ODS } from "./shared";
 // ---------------------------------------------------------------------------
@@ -71,6 +72,26 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
   odsSetOrRemove(pp, "fo:text-align", cs.align === "center" ? "center" : cs.align === "right" ? "end" : cs.align === "left" ? "start" : undefined);
   // Drop property children that ended up empty so dedup stays tight.
   for (const el of [cp, tp, pp]) if (el.attributes.length === 0 && el.children.length === 0) st.removeChild(el);
+}
+
+/**
+ * Number format for an ods cell. The format lives in the model (grid display)
+ * and maps to the cell's ODF value type on save (date/time/percentage/currency);
+ * consumer apps then render it with their default format for that type.
+ */
+export function setOdsCellNumFmt(_wb: Workbook, _sheet: Sheet, cell: Cell, fmt: string | number | undefined, currency?: string): void {
+  cell.numFmt = fmt;
+  cell.numFmtDirty = false;
+  cell.odsCurrency = undefined;
+  if (fmt == null) cell.odsValueType = undefined;
+  else if (isDateFmt(fmt)) cell.odsValueType = isTimeOnlyFmt(fmt) ? "time" : "date";
+  else if (typeof fmt === "string" && fmt.includes("%")) cell.odsValueType = "percentage";
+  else if (currency) {
+    cell.odsValueType = "currency";
+    cell.odsCurrency = currency;
+  } else cell.odsValueType = undefined;
+  cell.display = cell.kind === "n" && fmt != null ? formatNumber(fmt, cell.value) ?? undefined : undefined;
+  cell.edited = true;
 }
 
 export function setOdsCellStyle(wb: Workbook, _sheet: Sheet, cell: Cell, change: StyleChange): void {
