@@ -137,6 +137,26 @@ describe("virtualized grid", () => {
     expect(getCell(s, 4, 2)?.value).toBe("#DIV/0!");
   });
 
+  it("the bottom of a 100k sheet renders the right rows", async () => {
+    const lines = ["id,total"];
+    for (let i = 1; i <= 100000; i++) lines.push(`${i},${i % 7}`);
+    lines.push("total,=SUM(B2:B100001)");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8(lines.join("\n") + "\n"), { formatHint: "csv" });
+    const grid = host.querySelector(".sheetedit-grid") as HTMLElement;
+    grid.scrollTop = 100008 * 24; // beyond the end: clamps to the bottom
+    grid.dispatchEvent(new Event("scroll"));
+    await frame();
+    await frame();
+    const a = (r: number, c: number) => (host.querySelector(`td[data-rc="${r}:${c}"] input`) as HTMLInputElement | null)?.value;
+    expect(a(100001, 1)).toBe("100000");
+    expect(a(100002, 1)).toBe("total");
+    expect(Number(a(100002, 2))).toBeGreaterThan(0); // the SUM computed on open
+    ed.destroy();
+    host.remove();
+  });
+
   it("a big sheet still saves correctly after an edit deep in the file", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

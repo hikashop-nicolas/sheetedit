@@ -1347,9 +1347,9 @@ export function createSheetEditor(
       return dirty;
     },
     getText() {
-      if (wb.kind !== "csv") return null;
-      recalc(wb);
-      return writeCsv(wb);
+      // No recalc needed: the model is recalculated after every edit, and CSV
+      // stores formula text, never computed results.
+      return wb.kind === "csv" ? writeCsv(wb) : null;
     },
     async getBytes() {
       return dirty ? writeWorkbook(wb) : original.slice();
