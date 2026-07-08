@@ -34,7 +34,12 @@ export interface SheetEditor {
 
 export const ROWS_MIN = 24;
 export const COLS_MIN = 12;
+/** No longer cap rendering (both axes are virtualized); kept for API compatibility. */
 export const ROWS_CAP = 5000;
+export const ROW_H = 24; // uniform virtual row height (px) unless the sheet overrides a row
+export const COL_W = 96; // uniform virtual column width (px) unless the sheet overrides a column
+export const OVERSCAN = 15; // rows rendered beyond the viewport on each side
+export const OVERSCAN_COLS = 4; // columns rendered beyond the viewport on each side
 export const COLS_CAP = 256;
 export const ROW_CHUNK = 20; // rows added per "+ Row" click
 export const COL_CHUNK = 6; // columns added per "+ Col" click
@@ -221,10 +226,16 @@ export function createSheetEditor(
   let renderedCols = 0;
 
   const paintSel = () => {
-    for (const td of tds.values()) td.classList.remove("sheetedit-sel");
-    if (!sel) return;
-    for (let r = sel.r1; r <= sel.r2; r++)
-      for (let c = sel.c1; c <= sel.c2; c++) tds.get(key(r, c))?.classList.add("sheetedit-sel");
+    // Iterate the rendered window's cells (bounded), not the selection rectangle
+    // (which can span a million virtual rows after a select-all).
+    for (const [k, td] of tds) {
+      if (!sel) {
+        td.classList.remove("sheetedit-sel");
+        continue;
+      }
+      const [r, c] = k.split(":").map(Number);
+      td.classList.toggle("sheetedit-sel", r! >= sel.r1 && r! <= sel.r2 && c! >= sel.c1 && c! <= sel.c2);
+    }
   };
   const setSel = (r1: number, c1: number, r2: number, c2: number) => {
     sel = { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) };
@@ -844,8 +855,12 @@ export function createSheetEditor(
   // Clear every cell in a selection rectangle (multi-cell Delete).
   const clearRange = (range: { r1: number; c1: number; r2: number; c2: number }) => {
     const sheet = wb.sheets[active]!;
+    // Only existing cells matter (clearing a blank cell is a no-op), so a
+    // whole-column selection over a virtualized grid stays bounded.
     const positions: { r: number; c: number }[] = [];
-    for (let r = range.r1; r <= range.r2; r++) for (let c = range.c1; c <= range.c2; c++) positions.push({ r, c });
+    for (const cell of sheet.cells.values())
+      if (cell.row >= range.r1 && cell.row <= range.r2 && cell.col >= range.c1 && cell.col <= range.c2)
+        positions.push({ r: cell.row, c: cell.col });
     recordCells(positions, () => {
       for (const pos of positions) setCellInput(sheet, pos.r, pos.c, "");
     });
@@ -857,10 +872,13 @@ export function createSheetEditor(
   const copyRange = (e: ClipboardEvent) => {
     if (!sel || (sel.r1 === sel.r2 && sel.c1 === sel.c2)) return;
     const sheet = wb.sheets[active]!;
+    // Clamp to the used extent so a whole-column copy stays bounded.
+    const r2 = Math.min(sel.r2, Math.max(sel.r1, sheet.maxRow));
+    const c2 = Math.min(sel.c2, Math.max(sel.c1, sheet.maxCol));
     const lines: string[] = [];
-    for (let r = sel.r1; r <= sel.r2; r++) {
+    for (let r = sel.r1; r <= r2; r++) {
       const vals: string[] = [];
-      for (let c = sel.c1; c <= sel.c2; c++) vals.push(getCell(sheet, r, c)?.value ?? "");
+      for (let c = sel.c1; c <= c2; c++) vals.push(getCell(sheet, r, c)?.value ?? "");
       lines.push(vals.join("\t"));
     }
     e.clipboardData?.setData("text/plain", lines.join("\n"));
@@ -886,47 +904,280 @@ export function createSheetEditor(
     inputs.get(key(r0, c0))?.focus();
   };
 
-  const renderGrid = () => {
+  // --- virtualized grid rendering ---------------------------------------------
+  // Both axes are windowed: only the rows and columns intersecting the viewport
+  // (plus an overscan) get DOM. Spacer rows/columns keep the scrollbar geometry,
+  // so there is no rendering cap in either direction; the only limits left are
+  // the file formats' own grid bounds. Offsets are uniform (ROW_H / COL_W) with
+  // small sorted indexes of custom-sized lines, so any position is O(log n).
+  let totalRows = 0;
+  let totalCols = 0;
+  let winR1 = 1;
+  let winR2 = 0;
+  let winC1 = 1;
+  let winC2 = 0;
+  let heightRows: number[] = [];
+  let heightPrefix: number[] = [];
+  let widthCols: number[] = [];
+  let widthPrefix: number[] = [];
+  let tableEl: HTMLTableElement | null = null;
+  let coveredSet = new Set<string>();
+  let spanAtMap = new Map<string, { rs: number; cs: number }>();
+
+  const rebuildSizeIndexes = (sheet: Sheet) => {
+    heightRows = [...(sheet.rowHeights?.keys() ?? [])].sort((a, b) => a - b);
+    heightPrefix = [0];
+    for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (sheet.rowHeights!.get(r)! - ROW_H));
+    widthCols = [...(sheet.colWidths?.keys() ?? [])].sort((a, b) => a - b);
+    widthPrefix = [0];
+    for (const c of widthCols) widthPrefix.push(widthPrefix[widthPrefix.length - 1]! + (sheet.colWidths!.get(c)! - COL_W));
+  };
+  const sumBefore = (lines: number[], prefix: number[], i: number): number => {
+    let lo = 0;
+    let hi = lines.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (lines[mid]! < i) lo = mid + 1;
+      else hi = mid;
+    }
+    return prefix[lo]!;
+  };
+  const yOfRow = (r: number): number => (r - 1) * ROW_H + sumBefore(heightRows, heightPrefix, r);
+  const xOfCol = (c: number): number => (c - 1) * COL_W + sumBefore(widthCols, widthPrefix, c);
+  const lineAt = (pos: number, total: number, ofLine: (i: number) => number): number => {
+    let lo = 1;
+    let hi = Math.max(1, total);
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (ofLine(mid) <= pos) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const viewportH = (): number => gridScroll.clientHeight || 600; // jsdom has no layout
+  const viewportW = (): number => gridScroll.clientWidth || 1200;
+
+  const buildRow = (sheet: Sheet, r: number, c1: number, c2: number): HTMLTableRowElement => {
+    const tr = document.createElement("tr");
+    tr.style.height = `${sheet.rowHeights?.get(r) ?? ROW_H}px`;
+    const rn = document.createElement("th");
+    rn.className = "rownum";
+    rn.textContent = String(r);
+    rn.title = t("selectRow", { row: r });
+    rn.addEventListener("click", () => {
+      if (resizing) return;
+      anchor = { r, c: 1 };
+      setSel(r, 1, r, totalCols);
+    });
+    rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
+    const rgrip = document.createElement("div");
+    rgrip.className = "sheetedit-rowgrip";
+    rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, sheet.rowHeights?.get(r) ?? ROW_H));
+    rn.appendChild(rgrip);
+    tr.appendChild(rn);
+    tr.appendChild(document.createElement("td")); // left spacer column
+    for (let c = c1; c <= c2; c++) {
+      if (coveredSet.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
+      const td = document.createElement("td");
+      td.dataset.rc = key(r, c);
+      tds.set(key(r, c), td);
+      const sp = spanAtMap.get(key(r, c));
+      if (sp) {
+        if (sp.rs > 1) td.rowSpan = sp.rs;
+        if (sp.cs > 1) td.colSpan = sp.cs;
+      }
+      const cell = getCell(sheet, r, c);
+      if (cell?.kind === "n") td.classList.add("num");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = cellDisplay(cell);
+      input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
+      // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
+      const cs = cell?.cellStyle;
+      if (cs) {
+        if (cs.bg) td.style.background = cs.bg;
+        if (cs.borders) {
+          // Override the default gridline box-shadow: keep light right/bottom unless the
+          // file specifies a border there, and add the file's top/left where present.
+          const bd = cs.borders;
+          const g = "#e3e3e6";
+          const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
+          if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
+          if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
+          td.style.boxShadow = sh.join(", ");
+        }
+        if (cs.bold) input.style.fontWeight = "700";
+        if (cs.italic) input.style.fontStyle = "italic";
+        if (cs.color) input.style.color = cs.color;
+        if (cs.align) input.style.textAlign = cs.align;
+      }
+      const ki = key(r, c);
+      // Shift-click extends the selection from the anchor (no caret/edit).
+      input.addEventListener("mousedown", (e) => {
+        if (e.shiftKey) {
+          e.preventDefault();
+          selectCell(r, c, true);
+        }
+      });
+      input.addEventListener("focus", () => {
+        if (justDragged) {
+          input.blur(); // a range was just drag-selected; do not enter edit on the trailing tap
+          return;
+        }
+        selectCell(r, c, false); // tapping a cell selects it; toolbar styles target the selection
+        activeCell = { r, c };
+        fxbar.setRef(refName(r, c));
+        // Show the editable underlying value (formula or raw), not the formatted display.
+        if (skipFocusValue) skipFocusValue = false;
+        else input.value = rawOf(r, c);
+        fxbar.setValue(input.value);
+      });
+      input.addEventListener("input", () => fxbar.setValue(input.value));
+      let cancelEdit = false;
+      const commit = () => {
+        // A re-render may have replaced this input while it was focused; a late blur
+        // on the stale element must not commit its outdated value.
+        if (inputs.get(ki) !== input) return;
+        if (barGrab) return; // focus is moving into the formula bar: the edit continues there
+        if (cancelEdit) {
+          // Escape: discard whatever is in the input, restore the display.
+          cancelEdit = false;
+          input.value = displayValue(sheet, r, c);
+          return;
+        }
+        const raw = input.value;
+        const live = getCell(sheet, r, c);
+        const before = live ? (live.formula != null ? "=" + live.formula : live.value) : "";
+        if (raw === before) {
+          input.value = displayValue(sheet, r, c);
+          return;
+        }
+        commitValue(r, c, raw);
+        input.value = displayValue(sheet, r, c);
+        input.parentElement?.classList.toggle("num", getCell(sheet, r, c)?.kind === "n");
+      };
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", (e) => {
+        const moveTo = (rr: number, cc: number) => {
+          if (rr < 1 || cc < 1 || rr > totalRows || cc > totalCols) return;
+          e.preventDefault();
+          input.blur();
+          focusCell(rr, cc);
+        };
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+          if (r + 1 <= totalRows) focusCell(r + 1, c);
+        } else if (e.key === "Escape") {
+          cancelEdit = true;
+          input.blur();
+        } else if (e.key === "ArrowDown") moveTo(r + 1, c);
+        else if (e.key === "ArrowUp") moveTo(r - 1, c);
+        // Left/right leave the cell only from the caret's edge, so in-cell editing stays natural.
+        else if (e.key === "ArrowLeft" && input.selectionStart === 0 && input.selectionEnd === 0) moveTo(r, c - 1);
+        else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) moveTo(r, c + 1);
+        else if (e.key === "Home" && (e.ctrlKey || e.metaKey)) moveTo(1, 1);
+        else if ((e.key === "Delete" || e.key === "Backspace") && sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
+          e.preventDefault();
+          clearRange(sel);
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+          // Mid-edit, native text undo applies; otherwise grid-level undo/redo.
+          if (input.value === rawOf(r, c)) {
+            e.preventDefault();
+            if (e.shiftKey) doRedo();
+            else doUndo();
+          }
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+          e.preventDefault();
+          doRedo();
+        }
+      });
+      input.addEventListener("copy", copyRange);
+      input.addEventListener("paste", (e) => pasteTsv(e, r, c));
+      td.appendChild(input);
+      tr.appendChild(td);
+      inputs.set(ki, input);
+    }
+    tr.appendChild(document.createElement("td")); // right spacer column
+    return tr;
+  };
+
+  /** Render (or re-render) the visible window: colgroup, header and data rows. */
+  const renderWindow = (force = false): void => {
     const sheet = wb.sheets[active];
-    if (!sheet) return;
+    if (!sheet || !tableEl) return;
+    const y = gridScroll.scrollTop;
+    const x = Math.max(0, gridScroll.scrollLeft - 44); // grid area starts after the row-number column
+    let r1 = Math.max(1, lineAt(y, totalRows, yOfRow) - OVERSCAN);
+    let r2 = Math.min(totalRows, lineAt(y + viewportH(), totalRows, yOfRow) + OVERSCAN);
+    let c1 = Math.max(1, lineAt(x, totalCols, xOfCol) - OVERSCAN_COLS);
+    let c2 = Math.min(totalCols, lineAt(x + viewportW(), totalCols, xOfCol) + OVERSCAN_COLS);
+    // A merge reaching into the window must render whole (its top-left carries the
+    // value and the spans), so extend the window over intersecting merges.
+    for (const m of sheet.merges ?? []) {
+      const intersects = m.r2 >= r1 && m.r1 <= r2 && m.c2 >= c1 && m.c1 <= c2;
+      if (!intersects) continue;
+      if (m.r1 < r1) r1 = Math.max(1, m.r1);
+      if (m.c1 < c1) c1 = Math.max(1, m.c1);
+      if (m.r2 > r2) r2 = Math.min(totalRows, m.r2);
+      if (m.c2 > c2) c2 = Math.min(totalCols, m.c2);
+    }
+    if (!force && r1 >= winR1 && r2 <= winR2 && c1 >= winC1 && c2 <= winC2) return;
+
+    // Keep an in-progress edit alive across the re-render when its cell stays
+    // near the window; a far-away edit commits (blur) before its DOM goes away.
+    let pin: { r: number; c: number; val: string; ss: number | null; se: number | null } | null = null;
+    const ae = document.activeElement;
+    if (ae instanceof HTMLInputElement && gridScroll.contains(ae)) {
+      const rc = ae.closest("td")?.getAttribute("data-rc");
+      if (rc) {
+        const [pr, pc] = rc.split(":").map(Number);
+        pin = { r: pr!, c: pc!, val: ae.value, ss: ae.selectionStart, se: ae.selectionEnd };
+        const nearR = pin.r >= r1 - 200 && pin.r <= r2 + 200;
+        const nearC = pin.c >= c1 - 50 && pin.c <= c2 + 50;
+        if (nearR && nearC) {
+          r1 = Math.min(r1, pin.r);
+          r2 = Math.max(r2, pin.r);
+          c1 = Math.min(c1, pin.c);
+          c2 = Math.max(c2, pin.c);
+        } else {
+          ae.blur();
+          pin = null;
+        }
+      }
+    }
+
     inputs = new Map();
     tds = new Map();
-    gridScroll.innerHTML = "";
-    const rows = Math.min(ROWS_CAP, Math.max(ROWS_MIN, sheet.maxRow + 6) + extraRows);
-    const cols = Math.min(COLS_CAP, Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols);
-    renderedRows = rows;
-    renderedCols = cols;
+    tableEl.textContent = "";
 
-    const table = document.createElement("table");
-    table.className = "sheetedit-table";
-
-    // Column widths (table-layout is fixed, so these are authoritative). The table is
-    // sized to the sum so columns keep their width and the grid scrolls horizontally,
-    // rather than the table shrinking to the viewport and squashing every column.
+    // Column skeleton: row numbers, a left spacer, the window's columns, a right spacer.
+    const gridW = xOfCol(totalCols + 1);
+    const leftW = xOfCol(c1);
+    const rightW = Math.max(0, gridW - xOfCol(c2 + 1));
     const colgroup = document.createElement("colgroup");
-    const rnCol = document.createElement("col");
-    rnCol.style.width = "44px";
-    colgroup.appendChild(rnCol);
-    let totalW = 44;
-    const colEls: HTMLElement[] = [];
-    for (let c = 1; c <= cols; c++) {
-      const w = sheet.colWidths?.get(c) ?? 96;
+    const addCol = (w: number) => {
       const col = document.createElement("col");
       col.style.width = `${w}px`;
       colgroup.appendChild(col);
-      colEls.push(col);
-      totalW += w;
-    }
-    table.appendChild(colgroup);
-    table.style.width = `${totalW}px`;
+      return col;
+    };
+    addCol(44);
+    addCol(leftW);
+    const colEls: HTMLElement[] = [];
+    for (let c = c1; c <= c2; c++) colEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
+    addCol(rightW);
+    tableEl.appendChild(colgroup);
+    tableEl.style.width = `${44 + gridW}px`;
 
     const head = document.createElement("tr");
     const corner = document.createElement("th");
     corner.className = "corner";
     corner.title = t("selectAll");
-    corner.addEventListener("click", () => setSel(1, 1, rows, cols));
+    corner.addEventListener("click", () => setSel(1, 1, totalRows, totalCols));
     head.appendChild(corner);
-    for (let c = 1; c <= cols; c++) {
+    head.appendChild(document.createElement("th")); // left spacer
+    for (let c = c1; c <= c2; c++) {
       const th = document.createElement("th");
       th.className = "colhead";
       th.textContent = colToLetters(c);
@@ -934,175 +1185,121 @@ export function createSheetEditor(
       th.addEventListener("click", () => {
         if (resizing) return;
         anchor = { r: 1, c };
-        setSel(1, c, rows, c);
+        setSel(1, c, totalRows, c);
       });
       th.addEventListener("contextmenu", (e) => openLineMenu(e, "col", c));
       const grip = document.createElement("div");
       grip.className = "sheetedit-colgrip";
-      const colEl = colEls[c - 1]!;
+      const colEl = colEls[c - c1]!;
       grip.addEventListener("pointerdown", (e) =>
-        startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? 96),
+        startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? COL_W),
       );
       th.appendChild(grip);
       head.appendChild(th);
     }
-    table.appendChild(head);
+    head.appendChild(document.createElement("th")); // right spacer
+    tableEl.appendChild(head);
+
+    const cellCols = c2 - c1 + 1 + 3; // rownum + left spacer + window + right spacer
+    const topSpacer = document.createElement("tr");
+    topSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
+    topSpacer.style.height = `${Math.max(0, yOfRow(r1))}px`;
+    tableEl.appendChild(topSpacer);
+    for (let r = r1; r <= r2; r++) tableEl.appendChild(buildRow(sheet, r, c1, c2));
+    const bottomSpacer = document.createElement("tr");
+    bottomSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
+    bottomSpacer.style.height = `${Math.max(0, yOfRow(totalRows + 1) - yOfRow(r2 + 1))}px`;
+    tableEl.appendChild(bottomSpacer);
+
+    winR1 = r1;
+    winR2 = r2;
+    winC1 = c1;
+    winC2 = c2;
+
+    if (pin) {
+      const inp = inputs.get(key(pin.r, pin.c));
+      if (inp && document.activeElement !== inp) {
+        skipFocusValue = true;
+        inp.focus();
+        skipFocusValue = false;
+        inp.value = pin.val;
+        fxbar.setValue(pin.val);
+        try {
+          inp.setSelectionRange(pin.ss, pin.se);
+        } catch {
+          /* selection restore is best-effort */
+        }
+      }
+    }
+    paintSel();
+  };
+
+  /** Focus a cell, scrolling it into the rendered window first if needed. */
+  const focusCell = (r: number, c: number): void => {
+    if (r < 1 || c < 1 || r > totalRows || c > totalCols) return;
+    let inp = inputs.get(key(r, c));
+    if (!inp) {
+      const y = yOfRow(r);
+      const x = 44 + xOfCol(c);
+      if (y < gridScroll.scrollTop) gridScroll.scrollTop = y;
+      else if (y > gridScroll.scrollTop + viewportH() - ROW_H * 2)
+        gridScroll.scrollTop = Math.max(0, y - Math.max(ROW_H * 2, viewportH() - ROW_H * 2));
+      if (x < gridScroll.scrollLeft + 44) gridScroll.scrollLeft = Math.max(0, x - 44);
+      else if (x > gridScroll.scrollLeft + viewportW() - COL_W)
+        gridScroll.scrollLeft = Math.max(0, x - Math.max(COL_W, viewportW() - COL_W * 2));
+      renderWindow(true);
+      inp = inputs.get(key(r, c));
+    }
+    inp?.focus();
+  };
+
+  let scrollScheduled = false;
+  gridScroll.addEventListener("scroll", () => {
+    if (scrollScheduled) return;
+    scrollScheduled = true;
+    const run = () => {
+      scrollScheduled = false;
+      renderWindow();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    else setTimeout(run, 16);
+  });
+
+  const renderGrid = () => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    inputs = new Map();
+    tds = new Map();
+    const keepTop = gridScroll.scrollTop;
+    const keepLeft = gridScroll.scrollLeft;
+    gridScroll.innerHTML = "";
+    totalRows = Math.max(ROWS_MIN, sheet.maxRow + 6) + extraRows;
+    totalCols = Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols;
+    renderedRows = totalRows;
+    renderedCols = totalCols;
+    rebuildSizeIndexes(sheet);
 
     // Merged ranges: the top-left cell spans; covered cells are not rendered.
-    const covered = new Set<string>();
-    const spanAt = new Map<string, { rs: number; cs: number }>();
+    coveredSet = new Set<string>();
+    spanAtMap = new Map<string, { rs: number; cs: number }>();
     for (const m of sheet.merges ?? []) {
-      spanAt.set(key(m.r1, m.c1), { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 });
+      spanAtMap.set(key(m.r1, m.c1), { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 });
       for (let r = m.r1; r <= m.r2; r++)
-        for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) covered.add(key(r, c));
+        for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) coveredSet.add(key(r, c));
     }
 
-    for (let r = 1; r <= rows; r++) {
-      const tr = document.createElement("tr");
-      const rh = sheet.rowHeights?.get(r);
-      if (rh) tr.style.height = `${rh}px`;
-      const rn = document.createElement("th");
-      rn.className = "rownum";
-      rn.textContent = String(r);
-      rn.title = t("selectRow", { row: r });
-      rn.addEventListener("click", () => {
-        if (resizing) return;
-        anchor = { r, c: 1 };
-        setSel(r, 1, r, cols);
-      });
-      rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
-      const rgrip = document.createElement("div");
-      rgrip.className = "sheetedit-rowgrip";
-      rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, rh ?? 22));
-      rn.appendChild(rgrip);
-      tr.appendChild(rn);
-      for (let c = 1; c <= cols; c++) {
-        if (covered.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
-        const td = document.createElement("td");
-        td.dataset.rc = key(r, c);
-        tds.set(key(r, c), td);
-        const sp = spanAt.get(key(r, c));
-        if (sp) {
-          if (sp.rs > 1) td.rowSpan = sp.rs;
-          if (sp.cs > 1) td.colSpan = sp.cs;
-        }
-        const cell = getCell(sheet, r, c);
-        if (cell?.kind === "n") td.classList.add("num");
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = cellDisplay(cell);
-        input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
-        // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
-        const cs = cell?.cellStyle;
-        if (cs) {
-          if (cs.bg) td.style.background = cs.bg;
-          if (cs.borders) {
-            // Override the default gridline box-shadow: keep light right/bottom unless the
-            // file specifies a border there, and add the file's top/left where present.
-            const bd = cs.borders;
-            const g = "#e3e3e6";
-            const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
-            if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
-            if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
-            td.style.boxShadow = sh.join(", ");
-          }
-          if (cs.bold) input.style.fontWeight = "700";
-          if (cs.italic) input.style.fontStyle = "italic";
-          if (cs.color) input.style.color = cs.color;
-          if (cs.align) input.style.textAlign = cs.align;
-        }
-        const ki = key(r, c);
-        // Shift-click extends the selection from the anchor (no caret/edit).
-        input.addEventListener("mousedown", (e) => {
-          if (e.shiftKey) {
-            e.preventDefault();
-            selectCell(r, c, true);
-          }
-        });
-        input.addEventListener("focus", () => {
-          if (justDragged) {
-            input.blur(); // a range was just drag-selected; do not enter edit on the trailing tap
-            return;
-          }
-          selectCell(r, c, false); // tapping a cell selects it; toolbar styles target the selection
-          activeCell = { r, c };
-          fxbar.setRef(refName(r, c));
-          // Show the editable underlying value (formula or raw), not the formatted display.
-          if (skipFocusValue) skipFocusValue = false;
-          else input.value = rawOf(r, c);
-          fxbar.setValue(input.value);
-        });
-        input.addEventListener("input", () => fxbar.setValue(input.value));
-        let cancelEdit = false;
-        const commit = () => {
-          // A re-render may have replaced this input while it was focused; a late blur
-          // on the stale element must not commit its outdated value.
-          if (inputs.get(ki) !== input) return;
-          if (barGrab) return; // focus is moving into the formula bar: the edit continues there
-          if (cancelEdit) {
-            // Escape: discard whatever is in the input, restore the display.
-            cancelEdit = false;
-            input.value = displayValue(sheet, r, c);
-            return;
-          }
-          const raw = input.value;
-          const live = getCell(sheet, r, c);
-          const before = live ? (live.formula != null ? "=" + live.formula : live.value) : "";
-          if (raw === before) {
-            input.value = displayValue(sheet, r, c);
-            return;
-          }
-          commitValue(r, c, raw);
-          input.value = displayValue(sheet, r, c);
-          input.parentElement?.classList.toggle("num", getCell(sheet, r, c)?.kind === "n");
-        };
-        input.addEventListener("blur", commit);
-        input.addEventListener("keydown", (e) => {
-          const moveTo = (rr: number, cc: number) => {
-            const target = inputs.get(key(rr, cc));
-            if (!target) return;
-            e.preventDefault();
-            input.blur();
-            target.focus();
-          };
-          if (e.key === "Enter") {
-            e.preventDefault();
-            input.blur();
-            inputs.get(key(r + 1, c))?.focus();
-          } else if (e.key === "Escape") {
-            cancelEdit = true;
-            input.blur();
-          } else if (e.key === "ArrowDown") moveTo(r + 1, c);
-          else if (e.key === "ArrowUp") moveTo(r - 1, c);
-          // Left/right leave the cell only from the caret's edge, so in-cell editing stays natural.
-          else if (e.key === "ArrowLeft" && input.selectionStart === 0 && input.selectionEnd === 0) moveTo(r, c - 1);
-          else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) moveTo(r, c + 1);
-          else if (e.key === "Home" && (e.ctrlKey || e.metaKey)) moveTo(1, 1);
-          else if ((e.key === "Delete" || e.key === "Backspace") && sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
-            e.preventDefault();
-            clearRange(sel);
-          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-            // Mid-edit, native text undo applies; otherwise grid-level undo/redo.
-            if (input.value === rawOf(r, c)) {
-              e.preventDefault();
-              if (e.shiftKey) doRedo();
-              else doUndo();
-            }
-          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
-            e.preventDefault();
-            doRedo();
-          }
-        });
-        input.addEventListener("copy", copyRange);
-        input.addEventListener("paste", (e) => pasteTsv(e, r, c));
-        td.appendChild(input);
-        tr.appendChild(td);
-        inputs.set(ki, input);
-      }
-      table.appendChild(tr);
-    }
+    const table = document.createElement("table");
+    table.className = "sheetedit-table";
+    tableEl = table;
     gridScroll.appendChild(table);
-    paintSel(); // restore the selection highlight after a re-render
+
+    gridScroll.scrollTop = keepTop; // clamped by the browser if the sheet shrank
+    gridScroll.scrollLeft = keepLeft;
+    winR1 = 1;
+    winR2 = 0;
+    winC1 = 1;
+    winC2 = 0;
+    renderWindow(true);
   };
 
   const renderTabs = () => {
