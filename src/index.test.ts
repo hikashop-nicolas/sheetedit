@@ -419,6 +419,32 @@ describe("xlsx cell styles", () => {
     expect(c1.fontSize).toBe(16); // untouched traits stay
   });
 
+  it("mints styles.xml when the workbook has none", () => {
+    // e.g. a workbook from the CSV converter: no xl/styles.xml at all.
+    const bare = zipSync({
+      "[Content_Types].xml": strToU8(
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+          '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>',
+      ),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(
+        `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      ),
+      "xl/_rels/workbook.xml.rels": strToU8(
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      ),
+      "xl/worksheets/sheet1.xml": strToU8(
+        `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData></worksheet>`,
+      ),
+    });
+    const wb = readWorkbook(bare);
+    const sheet = wb.sheets[0]!;
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:1")!, { bold: true, underline: true });
+    const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.bold).toBe(true);
+    expect(a1.underline).toBe(true);
+  });
+
   it("writes a column width and round-trips", () => {
     const wb = readWorkbook(makeVisualXlsx());
     const sheet = wb.sheets[0]!;

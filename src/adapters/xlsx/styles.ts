@@ -25,7 +25,7 @@ export const argbOf = (css: string): string => "FF" + css.replace("#", "").toUpp
  * styles.xml, find-or-create the combined <xf>, and point the cell at it.
  */
 export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change: StyleChange): void {
-  const doc = wb.stylesDoc;
+  const doc = ensureXlsxStylesDoc(wb); // workbooks without styles.xml get a minimal one
   if (!doc || !sheet.doc || !sheet.sheetData) return; // chartsheets have no cells to style
   const ns = doc.documentElement.namespaceURI || SS_MAIN;
   const ce = (name: string) => doc.createElementNS(ns, name);
