@@ -95,6 +95,48 @@ describe("virtualized grid", () => {
     host.remove();
   });
 
+  it("aggregates over huge ranges stay linear (the old path took ~30s)", () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 100000; i++) lines.push(`${i},${i % 10}`);
+    lines.push(",=SUM(B1:B100000)");
+    lines.push(",=AVERAGE(B1:B100000)");
+    lines.push(",=COUNT(B1:B100000)");
+    lines.push(",=MAX(B1:B100000)");
+    const t = Date.now();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8(lines.join("\n") + "\n"), { formatHint: "csv" });
+    expect(Date.now() - t).toBeLessThan(5000);
+    const text = ed.getText()!;
+    expect(text).toContain("=SUM(B1:B100000)");
+    ed.destroy();
+    host.remove();
+  });
+
+  it("aggregate overrides keep Excel semantics on small inputs", async () => {
+    const { readCsv } = await import("../adapters/csv/read");
+    const { recalc } = await import("./recalc");
+    const { getCell } = await import("./model");
+    const wb = readCsv(
+      [
+        "1,text,3", // B1 is text: ignored by range aggregates
+        '=SUM(A1:C1),=AVERAGE(A1:C1),=COUNT(A1:C1)',
+        '=COUNTA(A1:C1),=MIN(A1:C1),=MAX(A1:C1)',
+        '"=SUM(1,""2"",TRUE)",=AVERAGE(D1:D1),x', // literals coerce; empty range divides by zero
+      ].join("\n") + "\n",
+    );
+    recalc(wb);
+    const s = wb.sheets[0]!;
+    expect(getCell(s, 2, 1)?.value).toBe("4"); // SUM ignores the text
+    expect(getCell(s, 2, 2)?.value).toBe("2"); // AVERAGE over the two numbers
+    expect(getCell(s, 2, 3)?.value).toBe("2"); // COUNT numbers only
+    expect(getCell(s, 3, 1)?.value).toBe("3"); // COUNTA counts the text too
+    expect(getCell(s, 3, 2)?.value).toBe("1");
+    expect(getCell(s, 3, 3)?.value).toBe("3");
+    expect(getCell(s, 4, 1)?.value).toBe("4"); // 1 + "2" + TRUE
+    expect(getCell(s, 4, 2)?.value).toBe("#DIV/0!");
+  });
+
   it("a big sheet still saves correctly after an edit deep in the file", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
