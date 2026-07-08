@@ -13,7 +13,7 @@ beforeAll(() => {
   }
 });
 
-const frame = () => new Promise<void>((res) => requestAnimationFrame(() => res()));
+const frame = () => new Promise<void>((res) => setTimeout(res, 30));
 
 const bigCsv = (rows: number): Uint8Array => {
   const lines: string[] = [];

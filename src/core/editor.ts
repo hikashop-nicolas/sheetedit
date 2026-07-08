@@ -1253,16 +1253,16 @@ export function createSheetEditor(
     inp?.focus();
   };
 
+  // A plain timeout throttle: requestAnimationFrame stalls in occluded windows,
+  // which would leave the window stale after a programmatic scroll.
   let scrollScheduled = false;
   gridScroll.addEventListener("scroll", () => {
     if (scrollScheduled) return;
     scrollScheduled = true;
-    const run = () => {
+    setTimeout(() => {
       scrollScheduled = false;
       renderWindow();
-    };
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
-    else setTimeout(run, 16);
+    }, 16);
   });
 
   const renderGrid = () => {
