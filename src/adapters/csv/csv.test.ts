@@ -157,6 +157,7 @@ describe("csvToXlsx", () => {
     const s = wb2.sheets[0]!;
     expect(getCell(s, 1, 1)?.value).toBe("name");
     expect(getCell(s, 2, 2)?.formula).toBe("2*3");
+    expect(getCell(s, 2, 2)?.value).toBe("6"); // cached result written alongside
     expect(getCell(s, 3, 2)?.value).toBe("5");
     // The converted workbook is editable and saves through the xlsx writer.
     setCellInput(s, 3, 2, "6");

@@ -4,8 +4,8 @@ import { colToLetters } from "../../core/model";
 import { SS_MAIN } from "../xlsx/shared";
 // ---------------------------------------------------------------------------
 // csv -> xlsx conversion: build a minimal real workbook from the model
-// (values, formulas, column widths). Formulas are written without cached
-// values and fullCalcOnLoad is set, so the target application computes them.
+// (values, formulas, column widths). Formulas carry their computed result as
+// the cached value; fullCalcOnLoad still asks the target app to recompute.
 // ---------------------------------------------------------------------------
 
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
@@ -47,6 +47,16 @@ export function csvToXlsx(wb: Workbook): Uint8Array {
         const f = ce("f");
         f.textContent = cell.formula;
         c.appendChild(f);
+        // The computed result rides along as the cached value, like Excel writes it,
+        // so any reader that trusts caches shows the number immediately.
+        if (cell.kind === "b") c.setAttribute("t", "b");
+        else if (cell.kind === "e") c.setAttribute("t", "e");
+        else if (cell.kind === "s") c.setAttribute("t", "str");
+        if (cell.value !== "") {
+          const v = ce("v");
+          v.textContent = cell.kind === "b" ? (cell.value === "TRUE" ? "1" : "0") : cell.value;
+          c.appendChild(v);
+        }
       } else if (cell.kind === "n") {
         const v = ce("v");
         v.textContent = cell.value;
