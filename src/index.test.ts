@@ -271,9 +271,10 @@ describe("ods", () => {
 
 const STYLES = `<?xml version="1.0"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
- <fonts count="2">
+ <fonts count="3">
   <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
   <font><b/><color rgb="FFFF0000"/></font>
+  <font><u/><strike/><sz val="16"/><name val="Georgia"/></font>
  </fonts>
  <fills count="3">
   <fill><patternFill patternType="none"/></fill>
@@ -284,10 +285,11 @@ const STYLES = `<?xml version="1.0"?>
   <border><left/><right/><top/><bottom/></border>
   <border><left style="thin"><color rgb="FF000000"/></left><right/><top/><bottom style="thin"><color rgb="FF000000"/></bottom></border>
  </borders>
- <cellXfs count="3">
+ <cellXfs count="4">
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
   <xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyFont="1" applyFill="1"><alignment horizontal="center"/></xf>
   <xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/>
+  <xf numFmtId="0" fontId="2" fillId="0" borderId="0" applyFont="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
  </cellXfs>
 </styleSheet>`;
 
@@ -295,7 +297,7 @@ const VSTYLE_SHEET = `<?xml version="1.0"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
  <cols><col min="2" max="2" width="20" customWidth="1"/></cols>
  <sheetData>
-  <row r="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="2"><v>5</v></c></row>
+  <row r="1"><c r="A1" s="1" t="s"><v>0</v></c><c r="B1" s="2"><v>5</v></c><c r="C1" s="3"><v>7</v></c></row>
  </sheetData>
 </worksheet>`;
 
@@ -368,6 +370,55 @@ describe("xlsx cell styles", () => {
     expect(a1.borders?.right).toBeUndefined();
   });
 
+  it("resolves underline, strike, font size/name, valign and wrap", () => {
+    const c1 = readWorkbook(makeVisualXlsx()).sheets[0]!.cells.get("1:3")!.cellStyle!;
+    expect(c1.underline).toBe(true);
+    expect(c1.strike).toBe(true);
+    expect(c1.fontSize).toBe(16);
+    expect(c1.fontFamily).toBe("Georgia");
+    expect(c1.valign).toBe("top");
+    expect(c1.wrap).toBe(true);
+  });
+
+  it("suppresses font size/name equal to the workbook default", () => {
+    // A1 uses font 1, which has no explicit sz/name (inherits Calibri 11 visuals).
+    const a1 = readWorkbook(makeVisualXlsx()).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.fontSize).toBeUndefined();
+    expect(a1.fontFamily).toBeUndefined();
+  });
+
+  it("writes underline/strike/size/family/valign/wrap and round-trips", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:1")!, {
+      underline: true,
+      strike: true,
+      fontSize: 20,
+      fontFamily: "Georgia",
+      valign: "middle",
+      wrap: true,
+    });
+    const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.underline).toBe(true);
+    expect(a1.strike).toBe(true);
+    expect(a1.fontSize).toBe(20);
+    expect(a1.fontFamily).toBe("Georgia");
+    expect(a1.valign).toBe("middle");
+    expect(a1.wrap).toBe(true);
+    expect(a1.bold).toBe(true); // pre-existing font traits survive
+    expect(a1.align).toBe("center");
+  });
+
+  it("turns underline and strike back off", () => {
+    const wb = readWorkbook(makeVisualXlsx());
+    const sheet = wb.sheets[0]!;
+    setXlsxCellStyle(wb, sheet, sheet.cells.get("1:3")!, { underline: false, strike: false });
+    const c1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:3")!.cellStyle!;
+    expect(c1.underline).toBeFalsy();
+    expect(c1.strike).toBeFalsy();
+    expect(c1.fontSize).toBe(16); // untouched traits stay
+  });
+
   it("writes a column width and round-trips", () => {
     const wb = readWorkbook(makeVisualXlsx());
     const sheet = wb.sheets[0]!;
@@ -405,8 +456,8 @@ const ODS_STYLED = `<?xml version="1.0" encoding="UTF-8"?>
   <style:style style:name="co1" style:family="table-column"><style:table-column-properties style:column-width="3cm"/></style:style>
   <style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="1cm"/></style:style>
   <style:style style:name="ce1" style:family="table-cell">
-   <style:table-cell-properties fo:background-color="#4472c4" fo:border="0.5pt solid #000000"/>
-   <style:text-properties fo:color="#ffffff" fo:font-weight="bold"/>
+   <style:table-cell-properties fo:background-color="#4472c4" fo:border="0.5pt solid #000000" fo:wrap-option="wrap" style:vertical-align="middle"/>
+   <style:text-properties fo:color="#ffffff" fo:font-weight="bold" style:text-underline-style="solid" style:text-line-through-style="solid" fo:font-size="14pt" fo:font-family="Georgia"/>
    <style:paragraph-properties fo:text-align="center"/>
   </style:style>
  </office:automatic-styles>
@@ -464,6 +515,48 @@ describe("ods cell styles", () => {
     const c1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:3")!.cellStyle!;
     expect(c1.borders?.bottom).toBe("#000000");
     expect(c1.borders?.top).toBeUndefined();
+  });
+
+  it("resolves underline, strike, font size/family, valign and wrap", () => {
+    const a1 = readWorkbook(makeStyledOds()).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.underline).toBe(true);
+    expect(a1.strike).toBe(true);
+    expect(a1.fontSize).toBe(14);
+    expect(a1.fontFamily).toBe("Georgia");
+    expect(a1.valign).toBe("middle");
+    expect(a1.wrap).toBe(true);
+  });
+
+  it("writes underline/strike/size/family/valign/wrap and round-trips", () => {
+    const wb = readWorkbook(makeStyledOds());
+    const sheet = wb.sheets[0]!;
+    setOdsCellStyle(wb, sheet, sheet.cells.get("1:3")!, {
+      underline: true,
+      strike: true,
+      fontSize: 18,
+      fontFamily: "Verdana",
+      valign: "bottom",
+      wrap: true,
+    });
+    const c1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:3")!.cellStyle!;
+    expect(c1.underline).toBe(true);
+    expect(c1.strike).toBe(true);
+    expect(c1.fontSize).toBe(18);
+    expect(c1.fontFamily).toBe("Verdana");
+    expect(c1.valign).toBe("bottom");
+    expect(c1.wrap).toBe(true);
+  });
+
+  it("turns underline and strike back off, keeping the rest", () => {
+    const wb = readWorkbook(makeStyledOds());
+    const sheet = wb.sheets[0]!;
+    setOdsCellStyle(wb, sheet, sheet.cells.get("1:1")!, { underline: false, strike: false });
+    const a1 = readWorkbook(writeWorkbook(wb)).sheets[0]!.cells.get("1:1")!.cellStyle!;
+    expect(a1.underline).toBeFalsy();
+    expect(a1.strike).toBeFalsy();
+    expect(a1.fontSize).toBe(14);
+    expect(a1.bold).toBe(true);
+    expect(a1.wrap).toBe(true);
   });
 
   it("writes a column width and a row height, round-tripping", () => {

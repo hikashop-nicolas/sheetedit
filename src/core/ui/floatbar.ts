@@ -62,9 +62,15 @@ export function setupFloatBar(deps: {
     b.addEventListener("mousedown", (e) => e.preventDefault());
     return b;
   };
+  const underline = btn("U", t("underline"), () => deps.applyStyle({ underline: !deps.curStyle()?.underline }));
+  underline.style.textDecoration = "underline";
+  const strike = btn("S", t("strikethrough"), () => deps.applyStyle({ strike: !deps.curStyle()?.strike }));
+  strike.style.textDecoration = "line-through";
   bar.append(
     bold,
     italic,
+    underline,
+    strike,
     color(t("textColour"), "#000000", (v) => deps.applyStyle({ color: v })),
     color(t("fillColour"), "#ffff00", (v) => deps.applyStyle({ bg: v })),
     alignBtn(ICON.left, t("alignLeft"), "left"),

@@ -77,6 +77,14 @@ const en: Dict = {
   fmtDate: "Date",
   fmtDateTime: "Date and time",
   fmtTime: "Time",
+  underline: "Underline",
+  strikethrough: "Strikethrough",
+  fontFamily: "Font",
+  fontSize: "Font size",
+  valignTop: "Align top",
+  valignMiddle: "Align middle",
+  valignBottom: "Align bottom",
+  wrapText: "Wrap text",
 };
 
 const fr: Dict = {
@@ -151,6 +159,14 @@ const fr: Dict = {
   fmtDate: "Date",
   fmtDateTime: "Date et heure",
   fmtTime: "Heure",
+  underline: "Souligné",
+  strikethrough: "Barré",
+  fontFamily: "Police",
+  fontSize: "Taille de police",
+  valignTop: "Aligner en haut",
+  valignMiddle: "Centrer verticalement",
+  valignBottom: "Aligner en bas",
+  wrapText: "Renvoyer à la ligne",
 };
 
 const ja: Dict = {
@@ -225,6 +241,14 @@ const ja: Dict = {
   fmtDate: "日付",
   fmtDateTime: "日付と時刻",
   fmtTime: "時刻",
+  underline: "下線",
+  strikethrough: "取り消し線",
+  fontFamily: "フォント",
+  fontSize: "フォントサイズ",
+  valignTop: "上揃え",
+  valignMiddle: "上下中央揃え",
+  valignBottom: "下揃え",
+  wrapText: "折り返して全体を表示",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja };

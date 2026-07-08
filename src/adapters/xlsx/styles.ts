@@ -45,9 +45,15 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
   const cur = cell.cellStyle ?? {};
   const bold = change.bold ?? cur.bold;
   const italic = change.italic ?? cur.italic;
+  const underline = change.underline ?? cur.underline;
+  const strike = change.strike ?? cur.strike;
+  const fontSize = change.fontSize ?? cur.fontSize;
+  const fontFamily = change.fontFamily ?? cur.fontFamily;
   const color = change.color ?? cur.color;
   const bg = change.bg ?? cur.bg;
   const align = change.align ?? cur.align;
+  const valign = change.valign ?? cur.valign;
+  const wrap = change.wrap ?? cur.wrap;
   // Border sides: start from the current borders, apply the all-sides toggle and/or per-side change.
   const curSides = {
     top: !!cur.borders?.top,
@@ -76,6 +82,16 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
   };
   flag("b", bold);
   flag("i", italic);
+  flag("u", underline);
+  flag("strike", strike);
+  // Size/name: set when known, never remove (undefined = inherit the font's own).
+  const val = (tag: string, v: string | undefined) => {
+    if (v == null) return;
+    const el = firstByLocal(font, tag) ?? (font.appendChild(ce(tag)) as Element);
+    el.setAttribute("val", v);
+  };
+  val("sz", fontSize != null ? String(fontSize) : undefined);
+  val("name", fontFamily);
   if (color) {
     const col = firstByLocal(font, "color") ?? (font.appendChild(ce("color")) as Element);
     col.removeAttribute("theme");
@@ -123,10 +139,12 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
   xf.setAttribute("applyFont", "1");
   if (bg) xf.setAttribute("applyFill", "1");
   if (borderId) xf.setAttribute("applyBorder", "1");
-  if (align) {
+  if (align || valign || wrap) {
     xf.setAttribute("applyAlignment", "1");
     const a = ce("alignment");
-    a.setAttribute("horizontal", align);
+    if (align) a.setAttribute("horizontal", align);
+    if (valign) a.setAttribute("vertical", valign === "middle" ? "center" : valign);
+    if (wrap) a.setAttribute("wrapText", "1");
     xf.appendChild(a);
   }
   const sIdx = poolIndex(cellXfsEl, xf);

@@ -41,9 +41,9 @@ export function internOdsStyle(doc: Document, autoStyles: Element, family: strin
   return name;
 }
 
-export const odsSetOrRemove = (el: Element, qn: string, v: string | undefined) => {
+export const odsSetOrRemove = (el: Element, qn: string, v: string | undefined, ns: string = ODS.fo) => {
   if (v == null) el.removeAttribute(qn);
-  else el.setAttributeNS(ODS.fo, qn, v);
+  else el.setAttributeNS(ns, qn, v);
 };
 
 // Apply a resolved CellStyle onto an ods cell style element (cloned from the original
@@ -64,9 +64,18 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
   odsSetOrRemove(cp, "fo:border-right", bv(cs.borders?.right));
   odsSetOrRemove(cp, "fo:border-bottom", bv(cs.borders?.bottom));
   odsSetOrRemove(cp, "fo:border-left", bv(cs.borders?.left));
+  odsSetOrRemove(cp, "fo:wrap-option", cs.wrap ? "wrap" : undefined);
+  odsSetOrRemove(cp, "style:vertical-align", cs.valign, ODS.style);
   const tp = child("style:text-properties");
   odsSetOrRemove(tp, "fo:font-weight", cs.bold ? "bold" : undefined);
   odsSetOrRemove(tp, "fo:font-style", cs.italic ? "italic" : undefined);
+  odsSetOrRemove(tp, "style:text-underline-style", cs.underline ? "solid" : undefined, ODS.style);
+  odsSetOrRemove(tp, "style:text-underline-width", cs.underline ? "auto" : undefined, ODS.style);
+  odsSetOrRemove(tp, "style:text-underline-color", cs.underline ? "font-color" : undefined, ODS.style);
+  odsSetOrRemove(tp, "style:text-line-through-style", cs.strike ? "solid" : undefined, ODS.style);
+  odsSetOrRemove(tp, "fo:font-size", cs.fontSize ? `${cs.fontSize}pt` : undefined);
+  if (cs.fontFamily) tp.removeAttribute("style:font-name"); // fo:font-family must win over a cloned font-name
+  odsSetOrRemove(tp, "fo:font-family", cs.fontFamily);
   odsSetOrRemove(tp, "fo:color", cs.color);
   const pp = child("style:paragraph-properties");
   odsSetOrRemove(pp, "fo:text-align", cs.align === "center" ? "center" : cs.align === "right" ? "end" : cs.align === "left" ? "start" : undefined);

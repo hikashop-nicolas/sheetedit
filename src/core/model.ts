@@ -10,9 +10,18 @@ export type CellKind = "n" | "s" | "b" | "e" | "blank";
 export interface CellStyle {
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  /** Font size in points (only when it differs from the workbook default). */
+  fontSize?: number;
+  /** Font family name (only when it differs from the workbook default). */
+  fontFamily?: string;
   color?: string; // CSS text colour
   bg?: string; // CSS fill colour
   align?: "left" | "center" | "right";
+  valign?: "top" | "middle" | "bottom";
+  /** Wrap text within the cell. */
+  wrap?: boolean;
   /** Border presence + CSS colour per side. */
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
 }
@@ -113,9 +122,15 @@ export interface Workbook {
 export interface StyleChange {
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  fontSize?: number; // points
+  fontFamily?: string;
   color?: string; // CSS "#rrggbb" text colour
   bg?: string; // CSS "#rrggbb" fill colour
   align?: "left" | "center" | "right";
+  valign?: "top" | "middle" | "bottom";
+  wrap?: boolean;
   border?: boolean; // all-sides box border on/off (convenience)
   /** Per-side borders to set; each specified side is turned on/off, others kept. */
   borderSides?: { top?: boolean; right?: boolean; bottom?: boolean; left?: boolean };
@@ -314,9 +329,15 @@ export function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
   return {
     bold: change.bold ?? cur.bold,
     italic: change.italic ?? cur.italic,
+    underline: change.underline ?? cur.underline,
+    strike: change.strike ?? cur.strike,
+    fontSize: change.fontSize ?? cur.fontSize,
+    fontFamily: change.fontFamily ?? cur.fontFamily,
     color: change.color ?? cur.color,
     bg: change.bg ?? cur.bg,
     align: change.align ?? cur.align,
+    valign: change.valign ?? cur.valign,
+    wrap: change.wrap ?? cur.wrap,
     borders: any
       ? {
           top: sides.top ? "#000000" : undefined,

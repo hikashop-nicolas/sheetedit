@@ -63,6 +63,11 @@ export function injectStyles(): void {
     .sheetedit-btn:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:1px; }
     .sheetedit-tb-sep { width:1px; align-self:stretch; background:var(--sheetedit-btn-border, #4a4f57); margin:1px 3px; }
     .sheetedit-color { width:30px; height:28px; padding:0; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px; background:var(--sheetedit-btn, #3a3f47); cursor:pointer; }
+    .sheetedit-tb-select {
+      font:inherit; font-size:13px; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
+      border-radius:6px; padding:4px 4px; cursor:pointer; max-width:64px; height:28px;
+    }
+    .sheetedit-tb-select:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:1px; }
     .sheetedit-btn svg { display:block; width:16px; height:16px; }
     .sheetedit-table th.colhead, .sheetedit-table th.rownum, .sheetedit-table th.corner { cursor:pointer; }
     .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:#e3e3e8; }
@@ -1209,8 +1214,13 @@ export function createSheetEditor(
         }
         if (cs.bold) input.style.fontWeight = "700";
         if (cs.italic) input.style.fontStyle = "italic";
+        if (cs.underline || cs.strike)
+          input.style.textDecoration = `${cs.underline ? "underline" : ""} ${cs.strike ? "line-through" : ""}`.trim();
+        if (cs.fontSize) input.style.fontSize = `${cs.fontSize}pt`;
+        if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
         if (cs.color) input.style.color = cs.color;
         if (cs.align) input.style.textAlign = cs.align;
+        // wrap/valign persist to the file but an <input> grid cell cannot show them.
       }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).

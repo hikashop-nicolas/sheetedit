@@ -53,11 +53,22 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       if (bottom) sides.bottom = bottom;
       if (left) sides.left = left;
       if (top || right || bottom || left) s.borders = sides;
+      if (cp.getAttribute("fo:wrap-option") === "wrap") s.wrap = true;
+      const va = cp.getAttribute("style:vertical-align");
+      if (va === "top" || va === "middle" || va === "bottom") s.valign = va;
     }
     const tp = el.getElementsByTagName("style:text-properties")[0];
     if (tp) {
       if (tp.getAttribute("fo:font-weight") === "bold") s.bold = true;
       if (tp.getAttribute("fo:font-style") === "italic") s.italic = true;
+      const us = tp.getAttribute("style:text-underline-style");
+      if (us && us !== "none") s.underline = true;
+      const ls = tp.getAttribute("style:text-line-through-style");
+      if (ls && ls !== "none") s.strike = true;
+      const fs = parseFloat(tp.getAttribute("fo:font-size") ?? "");
+      if (fs && (tp.getAttribute("fo:font-size") ?? "").endsWith("pt")) s.fontSize = fs;
+      const ff = tp.getAttribute("fo:font-family") ?? tp.getAttribute("style:font-name");
+      if (ff) s.fontFamily = ff.replace(/^['"]|['"]$/g, "");
       const col = odsColorOf(tp.getAttribute("fo:color"));
       if (col) s.color = col;
     }

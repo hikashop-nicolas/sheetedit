@@ -99,6 +99,10 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
   const fonts = pool("fonts").map((f) => ({
     bold: !!firstByLocal(f, "b"),
     italic: !!firstByLocal(f, "i"),
+    underline: !!firstByLocal(f, "u"),
+    strike: !!firstByLocal(f, "strike"),
+    size: Number(firstByLocal(f, "sz")?.getAttribute("val")) || undefined,
+    name: firstByLocal(f, "name")?.getAttribute("val") || undefined,
     color: resolveColor(firstByLocal(f, "color"), theme),
   }));
   const fills = pool("fills").map((fl) => {
@@ -125,14 +129,26 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
       if (font) {
         if (font.bold) st.bold = true;
         if (font.italic) st.italic = true;
+        if (font.underline) st.underline = true;
+        if (font.strike) st.strike = true;
+        // Size/name only when they differ from the default font, so plain cells
+        // keep an undefined cellStyle and the grid's own defaults.
+        if (font.size && font.size !== fonts[0]?.size) st.fontSize = font.size;
+        if (font.name && font.name !== fonts[0]?.name) st.fontFamily = font.name;
         if (font.color) st.color = font.color;
       }
       const fill = fills[Number(xf.getAttribute("fillId") || "0")];
       if (fill) st.bg = fill;
       const border = borders[Number(xf.getAttribute("borderId") || "0")];
       if (border) st.borders = border;
-      const align = firstByLocal(xf, "alignment")?.getAttribute("horizontal");
+      const alignEl = firstByLocal(xf, "alignment");
+      const align = alignEl?.getAttribute("horizontal");
       if (align === "center" || align === "right" || align === "left") st.align = align;
+      const valign = alignEl?.getAttribute("vertical");
+      if (valign === "top" || valign === "bottom") st.valign = valign;
+      else if (valign === "center") st.valign = "middle";
+      const wrap = alignEl?.getAttribute("wrapText");
+      if (wrap === "1" || wrap === "true") st.wrap = true;
       xfStyles.push(Object.keys(st).length ? st : undefined);
     }
   }

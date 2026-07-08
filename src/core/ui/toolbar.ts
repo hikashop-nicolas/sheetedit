@@ -36,6 +36,10 @@ export const ICON = {
   right: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M7 8h7M4 12h10"/></svg>`,
   borders: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="12" height="12"/><path d="M8 2v12M2 8h12"/></svg>`,
   merge: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="4" width="13" height="8"/><path d="M5 6 7.5 8 5 10M11 6 8.5 8 11 10"/></svg>`,
+  valignTop: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2.5h12M8 6v8M5.5 8.5 8 6l2.5 2.5"/></svg>`,
+  valignMiddle: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 8h12M8 1.5v4M6 3.5 8 5.5l2-2M8 14.5v-4M6 12.5l2 2 2-2"/></svg>`,
+  valignBottom: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 13.5h12M8 2v8M5.5 7.5 8 10l2.5-2.5"/></svg>`,
+  wrap: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M2 8h8.5a2.25 2.25 0 0 1 0 4.5H8"/><path d="m9.5 10.5-2 2 2 2"/><path d="M2 12h3"/></svg>`,
 };
 
 export interface ToolbarHandle {
@@ -98,7 +102,41 @@ export function buildToolbar(ctx: {
   bold.style.fontWeight = "700";
   const italic = tbBtn("I", t("italic"), () => ctx.applyStyle({ italic: !ctx.curStyle()?.italic }));
   italic.style.fontStyle = "italic";
+  const underline = tbBtn("U", t("underline"), () => ctx.applyStyle({ underline: !ctx.curStyle()?.underline }));
+  underline.style.textDecoration = "underline";
+  const strike = tbBtn("S", t("strikethrough"), () => ctx.applyStyle({ strike: !ctx.curStyle()?.strike }));
+  strike.style.textDecoration = "line-through";
   const borderBtn = tbIcon(ICON.borders, t("borders"), () => ctx.openBorderPopover(borderBtn));
+
+  // Font family / size: stateless menus (like the toolbar's other controls, they
+  // read nothing back); the placeholder row re-selects itself after each apply.
+  const picker = (title: string, placeholder: string, options: [string, string][], apply: (v: string) => void) => {
+    const s = document.createElement("select");
+    s.className = "sheetedit-tb-select";
+    s.title = title;
+    s.setAttribute("aria-label", title);
+    const ph = document.createElement("option");
+    ph.value = "";
+    ph.textContent = placeholder;
+    ph.disabled = true;
+    ph.selected = true;
+    s.appendChild(ph);
+    for (const [v, label] of options) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = label;
+      s.appendChild(o);
+    }
+    s.addEventListener("change", () => {
+      if (s.value) apply(s.value);
+      s.selectedIndex = 0;
+    });
+    return s;
+  };
+  const FAMILIES = ["Arial", "Calibri", "Courier New", "Georgia", "Helvetica", "Times New Roman", "Verdana"];
+  const famSel = picker(t("fontFamily"), "Aa", FAMILIES.map((f) => [f, f]), (v) => ctx.applyStyle({ fontFamily: v }));
+  const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48];
+  const sizeSel = picker(t("fontSize"), "pt", SIZES.map((n) => [String(n), String(n)]), (v) => ctx.applyStyle({ fontSize: Number(v) }));
 
   // Number-format picker: a button opening a preset menu (General, number,
   // percent, currency, date, time), shapes localized via numFmtPresets.
@@ -133,15 +171,23 @@ export function buildToolbar(ctx: {
 
   const styleControls: HTMLElement[] = [
     fmtBtn,
+    famSel,
+    sizeSel,
     sep(),
     bold,
     italic,
+    underline,
+    strike,
     colorInput(t("textColour"), "#000000", (v) => ctx.applyStyle({ color: v })),
     colorInput(t("fillColour"), "#ffff00", (v) => ctx.applyStyle({ bg: v })),
     sep(),
     tbIcon(ICON.left, t("alignLeft"), () => ctx.applyStyle({ align: "left" })),
     tbIcon(ICON.center, t("alignCentre"), () => ctx.applyStyle({ align: "center" })),
     tbIcon(ICON.right, t("alignRight"), () => ctx.applyStyle({ align: "right" })),
+    tbIcon(ICON.valignTop, t("valignTop"), () => ctx.applyStyle({ valign: "top" })),
+    tbIcon(ICON.valignMiddle, t("valignMiddle"), () => ctx.applyStyle({ valign: "middle" })),
+    tbIcon(ICON.valignBottom, t("valignBottom"), () => ctx.applyStyle({ valign: "bottom" })),
+    tbIcon(ICON.wrap, t("wrapText"), () => ctx.applyStyle({ wrap: !ctx.curStyle()?.wrap })),
     sep(),
     borderBtn,
     tbIcon(ICON.merge, t("merge"), ctx.toggleMerge),
