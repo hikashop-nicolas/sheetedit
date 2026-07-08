@@ -27,6 +27,7 @@ export const tbIcon = (svg: string, title: string, onClick: () => void): HTMLBut
 };
 
 export const ICON = {
+  find: `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3.3 3.3"/></svg>`,
   undo: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 3 6l3 3"/><path d="M3 6h6a4 4 0 0 1 0 8H7"/></svg>`,
   redo: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 3 3 3-3 3"/><path d="M13 6H7a4 4 0 0 0 0 8h2"/></svg>`,
   left: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h10"/></svg>`,
@@ -48,6 +49,7 @@ export function buildToolbar(ctx: {
   styled: boolean;
   /** csv mode: shown as a "Convert to XLSX" button; null hides it. */
   convert?: (() => void) | null;
+  findReplace(): void;
   onUndo(): void;
   onRedo(): void;
   addRows(): void;
@@ -85,6 +87,7 @@ export function buildToolbar(ctx: {
     sep(),
     tbBtn(t("addRow"), t("addRows"), ctx.addRows),
     tbBtn(t("addCol"), t("addCols"), ctx.addCols),
+    tbIcon(ICON.find, t("findReplace"), ctx.findReplace),
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
   if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined };

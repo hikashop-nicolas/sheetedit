@@ -1,5 +1,7 @@
 import { t } from "./i18n";
+import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
+import { setupFindBar } from "./ui/findbar";
 import { buildToolbar } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
@@ -92,6 +94,17 @@ export function injectStyles(): void {
       width:100%; box-sizing:border-box; outline:none;
     }
     .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
+    .sheetedit-table td.sheetedit-fillsrc { position:relative; }
+    .sheetedit-fillhandle {
+      position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:5;
+      background:#6e7bff; border:1px solid #fff; cursor:crosshair; touch-action:none;
+    }
+    .sheetedit-table td.sheetedit-fillprev input { background:rgba(110,123,255,0.10); }
+    .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px #6e7bff; }
+    .sheetedit-findbar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:#23262c; border-bottom:1px solid #1c1f24; }
+    .sheetedit-findbar[hidden] { display:none; }
+    .sheetedit-findbar input { flex:0 1 180px; background:#1c1f24; border:1px solid #3a4047; border-radius:5px; color:#e7eaf0; font:13px system-ui,sans-serif; padding:4px 8px; }
+    .sheetedit-findcount { color:#aab2bf; font:12px system-ui,sans-serif; min-width:64px; }
     .sheetedit-table td.sheetedit-calcerr { position:relative; }
     .sheetedit-table td.sheetedit-calcerr::after {
       content:""; position:absolute; top:0; right:0; z-index:1; pointer-events:none;
@@ -230,6 +243,103 @@ export function createSheetEditor(
   let renderedRows = 0;
   let renderedCols = 0;
 
+  // Fill handle: a corner grip on the selection; dragging extends values,
+  // series, patterns and relative formulas (core/fill.ts) in one undo step.
+  const fillHandle = document.createElement("div");
+  fillHandle.className = "sheetedit-fillhandle";
+  let fillPreview: HTMLElement[] = [];
+  const clearFillPreview = () => {
+    for (const td of fillPreview) td.classList.remove("sheetedit-fillprev");
+    fillPreview = [];
+  };
+  const placeFillHandle = () => {
+    fillHandle.remove();
+    if (!sel) return;
+    const td = tds.get(key(sel.r2, sel.c2));
+    if (!td) return;
+    td.classList.add("sheetedit-fillsrc");
+    td.appendChild(fillHandle);
+  };
+  const applyFill = (er: number, ec: number) => {
+    if (!sel) return;
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const { r1, c1, r2, c2 } = sel;
+    let axis: "row" | "col";
+    let dir: 1 | -1;
+    let count: number;
+    if (er > r2) [axis, dir, count] = ["row", 1, er - r2];
+    else if (er < r1) [axis, dir, count] = ["row", -1, r1 - er];
+    else if (ec > c2) [axis, dir, count] = ["col", 1, ec - c2];
+    else if (ec < c1) [axis, dir, count] = ["col", -1, c1 - ec];
+    else return;
+    const positions: { r: number; c: number; raw: string }[] = [];
+    if (axis === "row") {
+      for (let c = c1; c <= c2; c++) {
+        const source: FillSource[] = [];
+        for (let r = r1; r <= r2; r++) {
+          const cell = getCell(sheet, r, c);
+          source.push({ value: cell?.value ?? "", formula: cell?.formula, kind: cell?.kind ?? "blank" });
+        }
+        const vals = computeFill(source, count, dir, "row");
+        vals.forEach((raw, n) => positions.push({ r: dir === 1 ? r2 + 1 + n : r1 - 1 - n, c, raw }));
+      }
+    } else {
+      for (let r = r1; r <= r2; r++) {
+        const source: FillSource[] = [];
+        for (let c = c1; c <= c2; c++) {
+          const cell = getCell(sheet, r, c);
+          source.push({ value: cell?.value ?? "", formula: cell?.formula, kind: cell?.kind ?? "blank" });
+        }
+        const vals = computeFill(source, count, dir, "col");
+        vals.forEach((raw, n) => positions.push({ r, c: dir === 1 ? c2 + 1 + n : c1 - 1 - n, raw }));
+      }
+    }
+    recordCells(positions.map((p2) => ({ r: p2.r, c: p2.c })), () => {
+      for (const p2 of positions) setCellInput(sheet, p2.r, p2.c, p2.raw);
+    });
+    // Extend the selection over the filled range, like Excel.
+    if (axis === "row") sel = { r1: Math.min(r1, dir === 1 ? r1 : r1 - count), c1, r2: Math.max(r2, dir === 1 ? r2 + count : r2), c2 };
+    else sel = { r1, c1: Math.min(c1, dir === 1 ? c1 : c1 - count), r2, c2: Math.max(c2, dir === 1 ? c2 + count : c2) };
+    recalc(wb);
+    mark();
+    renderGrid();
+  };
+  fillHandle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sel) return;
+    let last: { r: number; c: number } | null = null;
+    const onMove = (ev: PointerEvent) => {
+      const cell = cellAtPoint(ev.clientX, ev.clientY);
+      if (!cell || (last && cell.r === last.r && cell.c === last.c) || !sel) return;
+      last = cell;
+      clearFillPreview();
+      // Preview the rectangle that the drop would fill.
+      const { r1, c1, r2, c2 } = sel;
+      let range: { fr: number; to: number; horizontal: boolean } | null = null;
+      if (cell.r > r2) range = { fr: r2 + 1, to: cell.r, horizontal: false };
+      else if (cell.r < r1) range = { fr: cell.r, to: r1 - 1, horizontal: false };
+      else if (cell.c > c2) range = { fr: c2 + 1, to: cell.c, horizontal: true };
+      else if (cell.c < c1) range = { fr: cell.c, to: c1 - 1, horizontal: true };
+      if (!range) return;
+      for (let i = range.fr; i <= range.to; i++) {
+        if (range.horizontal) for (let r = r1; r <= r2; r++) tds.get(key(r, i))?.classList.add("sheetedit-fillprev");
+        else for (let c = c1; c <= c2; c++) tds.get(key(i, c))?.classList.add("sheetedit-fillprev");
+      }
+      fillPreview = [...document.querySelectorAll<HTMLElement>("td.sheetedit-fillprev")];
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      clearFillPreview();
+      const cell = cellAtPoint(ev.clientX, ev.clientY);
+      if (cell) applyFill(cell.r, cell.c);
+    };
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp);
+  });
+
   const paintSel = () => {
     // Iterate the rendered window's cells (bounded), not the selection rectangle
     // (which can span a million virtual rows after a select-all).
@@ -240,7 +350,9 @@ export function createSheetEditor(
       }
       const [r, c] = k.split(":").map(Number);
       td.classList.toggle("sheetedit-sel", r! >= sel.r1 && r! <= sel.r2 && c! >= sel.c1 && c! <= sel.c2);
+      td.classList.remove("sheetedit-fillsrc");
     }
+    placeFillHandle();
   };
   const setSel = (r1: number, c1: number, r2: number, c2: number) => {
     sel = { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) };
@@ -598,6 +710,7 @@ export function createSheetEditor(
       extraCols += COL_CHUNK;
       renderGrid();
     },
+    findReplace: () => findBar.toggle(),
     applyStyle,
     curStyle,
     openBorderPopover,
@@ -610,6 +723,33 @@ export function createSheetEditor(
     }
     options.onChange?.();
   };
+
+  // Find and replace: finds across every sheet, replaces on the active one.
+  const findBar = setupFindBar({
+    container: wrap,
+    beforeEl: gridScroll,
+    getWorkbook: () => wb,
+    getActiveSheet: () => active,
+    setActiveSheet: (i) => switchSheet(i),
+    focusCell: (r, c) => focusCell(r, c),
+    commitValue: (r, c, raw) => commitValue(r, c, raw),
+    applyBatch: (changes) => {
+      const sheet = wb.sheets[active];
+      if (!sheet || !changes.length) return;
+      recordCells(changes.map((ch) => ({ r: ch.r, c: ch.c })), () => {
+        for (const ch of changes) setCellInput(sheet, ch.r, ch.c, ch.raw);
+      });
+      recalc(wb);
+      mark();
+      renderGrid();
+    },
+  });
+  wrap.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      findBar.show();
+    }
+  });
 
   const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
 
@@ -1361,6 +1501,17 @@ export function createSheetEditor(
     gridScroll.scrollLeft = keepLeft;
   };
 
+  const switchSheet = (i: number): void => {
+    if (i === active || !wb.sheets[i]) return;
+    active = i;
+    extraRows = 0; // each sheet starts at its own extent
+    extraCols = 0;
+    sel = null;
+    anchor = null;
+    renderTabs();
+    renderGrid();
+  };
+
   const renderTabs = () => {
     tabs.innerHTML = "";
     wb.sheets.forEach((sheet, i) => {
@@ -1370,16 +1521,7 @@ export function createSheetEditor(
       b.textContent = sheet.name;
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(i === active));
-      b.addEventListener("click", () => {
-        if (i === active) return;
-        active = i;
-        extraRows = 0; // each sheet starts at its own extent
-        extraCols = 0;
-        sel = null;
-        anchor = null;
-        renderTabs();
-        renderGrid();
-      });
+      b.addEventListener("click", () => switchSheet(i));
       tabs.appendChild(b);
     });
   };
