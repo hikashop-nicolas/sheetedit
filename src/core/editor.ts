@@ -822,7 +822,7 @@ export function createSheetEditor(
       commitValue(tr, tc, `=${fn}(${ref})`);
       renderGrid();
       skipFocusValue = false;
-      inputs.get(key(tr, tc))?.focus();
+      focusCell(tr, tc);
       return;
     }
     const target = activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : null);
@@ -870,8 +870,18 @@ export function createSheetEditor(
   };
   // Copy a multi-cell selection as TSV (a single cell keeps the native copy).
   const copyRange = (e: ClipboardEvent) => {
-    if (!sel || (sel.r1 === sel.r2 && sel.c1 === sel.c2)) return;
+    if (!sel) return;
     const sheet = wb.sheets[active]!;
+    if (sel.r1 === sel.r2 && sel.c1 === sel.c2) {
+      // Single cell: copy its raw content, unless the user selected text inside
+      // the input (then the native text copy is what they asked for).
+      const tgt = e.target as HTMLElement | null;
+      if (tgt instanceof HTMLInputElement && tgt.selectionStart !== tgt.selectionEnd) return;
+      const cell = getCell(sheet, sel.r1, sel.c1);
+      e.clipboardData?.setData("text/plain", cell ? (cell.formula != null ? "=" + cell.formula : cell.value) : "");
+      e.preventDefault();
+      return;
+    }
     // Clamp to the used extent so a whole-column copy stays bounded.
     const r2 = Math.min(sel.r2, Math.max(sel.r1, sheet.maxRow));
     const c2 = Math.min(sel.c2, Math.max(sel.c1, sheet.maxCol));
@@ -901,7 +911,7 @@ export function createSheetEditor(
     recalc(wb);
     mark();
     renderGrid(); // the paste may extend the used range; rebuild
-    inputs.get(key(r0, c0))?.focus();
+    focusCell(r0, c0);
   };
 
   // --- virtualized grid rendering ---------------------------------------------
@@ -956,6 +966,8 @@ export function createSheetEditor(
   };
   const viewportH = (): number => gridScroll.clientHeight || 600; // jsdom has no layout
   const viewportW = (): number => gridScroll.clientWidth || 1200;
+  /** Row-number column width: grows with the digit count of the last row. */
+  const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8);
 
   const buildRow = (sheet: Sheet, r: number, c1: number, c2: number): HTMLTableRowElement => {
     const tr = document.createElement("tr");
@@ -1092,8 +1104,6 @@ export function createSheetEditor(
           doRedo();
         }
       });
-      input.addEventListener("copy", copyRange);
-      input.addEventListener("paste", (e) => pasteTsv(e, r, c));
       td.appendChild(input);
       tr.appendChild(td);
       inputs.set(ki, input);
@@ -1102,12 +1112,15 @@ export function createSheetEditor(
     return tr;
   };
 
-  /** Render (or re-render) the visible window: colgroup, header and data rows. */
-  const renderWindow = (force = false): void => {
+  /** Render (or re-render) the visible window: colgroup, header and data rows.
+      Explicit coordinates let a full rebuild render for a scroll position the
+      empty container cannot hold yet (the browser clamps scrollTop at 0 until
+      the spacers exist). */
+  const renderWindow = (force = false, yAt?: number, xAt?: number): void => {
     const sheet = wb.sheets[active];
     if (!sheet || !tableEl) return;
-    const y = gridScroll.scrollTop;
-    const x = Math.max(0, gridScroll.scrollLeft - 44); // grid area starts after the row-number column
+    const y = yAt ?? gridScroll.scrollTop;
+    const x = Math.max(0, (xAt ?? gridScroll.scrollLeft) - rnW()); // grid area starts after the row-number column
     let r1 = Math.max(1, lineAt(y, totalRows, yOfRow) - OVERSCAN);
     let r2 = Math.min(totalRows, lineAt(y + viewportH(), totalRows, yOfRow) + OVERSCAN);
     let c1 = Math.max(1, lineAt(x, totalCols, xOfCol) - OVERSCAN_COLS);
@@ -1162,13 +1175,13 @@ export function createSheetEditor(
       colgroup.appendChild(col);
       return col;
     };
-    addCol(44);
+    addCol(rnW());
     addCol(leftW);
     const colEls: HTMLElement[] = [];
     for (let c = c1; c <= c2; c++) colEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
     addCol(rightW);
     tableEl.appendChild(colgroup);
-    tableEl.style.width = `${44 + gridW}px`;
+    tableEl.style.width = `${rnW() + gridW}px`;
 
     const head = document.createElement("tr");
     const corner = document.createElement("th");
@@ -1240,11 +1253,11 @@ export function createSheetEditor(
     let inp = inputs.get(key(r, c));
     if (!inp) {
       const y = yOfRow(r);
-      const x = 44 + xOfCol(c);
+      const x = rnW() + xOfCol(c);
       if (y < gridScroll.scrollTop) gridScroll.scrollTop = y;
       else if (y > gridScroll.scrollTop + viewportH() - ROW_H * 2)
         gridScroll.scrollTop = Math.max(0, y - Math.max(ROW_H * 2, viewportH() - ROW_H * 2));
-      if (x < gridScroll.scrollLeft + 44) gridScroll.scrollLeft = Math.max(0, x - 44);
+      if (x < gridScroll.scrollLeft + rnW()) gridScroll.scrollLeft = Math.max(0, x - rnW());
       else if (x > gridScroll.scrollLeft + viewportW() - COL_W)
         gridScroll.scrollLeft = Math.max(0, x - Math.max(COL_W, viewportW() - COL_W * 2));
       renderWindow(true);
@@ -1255,6 +1268,29 @@ export function createSheetEditor(
 
   // A plain timeout throttle: requestAnimationFrame stalls in occluded windows,
   // which would leave the window stale after a programmatic scroll.
+  // Clipboard events land on the focused element and bubble to the document.
+  // Grid inputs, and the body after a drag selection blurred the grid, both
+  // resolve here; the formula bar keeps its native text behavior.
+  const onDocCopy = (e: ClipboardEvent) => {
+    const tgt = e.target as HTMLElement | null;
+    if (tgt?.closest?.(".sheetedit-fxbar")) return;
+    const inWrap = tgt instanceof Node && wrap.contains(tgt);
+    if (inWrap || tgt === document.body) copyRange(e);
+  };
+  const onDocPaste = (e: ClipboardEvent) => {
+    const tgt = e.target as HTMLElement | null;
+    if (tgt?.closest?.(".sheetedit-fxbar")) return;
+    const td = tgt?.closest?.("td[data-rc]") as HTMLElement | null;
+    if (td && wrap.contains(td)) {
+      const [r, c] = (td.dataset.rc ?? "").split(":").map(Number);
+      if (r && c) pasteTsv(e, r, c);
+      return;
+    }
+    if (tgt === document.body && sel) pasteTsv(e, sel.r1, sel.c1);
+  };
+  document.addEventListener("copy", onDocCopy);
+  document.addEventListener("paste", onDocPaste);
+
   let scrollScheduled = false;
   gridScroll.addEventListener("scroll", () => {
     if (scrollScheduled) return;
@@ -1293,13 +1329,13 @@ export function createSheetEditor(
     tableEl = table;
     gridScroll.appendChild(table);
 
-    gridScroll.scrollTop = keepTop; // clamped by the browser if the sheet shrank
-    gridScroll.scrollLeft = keepLeft;
     winR1 = 1;
     winR2 = 0;
     winC1 = 1;
     winC2 = 0;
-    renderWindow(true);
+    renderWindow(true, keepTop, keepLeft); // build the window for the kept position first
+    gridScroll.scrollTop = keepTop; // now the spacers exist, so the browser keeps it
+    gridScroll.scrollLeft = keepLeft;
   };
 
   const renderTabs = () => {
@@ -1355,6 +1391,8 @@ export function createSheetEditor(
       return dirty ? writeWorkbook(wb) : original.slice();
     },
     destroy() {
+      document.removeEventListener("copy", onDocCopy);
+      document.removeEventListener("paste", onDocPaste);
       closeLineMenu();
       toolbarHandle.teardown();
       floatBar.teardown();
