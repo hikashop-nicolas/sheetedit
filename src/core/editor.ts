@@ -52,23 +52,23 @@ export function injectStyles(): void {
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = `
-    .sheetedit-wrap { display:flex; flex-direction:column; height:100%; background:#1f2227; color:#e6e6e6; font:13px system-ui, sans-serif; }
-    .sheetedit-toolbar { display:flex; flex-wrap:nowrap; overflow:hidden; align-items:center; gap:5px; padding:5px 8px; background:#2b2f36; border-bottom:1px solid #1c1f24; }
+    .sheetedit-wrap { display:flex; flex-direction:column; height:100%; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); font:13px system-ui, sans-serif; }
+    .sheetedit-toolbar { display:flex; flex-wrap:nowrap; overflow:hidden; align-items:center; gap:5px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .sheetedit-btn {
-      font:inherit; font-size:13px; background:#3a3f47; color:#e6e6e6; border:1px solid #4a4f57;
+      font:inherit; font-size:13px; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
       border-radius:6px; padding:4px 9px; cursor:pointer; min-width:32px; line-height:1.1;
     }
-    .sheetedit-btn:hover { background:#454b54; }
-    .sheetedit-btn:focus-visible { outline:2px solid #6e7bff; outline-offset:1px; }
-    .sheetedit-tb-sep { width:1px; align-self:stretch; background:#4a4f57; margin:1px 3px; }
-    .sheetedit-color { width:30px; height:28px; padding:0; border:1px solid #4a4f57; border-radius:6px; background:#3a3f47; cursor:pointer; }
+    .sheetedit-btn:hover { background:var(--sheetedit-btn-hover, #454b54); }
+    .sheetedit-btn:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:1px; }
+    .sheetedit-tb-sep { width:1px; align-self:stretch; background:var(--sheetedit-btn-border, #4a4f57); margin:1px 3px; }
+    .sheetedit-color { width:30px; height:28px; padding:0; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px; background:var(--sheetedit-btn, #3a3f47); cursor:pointer; }
     .sheetedit-btn svg { display:block; width:16px; height:16px; }
     .sheetedit-table th.colhead, .sheetedit-table th.rownum, .sheetedit-table th.corner { cursor:pointer; }
     .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:#e3e3e8; }
     .sheetedit-table td.sheetedit-sel input { background:rgba(110,123,255,0.18); }
-    .sheetedit-pop { position:fixed; z-index:30; background:#2b2f36; border:1px solid #4a4f57; border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
-    .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:#e6e6e6; border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
-    .sheetedit-pop-item:hover { background:#3a3f47; }
+    .sheetedit-pop { position:fixed; z-index:30; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
+    .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:var(--sheetedit-text, #e6e6e6); border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
+    .sheetedit-pop-item:hover { background:var(--sheetedit-btn, #3a3f47); }
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
@@ -87,8 +87,8 @@ export function injectStyles(): void {
     /* Resize grips: a thin strip on the header border, wide enough to grab on touch. */
     .sheetedit-colgrip { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:4; touch-action:none; }
     .sheetedit-rowgrip { position:absolute; left:0; bottom:-4px; width:100%; height:9px; cursor:row-resize; z-index:4; touch-action:none; }
-    .sheetedit-colgrip:hover { box-shadow:inset -2px 0 0 0 #6e7bff; }
-    .sheetedit-rowgrip:hover { box-shadow:inset 0 -2px 0 0 #6e7bff; }
+    .sheetedit-colgrip:hover { box-shadow:inset -2px 0 0 0 var(--sheetedit-accent, #6e7bff); }
+    .sheetedit-rowgrip:hover { box-shadow:inset 0 -2px 0 0 var(--sheetedit-accent, #6e7bff); }
     .sheetedit-table input {
       border:0; background:transparent; color:#1a1a1a; font:inherit; padding:3px 8px;
       width:100%; box-sizing:border-box; outline:none;
@@ -97,41 +97,41 @@ export function injectStyles(): void {
     .sheetedit-table td.sheetedit-fillsrc { position:relative; }
     .sheetedit-fillhandle {
       position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:5;
-      background:#6e7bff; border:1px solid #fff; cursor:crosshair; touch-action:none;
+      background:var(--sheetedit-accent, #6e7bff); border:1px solid #fff; cursor:crosshair; touch-action:none;
     }
     .sheetedit-table td.sheetedit-fillprev input { background:rgba(110,123,255,0.10); }
-    .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px #6e7bff; }
-    .sheetedit-findbar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:#23262c; border-bottom:1px solid #1c1f24; }
+    .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px var(--sheetedit-accent, #6e7bff); }
+    .sheetedit-findbar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .sheetedit-findbar[hidden] { display:none; }
-    .sheetedit-findbar input { flex:0 1 180px; background:#1c1f24; border:1px solid #3a4047; border-radius:5px; color:#e7eaf0; font:13px system-ui,sans-serif; padding:4px 8px; }
-    .sheetedit-findcount { color:#aab2bf; font:12px system-ui,sans-serif; min-width:64px; }
+    .sheetedit-findbar input { flex:0 1 180px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px system-ui,sans-serif; padding:4px 8px; }
+    .sheetedit-findcount { color:var(--sheetedit-muted, #aab2bf); font:12px system-ui,sans-serif; min-width:64px; }
     .sheetedit-table td.sheetedit-calcerr { position:relative; }
     .sheetedit-table td.sheetedit-calcerr::after {
       content:""; position:absolute; top:0; right:0; z-index:1; pointer-events:none;
       border:5px solid transparent; border-top-color:#d33d3d; border-right-color:#d33d3d;
     }
-    .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px #6e7bff; background:#eef0ff; }
+    .sheetedit-table input:focus { box-shadow:inset 0 0 0 2px var(--sheetedit-accent, #6e7bff); background:#eef0ff; }
     .sheetedit-tb-slot { display:inline-flex; align-items:center; gap:5px; }
-    .sheetedit-tb-groupmenu { position:absolute; z-index:30; display:flex; align-items:center; gap:5px; padding:6px 8px; background:#2b2f36; border:1px solid #1c1f24; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
-    .sheetedit-fxbar { display:flex; align-items:center; gap:6px; padding:4px 8px; background:#23262c; border-bottom:1px solid #1c1f24; position:relative; }
-    .sheetedit-fxref { min-width:52px; text-align:center; font:12px/1.6 ui-monospace,monospace; color:#aab2bf; background:#2b2f36; border-radius:5px; padding:2px 6px; }
+    .sheetedit-tb-groupmenu { position:absolute; z-index:30; display:flex; align-items:center; gap:5px; padding:6px 8px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+    .sheetedit-fxbar { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); position:relative; }
+    .sheetedit-fxref { min-width:52px; text-align:center; font:12px/1.6 ui-monospace,monospace; color:var(--sheetedit-muted, #aab2bf); background:var(--sheetedit-chrome, #2b2f36); border-radius:5px; padding:2px 6px; }
     .sheetedit-fxbtns { position:relative; display:inline-flex; gap:2px; }
     .sheetedit-fxsum { font-weight:700; }
-    .sheetedit-fxmenu { position:absolute; top:100%; left:0; z-index:30; display:flex; flex-direction:column; background:#2b2f36; border:1px solid #1c1f24; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); padding:4px; }
-    .sheetedit-fxmenu-item { background:none; border:0; color:#e7eaf0; text-align:left; padding:5px 12px; font:12px system-ui,sans-serif; cursor:pointer; border-radius:5px; }
-    .sheetedit-fxmenu-item:hover { background:#3a4047; }
-    .sheetedit-fxinput { flex:1; min-width:60px; background:#1c1f24; border:1px solid #3a4047; border-radius:5px; color:#e7eaf0; font:13px ui-monospace,monospace; padding:4px 8px; }
-    .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:#4f8ef7; }
+    .sheetedit-fxmenu { position:absolute; top:100%; left:0; z-index:30; display:flex; flex-direction:column; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); padding:4px; }
+    .sheetedit-fxmenu-item { background:none; border:0; color:var(--sheetedit-text, #e7eaf0); text-align:left; padding:5px 12px; font:12px system-ui,sans-serif; cursor:pointer; border-radius:5px; }
+    .sheetedit-fxmenu-item:hover { background:var(--sheetedit-btn, #3a4047); }
+    .sheetedit-fxinput { flex:1; min-width:60px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:4px 8px; }
+    .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:var(--sheetedit-accent, #4f8ef7); }
     .sheetedit-fxmenu[hidden], .sheetedit-tb-groupmenu[hidden] { display:none; }
-    .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:#2b2f36; border:1px solid #1c1f24; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+    .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
     .sheetedit-floatbar[hidden] { display:none; }
     .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
-    .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:#2b2f36; border-top:1px solid #1c1f24; overflow-x:auto; }
+    .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
     .sheetedit-tab {
-      font:inherit; background:#3a3f47; color:#cfd3da; border:1px solid #4a4f57; border-bottom:none;
+      font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-bottom:none;
       border-radius:5px 5px 0 0; padding:4px 12px; cursor:pointer; white-space:nowrap;
     }
-    .sheetedit-tab[aria-selected="true"] { background:#6e7bff; color:#fff; border-color:#6e7bff; }
+    .sheetedit-tab[aria-selected="true"] { background:var(--sheetedit-accent, #6e7bff); color:#fff; border-color:var(--sheetedit-accent, #6e7bff); }
     .sheetedit-tab:focus-visible { outline:2px solid #fff; outline-offset:1px; }
   `;
   document.head.appendChild(s);
