@@ -39,6 +39,18 @@ const en: Dict = {
   formatting: "Formatting",
   undo: "Undo (Ctrl+Z)",
   redo: "Redo (Ctrl+Shift+Z)",
+  rowInsAbove: "Insert row above",
+  rowsInsAbove: "Insert {n} rows above",
+  rowInsBelow: "Insert row below",
+  rowsInsBelow: "Insert {n} rows below",
+  rowDelOne: "Delete row",
+  rowsDel: "Delete {n} rows",
+  colInsBefore: "Insert column left",
+  colsInsBefore: "Insert {n} columns left",
+  colInsAfter: "Insert column right",
+  colsInsAfter: "Insert {n} columns right",
+  colDelOne: "Delete column",
+  colsDel: "Delete {n} columns",
 };
 
 const fr: Dict = {
@@ -75,6 +87,18 @@ const fr: Dict = {
   formatting: "Mise en forme",
   undo: "Annuler (Ctrl+Z)",
   redo: "Rétablir (Ctrl+Maj+Z)",
+  rowInsAbove: "Insérer une ligne au-dessus",
+  rowsInsAbove: "Insérer {n} lignes au-dessus",
+  rowInsBelow: "Insérer une ligne en dessous",
+  rowsInsBelow: "Insérer {n} lignes en dessous",
+  rowDelOne: "Supprimer la ligne",
+  rowsDel: "Supprimer {n} lignes",
+  colInsBefore: "Insérer une colonne à gauche",
+  colsInsBefore: "Insérer {n} colonnes à gauche",
+  colInsAfter: "Insérer une colonne à droite",
+  colsInsAfter: "Insérer {n} colonnes à droite",
+  colDelOne: "Supprimer la colonne",
+  colsDel: "Supprimer {n} colonnes",
 };
 
 const ja: Dict = {
@@ -111,6 +135,18 @@ const ja: Dict = {
   formatting: "書式設定",
   undo: "元に戻す (Ctrl+Z)",
   redo: "やり直し (Ctrl+Shift+Z)",
+  rowInsAbove: "上に行を挿入",
+  rowsInsAbove: "上に {n} 行を挿入",
+  rowInsBelow: "下に行を挿入",
+  rowsInsBelow: "下に {n} 行を挿入",
+  rowDelOne: "行を削除",
+  rowsDel: "{n} 行を削除",
+  colInsBefore: "左に列を挿入",
+  colsInsBefore: "左に {n} 列を挿入",
+  colInsAfter: "右に列を挿入",
+  colsInsAfter: "右に {n} 列を挿入",
+  colDelOne: "列を削除",
+  colsDel: "{n} 列を削除",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja };

@@ -6,6 +6,7 @@
 // recalc.ts (the formula engine), workbook.ts (public read/write) and editor.ts
 // (the grid UI). This entry point re-exports the public surface.
 export * from "./model";
+export * from "./structure";
 export * from "./xlsx";
 export * from "./ods";
 export * from "./recalc";

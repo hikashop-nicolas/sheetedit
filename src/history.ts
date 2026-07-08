@@ -87,6 +87,12 @@ export class UndoHistory {
     if (this.un.length > CAP) this.un.shift();
     this.re.length = 0;
   }
+  /** Drop both stacks. Structural row/column ops shift every recorded position,
+      so steps from before them cannot replay safely. */
+  clear(): void {
+    this.un.length = 0;
+    this.re.length = 0;
+  }
   popUndo(): UndoStep | null {
     const s = this.un.pop();
     if (!s) return null;

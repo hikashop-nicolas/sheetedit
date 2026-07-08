@@ -2,11 +2,12 @@ import { t } from "./i18n";
 import { createFormulaBar } from "./formulabar";
 import { buildToolbar } from "./toolbar";
 import { setupFloatBar } from "./floatbar";
-import { UndoHistory, applyFields, snapFields, type UndoCellChange } from "./history";
+import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
 import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "./ods";
 import { recalc } from "./recalc";
+import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { readWorkbook, setCellInput, writeWorkbook } from "./workbook";
 import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "./xlsx";
 // ---------------------------------------------------------------------------
@@ -204,6 +205,9 @@ export function createSheetEditor(
   // Selection rectangle (1-based, inclusive) and the anchor for shift-extend.
   let sel: { r1: number; c1: number; r2: number; c2: number } | null = null;
   let anchor: { r: number; c: number } | null = null;
+  // Grid extent of the last render (whole-line selections are made against it).
+  let renderedRows = 0;
+  let renderedCols = 0;
 
   const paintSel = () => {
     for (const td of tds.values()) td.classList.remove("sheetedit-sel");
@@ -612,6 +616,143 @@ export function createSheetEditor(
     if (step) applyStep(step, "redo");
   };
 
+  // --- row / column insertion and deletion -------------------------------------
+  // A structural op rewrites references workbook-wide and shifts every recorded
+  // undo position, so the history is reduced to the op itself: undo replays the
+  // inverse shift, then restores dropped cells, formulas, merges and sizes from
+  // a snapshot taken here.
+  interface LineSnap {
+    formulas: { s: number; r: number; c: number; formula: string; odfFormula?: string }[];
+    removed: { r: number; c: number; fields: CellFields | null }[];
+    merges: { r1: number; c1: number; r2: number; c2: number }[];
+    sizes: [number, number][];
+  }
+  const captureLineSnap = (op: LineOp): LineSnap => {
+    const sheet = wb.sheets[active]!;
+    const formulas: LineSnap["formulas"] = [];
+    wb.sheets.forEach((s, si) => {
+      for (const cell of s.cells.values())
+        if (cell.formula != null) formulas.push({ s: si, r: cell.row, c: cell.col, formula: cell.formula, odfFormula: cell.odfFormula });
+    });
+    const removed: LineSnap["removed"] = [];
+    if (op.kind === "delete") {
+      for (const cell of sheet.cells.values()) {
+        const i = op.axis === "row" ? cell.row : cell.col;
+        if (i >= op.at && i < op.at + op.count) removed.push({ r: cell.row, c: cell.col, fields: snapFields(cell) });
+      }
+    }
+    const sizeMap = op.axis === "row" ? sheet.rowHeights : sheet.colWidths;
+    return {
+      formulas,
+      removed,
+      merges: (sheet.merges ?? []).map((m) => ({ ...m })),
+      sizes: sizeMap ? [...sizeMap.entries()] : [],
+    };
+  };
+  const undoLineOp = (si: number, op: LineOp, snap: LineSnap) => {
+    const sheet = wb.sheets[si]!;
+    const inverse: LineOp = { ...op, kind: op.kind === "insert" ? "delete" : "insert" };
+    applyLineOp(wb, si, inverse, false); // formulas come back from the snapshot below
+    sheet.merges = snap.merges.map((m) => ({ ...m }));
+    if (wb.kind === "xlsx") syncXlsxMerges(sheet);
+    else sheet.odsDirty = true;
+    for (const rc of snap.removed) if (rc.fields) applyFields(sheet, rc.r, rc.c, rc.fields);
+    for (const f of snap.formulas) {
+      const cell = getCell(wb.sheets[f.s]!, f.r, f.c);
+      if (cell && cell.formula !== f.formula) {
+        cell.formula = f.formula;
+        cell.odfFormula = f.odfFormula;
+        cell.fDirty = true;
+        cell.edited = true;
+      }
+    }
+    for (const [i, px] of snap.sizes) {
+      const map = op.axis === "row" ? sheet.rowHeights : sheet.colWidths;
+      if (map?.get(i) === px) continue;
+      if (op.axis === "row") {
+        if (wb.kind === "ods") setOdsRowHeight(wb, sheet, i, px);
+        else setXlsxRowHeight(sheet, i, px);
+      } else {
+        if (wb.kind === "ods") setOdsColWidth(wb, sheet, i, px);
+        else setXlsxColWidth(sheet, i, px);
+      }
+    }
+  };
+  const lineOp = (op: LineOp) => {
+    const si = active;
+    const snap = captureLineSnap(op);
+    applyLineOp(wb, si, op);
+    history.clear();
+    history.push({ sheet: si, cells: [], undoExtra: () => undoLineOp(si, op, snap), redoExtra: () => applyLineOp(wb, si, op) });
+    sel = null;
+    anchor = null;
+    activeCell = null;
+    recalc(wb);
+    mark();
+    renderGrid();
+  };
+
+  // Context menu on a row/column header: insert before/after and delete, acting on
+  // the clicked line or on the selected whole-line run that contains it.
+  let lineMenu: HTMLElement | null = null;
+  const closeLineMenu = () => {
+    lineMenu?.remove();
+    lineMenu = null;
+  };
+  const openLineMenu = (e: MouseEvent, axis: "row" | "col", line: number) => {
+    e.preventDefault();
+    closeLineMenu();
+    let base = line;
+    let n = 1;
+    if (sel) {
+      const wholeRows = axis === "row" && sel.c1 === 1 && sel.c2 >= renderedCols && line >= sel.r1 && line <= sel.r2;
+      const wholeCols = axis === "col" && sel.r1 === 1 && sel.r2 >= renderedRows && line >= sel.c1 && line <= sel.c2;
+      if (wholeRows) {
+        base = sel.r1;
+        n = sel.r2 - sel.r1 + 1;
+      } else if (wholeCols) {
+        base = sel.c1;
+        n = sel.c2 - sel.c1 + 1;
+      }
+    }
+    const label = (one: string, many: string) => (n === 1 ? t(one) : t(many, { n }));
+    const items: [string, LineOp][] = axis === "row"
+      ? [
+          [label("rowInsAbove", "rowsInsAbove"), { axis, kind: "insert", at: base, count: n }],
+          [label("rowInsBelow", "rowsInsBelow"), { axis, kind: "insert", at: base + n, count: n }],
+          [label("rowDelOne", "rowsDel"), { axis, kind: "delete", at: base, count: n }],
+        ]
+      : [
+          [label("colInsBefore", "colsInsBefore"), { axis, kind: "insert", at: base, count: n }],
+          [label("colInsAfter", "colsInsAfter"), { axis, kind: "insert", at: base + n, count: n }],
+          [label("colDelOne", "colsDel"), { axis, kind: "delete", at: base, count: n }],
+        ];
+    const pop = document.createElement("div");
+    pop.className = "sheetedit-pop";
+    for (const [text, op] of items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sheetedit-pop-item";
+      b.textContent = text;
+      b.addEventListener("click", () => {
+        closeLineMenu();
+        lineOp(op);
+      });
+      pop.appendChild(b);
+    }
+    document.body.appendChild(pop);
+    lineMenu = pop;
+    pop.style.left = `${Math.round(Math.min(e.clientX, window.innerWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${Math.round(Math.min(e.clientY, window.innerHeight - pop.offsetHeight - 8))}px`;
+    const onOutside = (ev: Event) => {
+      if (!pop.contains(ev.target as Node)) {
+        closeLineMenu();
+        document.removeEventListener("pointerdown", onOutside, true);
+      }
+    };
+    setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+  };
+
   // Commit a raw value into a cell and refresh (shared by the grid and the formula bar).
   const commitValue = (r: number, c: number, raw: string) => {
     const sheet = wb.sheets[active]!;
@@ -724,6 +865,8 @@ export function createSheetEditor(
     gridScroll.innerHTML = "";
     const rows = Math.min(ROWS_CAP, Math.max(ROWS_MIN, sheet.maxRow + 6) + extraRows);
     const cols = Math.min(COLS_CAP, Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols);
+    renderedRows = rows;
+    renderedCols = cols;
 
     const table = document.createElement("table");
     table.className = "sheetedit-table";
@@ -764,6 +907,7 @@ export function createSheetEditor(
         anchor = { r: 1, c };
         setSel(1, c, rows, c);
       });
+      th.addEventListener("contextmenu", (e) => openLineMenu(e, "col", c));
       const grip = document.createElement("div");
       grip.className = "sheetedit-colgrip";
       const colEl = colEls[c - 1]!;
@@ -797,6 +941,7 @@ export function createSheetEditor(
         anchor = { r, c: 1 };
         setSel(r, 1, r, cols);
       });
+      rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
       const rgrip = document.createElement("div");
       rgrip.className = "sheetedit-rowgrip";
       rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, rh ?? 22));
@@ -979,6 +1124,7 @@ export function createSheetEditor(
       return dirty ? writeWorkbook(wb) : original.slice();
     },
     destroy() {
+      closeLineMenu();
       toolbarHandle.teardown();
       floatBar.teardown();
       wrap.remove();
