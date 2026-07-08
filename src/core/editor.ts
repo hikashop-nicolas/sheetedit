@@ -7,6 +7,7 @@ import type { Cell, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
 import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
+import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { readWorkbook, setCellInput, writeWorkbook } from "./workbook";
 import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
@@ -16,9 +17,17 @@ import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } fro
 
 export interface SheetEditorOptions {
   onChange?: () => void;
+  /** Route plain-text input explicitly (the host knows the .csv/.tsv extension). */
+  formatHint?: "csv" | "tsv";
+  /** The document's file name; used to name a converted workbook. */
+  fileName?: string;
+  /** csv mode: receives the "Convert to XLSX" result. Without it, a download starts. */
+  onConvert?: (bytes: Uint8Array, name: string) => void;
 }
 export interface SheetEditor {
   getBytes(): Promise<Uint8Array>;
+  /** The serialized text for text-backed workbooks (csv/tsv); null otherwise. */
+  getText(): string | null;
   isDirty(): boolean;
   destroy(): void;
 }
@@ -116,7 +125,7 @@ export function createSheetEditor(
 
   let wb: Workbook;
   try {
-    wb = readWorkbook(bytes);
+    wb = readWorkbook(bytes, { formatHint: options.formatHint });
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -131,6 +140,7 @@ export function createSheetEditor(
     container.appendChild(errWrap);
     return {
       getBytes: () => Promise.resolve(original.slice()),
+      getText: () => null,
       isDirty: () => false,
       destroy() {
         errWrap.remove();
@@ -193,7 +203,8 @@ export function createSheetEditor(
   fxbar.input.addEventListener("focus", () => {
     setTimeout(() => (barGrab = false), 0);
   });
-  wrap.append(toolbar, fxbar.el, gridScroll, tabs);
+  if (wb.kind === "csv") wrap.append(toolbar, fxbar.el, gridScroll);
+  else wrap.append(toolbar, fxbar.el, gridScroll, tabs);
   container.appendChild(wrap);
 
   let active = 0;
@@ -539,10 +550,28 @@ export function createSheetEditor(
     renderGrid();
   };
 
+  // csv mode: convert the grid into a real workbook and hand it to the host
+  // (or download it standalone). Values, formulas and column widths carry over.
+  const doConvert = () => {
+    const bytes = csvToXlsx(wb);
+    const name = (options.fileName ?? "sheet").replace(/\.(csv|tsv|txt)$/i, "") + ".xlsx";
+    if (options.onConvert) {
+      options.onConvert(bytes, name);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+
   const toolbarHandle = buildToolbar({
     toolbar,
     wrap,
     styled: wb.kind === "xlsx" || wb.kind === "ods",
+    convert: wb.kind === "csv" ? doConvert : null,
     onUndo: () => doUndo(),
     onRedo: () => doRedo(),
     addRows: () => {
@@ -1119,6 +1148,11 @@ export function createSheetEditor(
   return {
     isDirty() {
       return dirty;
+    },
+    getText() {
+      if (wb.kind !== "csv") return null;
+      recalc(wb);
+      return writeCsv(wb);
     },
     async getBytes() {
       return dirty ? writeWorkbook(wb) : original.slice();

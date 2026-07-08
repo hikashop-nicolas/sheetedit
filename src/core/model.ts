@@ -80,16 +80,22 @@ export interface Sheet {
   odsHeaderRows?: { el: Element; from: number; to: number };
   /** ods: rows must be re-emitted (cell/merge/row-height edits); untouched sheets keep their XML. */
   odsDirty?: boolean;
+  /** csv: each physical row's original text (without terminator) + terminator,
+      for byte-exact re-emission of untouched rows (index 0 = row 1). `width` is
+      the parsed field count, so trailing empty fields survive a rewrite. */
+  csvRows?: { raw: string; terminator: string; dirty: boolean; width: number }[];
 }
 
 export interface Workbook {
-  kind: "xlsx" | "ods";
+  kind: "xlsx" | "ods" | "csv";
   sheets: Sheet[];
   files: Record<string, Uint8Array>;
   contentDoc?: Document; // ods
   contentPath?: string; // ods
   stylesDoc?: Document; // xlsx xl/styles.xml, kept for style writes
   stylesDirty?: boolean; // xlsx styles.xml changed and must be re-serialized
+  /** csv: the sniffed (or hinted) field delimiter. */
+  csvDelimiter?: string;
 }
 
 /** A style change to apply to a cell (only the set fields change). */

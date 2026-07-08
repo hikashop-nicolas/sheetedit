@@ -46,6 +46,8 @@ export function buildToolbar(ctx: {
   wrap: HTMLElement;
   /** xlsx/ods: the style model is known, so the styling cluster is shown. */
   styled: boolean;
+  /** csv mode: shown as a "Convert to XLSX" button; null hides it. */
+  convert?: (() => void) | null;
   onUndo(): void;
   onRedo(): void;
   addRows(): void;
@@ -84,6 +86,7 @@ export function buildToolbar(ctx: {
     tbBtn(t("addRow"), t("addRows"), ctx.addRows),
     tbBtn(t("addCol"), t("addCols"), ctx.addCols),
   );
+  if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
   if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined };
 
   const bold = tbBtn("B", t("bold"), () => ctx.applyStyle({ bold: !ctx.curStyle()?.bold }));

@@ -478,9 +478,30 @@ export function applyLineOp(wb: Workbook, sheetIdx: number, op: LineOp, rewriteR
   if (wb.kind === "xlsx") {
     shiftXlsxXml(sheet, op);
     syncXlsxMerges(sheet);
-  } else {
+  } else if (wb.kind === "ods") {
     shiftOdsRowMeta(sheet, op);
     shiftOdsColumns(sheet, op);
     sheet.odsDirty = true;
+  } else if (sheet.csvRows) {
+    if (op.axis === "row") {
+      const at = Math.min(op.at - 1, sheet.csvRows.length);
+      if (op.kind === "insert") {
+        const term = sheet.csvRows.find((r) => r.terminator)?.terminator ?? "\n";
+        sheet.csvRows.splice(at, 0, ...Array.from({ length: op.count }, () => ({ raw: "", terminator: term, dirty: true, width: 0 })));
+      } else {
+        sheet.csvRows.splice(at, op.count);
+      }
+    } else {
+      // A column shift re-frames every line: the whole file re-serializes.
+      for (const r of sheet.csvRows) {
+        r.dirty = true;
+        if (op.kind === "insert") {
+          if (r.width >= op.at) r.width += op.count;
+        } else {
+          const overlap = Math.max(0, Math.min(r.width, op.at + op.count - 1) - op.at + 1);
+          r.width -= overlap;
+        }
+      }
+    }
   }
 }

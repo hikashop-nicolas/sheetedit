@@ -51,6 +51,8 @@ const en: Dict = {
   colsInsAfter: "Insert {n} columns right",
   colDelOne: "Delete column",
   colsDel: "Delete {n} columns",
+  convertXlsx: "Convert to XLSX",
+  convertXlsxTitle: "Convert this file to a real workbook (styles, formats, sheets)",
 };
 
 const fr: Dict = {
@@ -99,6 +101,8 @@ const fr: Dict = {
   colsInsAfter: "Insérer {n} colonnes à droite",
   colDelOne: "Supprimer la colonne",
   colsDel: "Supprimer {n} colonnes",
+  convertXlsx: "Convertir en XLSX",
+  convertXlsxTitle: "Convertir ce fichier en vrai classeur (styles, formats, feuilles)",
 };
 
 const ja: Dict = {
@@ -147,6 +151,8 @@ const ja: Dict = {
   colsInsAfter: "右に {n} 列を挿入",
   colDelOne: "列を削除",
   colsDel: "{n} 列を削除",
+  convertXlsx: "XLSX に変換",
+  convertXlsxTitle: "このファイルを本来のワークブック（スタイル・書式・シート対応）に変換",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja };

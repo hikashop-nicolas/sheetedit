@@ -1,6 +1,7 @@
-import { strFromU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { Sheet, Workbook } from "./model";
 import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, parseXmlOpt, serializeXml } from "./model";
+import { readCsv, writeCsv } from "../adapters/csv";
 import { readOds, writeOds } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
@@ -8,7 +9,33 @@ import { readXlsx, writeXlsx } from "../adapters/xlsx";
 // Public read / write
 // ---------------------------------------------------------------------------
 
-export function readWorkbook(bytes: Uint8Array): Workbook {
+export interface ReadOptions {
+  /** Route plain-text input explicitly (a .csv/.tsv extension known to the host). */
+  formatHint?: "csv" | "tsv";
+}
+
+const readCsvBytes = (bytes: Uint8Array, hint?: "csv" | "tsv"): Workbook => {
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const wb = readCsv(text, hint === "tsv" ? "\t" : undefined);
+  // CSV formulas carry no cached results; compute them once on open.
+  const hasFormula = wb.sheets.some((s) => [...s.cells.values()].some((c) => c.formula != null));
+  if (hasFormula) recalc(wb);
+  return wb;
+};
+
+/** Text-looking bytes (no control chars beyond tab/newline in the head) may be
+    CSV; zips, CFB containers and binary junk never qualify. */
+const looksTextual = (bytes: Uint8Array): boolean => {
+  const n = Math.min(bytes.length, 4096);
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i]!;
+    if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) return false;
+  }
+  return n > 0;
+};
+
+export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}): Workbook {
+  if (opts.formatHint === "csv" || opts.formatHint === "tsv") return readCsvBytes(bytes, opts.formatHint);
   // Encrypted .xlsx and legacy binary .xls are CFB containers, not zips.
   if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)
     throw new Error("password-protected or legacy binary workbook");
@@ -16,6 +43,7 @@ export function readWorkbook(bytes: Uint8Array): Workbook {
   try {
     files = unzipSync(bytes);
   } catch {
+    if (looksTextual(bytes)) return readCsvBytes(bytes);
     throw new Error("not a valid workbook file (unreadable archive)");
   }
   if (files["xl/workbook.xml"]) return readXlsx(files);
@@ -82,6 +110,7 @@ export function dropStaleCalcChain(wb: Workbook): void {
 
 export function writeWorkbook(wb: Workbook): Uint8Array {
   recalc(wb);
+  if (wb.kind === "csv") return strToU8(writeCsv(wb));
   if (wb.kind === "xlsx") {
     writeXlsx(wb);
     dropStaleCalcChain(wb);
