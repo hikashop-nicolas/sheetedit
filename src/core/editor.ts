@@ -1,15 +1,15 @@
 import { t } from "./i18n";
-import { createFormulaBar } from "./formulabar";
-import { buildToolbar } from "./toolbar";
-import { setupFloatBar } from "./floatbar";
+import { createFormulaBar } from "./ui/formulabar";
+import { buildToolbar } from "./ui/toolbar";
+import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
-import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "./ods";
+import { setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { readWorkbook, setCellInput, writeWorkbook } from "./workbook";
-import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "./xlsx";
+import { setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------

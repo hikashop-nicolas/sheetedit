@@ -1,4 +1,4 @@
-import { t } from "./i18n";
+import { t } from "../i18n";
 
 // The formula bar above the grid: the active cell's reference, the function buttons
 // (Σ plus a small menu), and a wide input mirroring the cell being edited, so a

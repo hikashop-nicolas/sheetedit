@@ -1,6 +1,6 @@
-import { t } from "./i18n";
+import { t } from "../i18n";
 import { ICON, tbIcon } from "./toolbar";
-import type { CellStyle, StyleChange } from "./model";
+import type { CellStyle, StyleChange } from "../model";
 
 // Floating style bar (desktop only): a compact bold/italic/colour/align bar that
 // appears near the selection when the mouse approaches it, mirroring richdoc's

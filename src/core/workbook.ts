@@ -1,9 +1,9 @@
 import { strFromU8, unzipSync, zipSync } from "fflate";
 import type { Sheet, Workbook } from "./model";
 import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, parseXmlOpt, serializeXml } from "./model";
-import { readOds, writeOds } from "./ods";
+import { readOds, writeOds } from "../adapters/ods";
 import { recalc } from "./recalc";
-import { readXlsx, writeXlsx } from "./xlsx";
+import { readXlsx, writeXlsx } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Public read / write
 // ---------------------------------------------------------------------------

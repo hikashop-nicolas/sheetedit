@@ -1,5 +1,5 @@
-import { t } from "./i18n";
-import type { CellStyle, StyleChange } from "./model";
+import { t } from "../i18n";
+import type { CellStyle, StyleChange } from "../model";
 
 // The style toolbar, split out of the editor. The styling controls form one
 // collapsible cluster (richdoc's toolbar pattern): inline while there is room,

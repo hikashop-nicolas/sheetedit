@@ -282,3 +282,31 @@ export const removeByLocal = (parent: Element, local: string): void => {
   for (const ch of Array.from(parent.children)) if (ch.localName === local) parent.removeChild(ch);
 };
 
+
+// xlsx and ods style writers so both stay consistent; affected borders become black.
+export function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
+  const sides = {
+    top: !!cur.borders?.top,
+    right: !!cur.borders?.right,
+    bottom: !!cur.borders?.bottom,
+    left: !!cur.borders?.left,
+  };
+  if (change.border !== undefined) sides.top = sides.right = sides.bottom = sides.left = change.border;
+  if (change.borderSides) Object.assign(sides, change.borderSides);
+  const any = sides.top || sides.right || sides.bottom || sides.left;
+  return {
+    bold: change.bold ?? cur.bold,
+    italic: change.italic ?? cur.italic,
+    color: change.color ?? cur.color,
+    bg: change.bg ?? cur.bg,
+    align: change.align ?? cur.align,
+    borders: any
+      ? {
+          top: sides.top ? "#000000" : undefined,
+          right: sides.right ? "#000000" : undefined,
+          bottom: sides.bottom ? "#000000" : undefined,
+          left: sides.left ? "#000000" : undefined,
+        }
+      : undefined,
+  };
+}
