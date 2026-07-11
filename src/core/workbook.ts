@@ -37,14 +37,14 @@ const looksTextual = (bytes: Uint8Array): boolean => {
   return n > 0;
 };
 
-export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}): Workbook {
+export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}, preunzipped?: Record<string, Uint8Array>): Workbook {
   if (opts.formatHint === "csv" || opts.formatHint === "tsv") return readCsvBytes(bytes, opts.formatHint);
   // Encrypted .xlsx and legacy binary .xls are CFB containers, not zips.
   if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)
     throw new Error("password-protected or legacy binary workbook");
   let files: Record<string, Uint8Array>;
   try {
-    files = unzipSync(bytes);
+    files = preunzipped ?? unzipSync(bytes);
   } catch {
     if (looksTextual(bytes)) return readCsvBytes(bytes);
     throw new Error("not a valid workbook file (unreadable archive)");

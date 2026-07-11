@@ -140,6 +140,15 @@ describe("xlsx", () => {
     expect(s2.cells.get("1:2")?.value).toBe("hello");
   });
 
+  it("readWorkbook from a pre-inflated map matches reading from raw bytes", () => {
+    const xlsx = makeXlsx();
+    const a = readWorkbook(xlsx);
+    const b = readWorkbook(xlsx, {}, unzipSync(xlsx));
+    const cells = (wb: ReturnType<typeof readWorkbook>) => [...wb.sheets[0]!.cells.entries()].map(([k, c]) => `${k}=${c.value}`).sort();
+    expect(cells(b)).toEqual(cells(a));
+    expect(b.sheets.map((s) => s.name)).toEqual(a.sheets.map((s) => s.name));
+  });
+
   it("writeWorkbookAsync (off-thread zip) matches the synchronous writer", async () => {
     const wb1 = readWorkbook(makeXlsx());
     setCellInput(wb1.sheets[0]!, 1, 1, "10");

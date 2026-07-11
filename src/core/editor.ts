@@ -13,6 +13,7 @@ import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
+import { unzipAsync } from "./zip";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
@@ -149,6 +150,7 @@ export function createSheetEditor(
   container: HTMLElement,
   bytes: Uint8Array,
   options: SheetEditorOptions = {},
+  preunzipped?: Record<string, Uint8Array>,
 ): SheetEditor {
   const original = bytes.slice();
   let dirty = false;
@@ -156,7 +158,7 @@ export function createSheetEditor(
 
   let wb: Workbook;
   try {
-    wb = readWorkbook(bytes, { formatHint: options.formatHint });
+    wb = readWorkbook(bytes, { formatHint: options.formatHint }, preunzipped);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -1610,4 +1612,25 @@ export function createSheetEditor(
       wrap.remove();
     },
   };
+}
+
+// Same as createSheetEditor, but a zip-based workbook (.xlsx/.ods) is inflated off the main
+// thread first, so opening a large workbook does not freeze the UI on the unzip. CSV/TSV and
+// CFB (.xls / encrypted) inputs are not zips: they skip the inflate and parse synchronously.
+// The DOM-bound sheet/model parse still runs on the main thread once the map is ready.
+export async function createSheetEditorAsync(
+  container: HTMLElement,
+  bytes: Uint8Array,
+  options: SheetEditorOptions = {},
+): Promise<SheetEditor> {
+  let files: Record<string, Uint8Array> | undefined;
+  const isZip = bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
+  if (isZip && options.formatHint !== "csv" && options.formatHint !== "tsv") {
+    try {
+      files = await unzipAsync(bytes);
+    } catch {
+      /* let createSheetEditor's own read handle the failure (error banner + original bytes) */
+    }
+  }
+  return createSheetEditor(container, bytes, options, files);
 }
