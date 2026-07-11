@@ -16,6 +16,7 @@ import {
   setXlsxMerge,
   setXlsxRowHeight,
   writeWorkbook,
+  writeWorkbookAsync,
 } from "./index";
 
 // ---------------------------------------------------------------------------
@@ -137,6 +138,18 @@ describe("xlsx", () => {
     expect(s2.cells.get("1:1")?.value).toBe("10");
     expect(s2.cells.get("1:3")?.value).toBe("30"); // cached recompute persisted
     expect(s2.cells.get("1:2")?.value).toBe("hello");
+  });
+
+  it("writeWorkbookAsync (off-thread zip) matches the synchronous writer", async () => {
+    const wb1 = readWorkbook(makeXlsx());
+    setCellInput(wb1.sheets[0]!, 1, 1, "10");
+    const wb2 = readWorkbook(makeXlsx());
+    setCellInput(wb2.sheets[0]!, 1, 1, "10");
+    const [sync, asyncOut] = [writeWorkbook(wb1), await writeWorkbookAsync(wb2)];
+    const a = unzipSync(sync);
+    const b = unzipSync(asyncOut);
+    expect(Object.keys(b).sort()).toEqual(Object.keys(a).sort());
+    for (const k of Object.keys(a)) expect(Array.from(b[k]!)).toEqual(Array.from(a[k]!));
   });
 
   it("adds a string into a previously empty cell as an inline string", () => {

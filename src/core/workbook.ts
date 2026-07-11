@@ -1,5 +1,6 @@
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync, type AsyncZippable, type Zippable } from "fflate";
 import type { Sheet, Workbook } from "./model";
+import { zipAsync } from "./zip";
 import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, numToStr, parseXmlOpt, serializeXml } from "./model";
 import { isDateFmt, parseDateInput } from "./dates";
 import { localeCode } from "./i18n";
@@ -110,13 +111,19 @@ export function dropStaleCalcChain(wb: Workbook): void {
   }
 }
 
-export function writeWorkbook(wb: Workbook): Uint8Array {
+// Assemble the workbook: recalc, serialize the sheets, and return either the final
+// bytes (CSV needs no zip) or the zippable file map for the caller to compress with
+// the sync or the worker-backed async zip. Splitting this out lets writeWorkbook and
+// writeWorkbookAsync share every step except the final compression.
+type Packable = { bytes: Uint8Array } | { files: Zippable };
+
+function assembleWorkbook(wb: Workbook): Packable {
   recalc(wb);
-  if (wb.kind === "csv") return strToU8(writeCsv(wb));
+  if (wb.kind === "csv") return { bytes: strToU8(writeCsv(wb)) };
   if (wb.kind === "xlsx") {
     writeXlsx(wb);
     dropStaleCalcChain(wb);
-    return zipSync(wb.files);
+    return { files: wb.files };
   }
   writeOds(wb);
   // ODF requires the "mimetype" entry first and stored (uncompressed).
@@ -126,7 +133,19 @@ export function writeWorkbook(wb: Workbook): Uint8Array {
     if (name === "mimetype") continue;
     repacked[name] = data;
   }
-  return zipSync(repacked as Record<string, Uint8Array>);
+  return { files: repacked };
+}
+
+export function writeWorkbook(wb: Workbook): Uint8Array {
+  const p = assembleWorkbook(wb);
+  return "bytes" in p ? p.bytes : zipSync(p.files);
+}
+
+// Same output as writeWorkbook, but the zip runs off the main thread. Used by the live
+// editor's getBytes so saving a big workbook does not freeze the UI.
+export async function writeWorkbookAsync(wb: Workbook): Promise<Uint8Array> {
+  const p = assembleWorkbook(wb);
+  return "bytes" in p ? p.bytes : zipAsync(p.files as AsyncZippable);
 }
 
 /** Commit a raw grid edit (the text a user typed) into the model. */

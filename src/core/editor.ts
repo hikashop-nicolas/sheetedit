@@ -12,7 +12,7 @@ import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsR
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
-import { readWorkbook, setCellInput, writeWorkbook } from "./workbook";
+import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
@@ -1599,7 +1599,7 @@ export function createSheetEditor(
       return wb.kind === "csv" ? writeCsv(wb) : null;
     },
     async getBytes() {
-      return dirty ? writeWorkbook(wb) : original.slice();
+      return dirty ? writeWorkbookAsync(wb) : original.slice();
     },
     destroy() {
       document.removeEventListener("copy", onDocCopy);
