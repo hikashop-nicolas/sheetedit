@@ -748,15 +748,32 @@ export function createSheetEditor(
     }
     const pop = document.createElement("div");
     pop.className = "sheetedit-pop";
-    const close = () => {
+    pop.setAttribute("role", "menu");
+    const close = (refocus = false) => {
       pop.remove();
       borderPop = null;
       document.removeEventListener("pointerdown", onOutside, true);
+      if (refocus) btn.focus();
     };
     const onOutside = (e: Event) => {
       const tgt = e.target as Node;
       if (!pop.contains(tgt) && !btn.contains(tgt)) close();
     };
+    // Keyboard: Escape closes (returning focus to the trigger); arrows roam the items.
+    pop.addEventListener("keydown", (e) => {
+      const items = Array.from(pop.querySelectorAll<HTMLButtonElement>(".sheetedit-pop-item"));
+      const i = items.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close(true);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        items[(i + 1) % items.length]?.focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        items[(i - 1 + items.length) % items.length]?.focus();
+      }
+    });
     const opts: [string, BorderMode][] = [
       [t("borderAll"), "all"],
       [t("borderOuter"), "outer"],
@@ -770,10 +787,11 @@ export function createSheetEditor(
       const b = document.createElement("button");
       b.type = "button";
       b.className = "sheetedit-pop-item";
+      b.setAttribute("role", "menuitem");
       b.textContent = label;
       b.addEventListener("click", () => {
         applyBorder(mode);
-        close();
+        close(true);
       });
       pop.appendChild(b);
     }
@@ -782,6 +800,7 @@ export function createSheetEditor(
     const r = btn.getBoundingClientRect();
     pop.style.left = `${Math.round(r.left)}px`;
     pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    (pop.firstElementChild as HTMLElement | null)?.focus(); // move focus into the menu
     setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
   };
 
@@ -1771,7 +1790,21 @@ export function createSheetEditor(
       b.textContent = sheet.name;
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(i === active));
+      b.tabIndex = i === active ? 0 : -1; // roving tabindex for the tablist
       b.addEventListener("click", () => switchSheet(i));
+      // Left/Right (Home/End) move between sheet tabs, activating and focusing each.
+      b.addEventListener("keydown", (e) => {
+        const n = wb.sheets.length;
+        let to = -1;
+        if (e.key === "ArrowRight") to = (i + 1) % n;
+        else if (e.key === "ArrowLeft") to = (i - 1 + n) % n;
+        else if (e.key === "Home") to = 0;
+        else if (e.key === "End") to = n - 1;
+        if (to < 0) return;
+        e.preventDefault();
+        switchSheet(to);
+        (tabs.children[to] as HTMLElement | undefined)?.focus();
+      });
       tabs.appendChild(b);
     });
   };
