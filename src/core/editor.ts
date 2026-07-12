@@ -591,14 +591,24 @@ export function createSheetEditor(
     else setXlsxCellStyle(wb, sheet, cell, change);
   };
 
+  // Cells of the current selection, clamped to the sheet's used extent so styling a whole
+  // column / select-all enumerates only real cells (not millions of empty ones); a high cap
+  // still guards a pathological explicit range.
+  const selPositions = (sheet: Sheet): { r: number; c: number }[] => {
+    const out: { r: number; c: number }[] = [];
+    if (!sel) return out;
+    const r2 = Math.min(sel.r2, Math.max(sel.r1, sheet.maxRow));
+    const c2 = Math.min(sel.c2, Math.max(sel.c1, sheet.maxCol));
+    for (let r = sel.r1; r <= r2 && out.length < 200000; r++)
+      for (let c = sel.c1; c <= c2 && out.length < 200000; c++) out.push({ r, c });
+    return out;
+  };
+
   const applyStyle = (change: StyleChange) => {
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const positions: { r: number; c: number }[] = [];
-    let n = 0;
-    for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
-      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) positions.push({ r, c });
+    const positions = selPositions(sheet);
     recordCells(positions, () => {
       for (const pos of positions) setCellStyle(sheet, ensureCell(sheet, pos.r, pos.c), change);
     });
@@ -611,10 +621,7 @@ export function createSheetEditor(
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const positions: { r: number; c: number }[] = [];
-    let n = 0;
-    for (let r = sel.r1; r <= sel.r2 && n < 4000; r++)
-      for (let c = sel.c1; c <= sel.c2 && n < 4000; c++, n++) positions.push({ r, c });
+    const positions = selPositions(sheet);
     recordCells(positions, () => {
       for (const pos of positions) {
         const cell = ensureCell(sheet, pos.r, pos.c);
@@ -721,10 +728,10 @@ export function createSheetEditor(
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const { r1, c1, r2, c2 } = sel;
-    const positions: { r: number; c: number }[] = [];
-    let n = 0;
-    for (let r = r1; r <= r2 && n < 4000; r++) for (let c = c1; c <= c2 && n < 4000; c++, n++) positions.push({ r, c });
+    const { r1, c1 } = sel;
+    const r2 = Math.min(sel.r2, Math.max(r1, sheet.maxRow)); // clamp to the used extent
+    const c2 = Math.min(sel.c2, Math.max(c1, sheet.maxCol));
+    const positions = selPositions(sheet);
     recordCells(positions, () => {
       for (const pos of positions) {
         const { r, c } = pos;
