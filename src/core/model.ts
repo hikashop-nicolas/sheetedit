@@ -178,7 +178,7 @@ export function noteExtent(sheet: Sheet, row: number, col: number): void {
 /** Typed value of a cell for the formula engine: number, boolean, string or null. */
 export function typedValue(cell: Cell | undefined): number | boolean | string | null {
   if (!cell) return null;
-  if (cell.value === "") return cell.formula != null ? null : null;
+  if (cell.value === "") return null;
   switch (cell.kind) {
     case "n": {
       const n = Number(cell.value);

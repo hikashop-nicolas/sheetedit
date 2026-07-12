@@ -1597,7 +1597,10 @@ export function createSheetEditor(
     const corner = document.createElement("th");
     corner.className = "corner";
     corner.title = t("selectAll");
-    corner.addEventListener("click", () => setSel(1, 1, totalRows, totalCols));
+    corner.addEventListener("click", () => {
+      anchor = { r: 1, c: 1 }; // a later shift-click extends from A1, not a stale anchor
+      setSel(1, 1, totalRows, totalCols);
+    });
     head.appendChild(corner);
     for (let c = 1; c <= fc; c++) {
       if (sheet.hiddenCols?.has(c)) continue;
@@ -1796,7 +1799,13 @@ export function createSheetEditor(
     destroy() {
       document.removeEventListener("copy", onDocCopy);
       document.removeEventListener("paste", onDocPaste);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
       closeLineMenu();
+      borderPop?.remove();
+      borderPop = null;
+      furiPop?.remove();
+      furiPop = null;
       toolbarHandle.teardown();
       floatBar.teardown();
       wrap.remove();
