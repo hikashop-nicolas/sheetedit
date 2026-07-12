@@ -192,6 +192,28 @@ describe("xlsx", () => {
     expect(readWorkbook(makeXlsx()).sheets[0]!.freeze).toBeUndefined();
   });
 
+  it("reads furigana (rPh) as phonetic runs, not concatenated into the value", () => {
+    const sst = `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1"><si><t>東京</t><rPh sb="0" eb="2"><t>トウキョウ</t></rPh><phoneticPr fontId="1"/></si></sst>`;
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="J" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+      "xl/sharedStrings.xml": strToU8(sst),
+    });
+    const cell = readWorkbook(bytes).sheets[0]!.cells.get("1:1")!;
+    expect(cell.value).toBe("東京"); // base text only, not "東京トウキョウ"
+    expect(cell.phonetic).toEqual([{ sb: 0, eb: 2, reading: "トウキョウ" }]);
+    // Editing another cell rewrites the file; the furigana cell's rPh must survive.
+    const wb = readWorkbook(bytes);
+    setCellInput(wb.sheets[0]!, 2, 1, "x");
+    const s2 = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(s2.cells.get("1:1")?.value).toBe("東京");
+    expect(s2.cells.get("1:1")?.phonetic).toEqual([{ sb: 0, eb: 2, reading: "トウキョウ" }]);
+  });
+
   it("reads hidden rows/columns and preserves them on save", () => {
     const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>b</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>c</t></is></c></row></sheetData></worksheet>`;
     const bytes = zipSync({

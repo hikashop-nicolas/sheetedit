@@ -139,4 +139,27 @@ const hiddenXlsx = zipSync({
 });
 writeFileSync(join(here, "fixtures", "hidden.xlsx"), hiddenXlsx);
 
-console.log("wrote sample.xlsx, sample.ods, frozen.xlsx and hidden.xlsx");
+// --- furigana.xlsx: a shared string carrying a phonetic (rPh) run, so the cell reads as the
+// base text with the reading rendered above it as ruby, plus a plain string for contrast. ---
+const furiganaSst = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2"><si><t>東京</t><rPh sb="0" eb="2"><t>トウキョウ</t></rPh><phoneticPr fontId="1"/></si><si><t>plain</t></si></sst>`;
+const furiganaSheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row></sheetData></worksheet>`;
+const furiganaXlsx = zipSync({
+  "[Content_Types].xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`,
+  ),
+  "_rels/.rels": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+  ),
+  "xl/workbook.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Furigana" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+  ),
+  "xl/_rels/workbook.xml.rels": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`,
+  ),
+  "xl/worksheets/sheet1.xml": strToU8(furiganaSheet),
+  "xl/sharedStrings.xml": strToU8(furiganaSst),
+});
+writeFileSync(join(here, "fixtures", "furigana.xlsx"), furiganaXlsx);
+
+console.log("wrote sample.xlsx, sample.ods, frozen.xlsx, hidden.xlsx and furigana.xlsx");

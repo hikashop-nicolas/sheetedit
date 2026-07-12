@@ -6,7 +6,7 @@ import { setupFindBar } from "./ui/findbar";
 import { buildToolbar } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
-import type { Cell, Sheet, StyleChange, Workbook } from "./model";
+import type { Cell, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
 import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
@@ -73,6 +73,16 @@ export function injectStyles(): void {
     .sheetedit-table th.colhead, .sheetedit-table th.rownum, .sheetedit-table th.corner { cursor:pointer; }
     .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:#e3e3e8; }
     .sheetedit-table td.sheetedit-sel input { background:rgba(110,123,255,0.18); }
+    /* Furigana: the ruby overlay shows base + reading; the input's own text is hidden (but
+       its selection/fill background still shows through) until the cell is focused for editing. */
+    .sheetedit-table td.has-ruby { position:relative; }
+    .sheetedit-table td.has-ruby:not(:focus-within) input { color:transparent !important; }
+    .sheetedit-table td.has-ruby .sheetedit-ruby {
+      position:absolute; inset:0; display:flex; align-items:center; padding:0 6px;
+      pointer-events:none; overflow:hidden; white-space:nowrap; line-height:1.05;
+    }
+    .sheetedit-table td.has-ruby .sheetedit-ruby rt { font-size:0.6em; line-height:1; user-select:none; }
+    .sheetedit-table td.has-ruby:focus-within .sheetedit-ruby { display:none; }
     .sheetedit-pop { position:fixed; z-index:30; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
     .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:var(--sheetedit-text, #e6e6e6); border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
     .sheetedit-pop-item:hover { background:var(--sheetedit-btn, #3a3f47); }
@@ -1305,8 +1315,36 @@ export function createSheetEditor(
         }
       });
       td.appendChild(input);
+      // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
+      // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
+      if (cell?.phonetic?.length) {
+        td.classList.add("has-ruby");
+        td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
+      }
       inputs.set(ki, input);
       return td;
+  };
+
+  // A ruby display element for base text annotated by phonetic runs (base[sb..eb) -> reading).
+  const buildRuby = (base: string, runs: Phonetic[]): HTMLElement => {
+    const wrap = document.createElement("div");
+    wrap.className = "sheetedit-ruby";
+    wrap.setAttribute("aria-hidden", "true");
+    let pos = 0;
+    for (const p of [...runs].filter((x) => x.reading).sort((a, b) => a.sb - b.sb)) {
+      const sb = Math.max(pos, Math.min(base.length, p.sb));
+      const eb = Math.max(sb, Math.min(base.length, p.eb || base.length));
+      if (sb > pos) wrap.appendChild(document.createTextNode(base.slice(pos, sb)));
+      const ruby = document.createElement("ruby");
+      ruby.appendChild(document.createTextNode(base.slice(sb, eb)));
+      const rt = document.createElement("rt");
+      rt.textContent = p.reading;
+      ruby.appendChild(rt);
+      wrap.appendChild(ruby);
+      pos = eb;
+    }
+    if (pos < base.length) wrap.appendChild(document.createTextNode(base.slice(pos)));
+    return wrap;
   };
 
   const buildRow = (sheet: Sheet, r: number, c1: number, c2: number, fz: { fr: number; fc: number; headerH: number }): HTMLTableRowElement => {

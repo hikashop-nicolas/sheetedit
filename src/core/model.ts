@@ -26,11 +26,21 @@ export interface CellStyle {
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
 }
 
+/** A phonetic-guide (furigana) run: the reading shown above base[sb..eb). */
+export interface Phonetic {
+  sb: number; // start base-char offset (inclusive)
+  eb: number; // end base-char offset (exclusive)
+  reading: string;
+}
+
 export interface Cell {
   row: number; // 1-based
   col: number; // 1-based
   /** Canonical/editable value: the literal, or the cached result for a formula cell. */
   value: string;
+  /** Phonetic guide (furigana) runs for a Japanese string cell, shown as ruby in the grid;
+      the value stays the base text. Preserved untouched in the file's shared/inline string. */
+  phonetic?: Phonetic[];
   /** Serialization hint for `value`. */
   kind: CellKind;
   /** Formatted text for the grid (number format applied). Falls back to `value`. */

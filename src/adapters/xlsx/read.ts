@@ -1,19 +1,38 @@
-import type { Cell, CellKind, CellStyle, Sheet, Workbook } from "../../core/model";
+import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
 import { firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
 // ---------------------------------------------------------------------------
 
-export function readSharedStrings(file: Uint8Array | undefined): string[] {
+export interface RichString {
+  text: string; // base text (plain <t> and <r> runs)
+  phonetic?: Phonetic[]; // <rPh> furigana runs, if any
+}
+
+// Parse a rich-text container (<si> in sharedStrings or <is> for an inline string) into its
+// base text and any phonetic (furigana) runs. rPh runs carry the reading over base[sb..eb);
+// they must not be folded into the text (that is the "東京トウキョウ" concatenation bug).
+export function parseRichString(el: Element): RichString {
+  let text = "";
+  const phonetic: Phonetic[] = [];
+  for (const ch of Array.from(el.children)) {
+    if (ch.localName === "t") text += ch.textContent ?? "";
+    else if (ch.localName === "r") {
+      for (const rc of Array.from(ch.children)) if (rc.localName === "t") text += rc.textContent ?? "";
+    } else if (ch.localName === "rPh") {
+      const rt = Array.from(ch.children).find((x) => x.localName === "t");
+      phonetic.push({ sb: Number(ch.getAttribute("sb") || "0"), eb: Number(ch.getAttribute("eb") || "0"), reading: rt?.textContent ?? "" });
+    }
+  }
+  return phonetic.length ? { text, phonetic } : { text };
+}
+
+export function readSharedStrings(file: Uint8Array | undefined): RichString[] {
   if (!file) return [];
   const doc = parseXmlOpt(file);
   if (!doc) return [];
-  return Array.from(doc.getElementsByTagName("si")).map((si) =>
-    Array.from(si.getElementsByTagName("t"))
-      .map((t) => t.textContent ?? "")
-      .join(""),
-  );
+  return Array.from(doc.getElementsByTagName("si")).map(parseRichString);
 }
 
 export interface XlsxStyles {
@@ -270,7 +289,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   return wb;
 }
 
-export function readSheetData(sheet: Sheet, sheetData: Element, shared: string[], styles: XlsxStyles): void {
+export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichString[], styles: XlsxStyles): void {
   // Shared formulas: the master <f t="shared" si ref> holds the text; children are
   // empty <f t="shared" si/>. Resolve each child to the master's formula shifted by
   // its offset so recalc (and a possible de-share on save) can treat it normally.
@@ -304,11 +323,16 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]
 
       let value = "";
       let kind: CellKind = "blank";
+      let phonetic: Phonetic[] | undefined;
       if (t === "s") {
-        value = shared[Number(vEl?.textContent ?? "0")] ?? "";
+        const ss = shared[Number(vEl?.textContent ?? "0")] ?? { text: "" };
+        value = ss.text;
+        phonetic = ss.phonetic;
         kind = "s";
       } else if (t === "inlineStr") {
-        value = isEl ? Array.from(isEl.getElementsByTagName("t")).map((x) => x.textContent ?? "").join("") : "";
+        const ss = isEl ? parseRichString(isEl) : { text: "" };
+        value = ss.text;
+        phonetic = ss.phonetic;
         kind = "s";
       } else if (t === "str") {
         value = vEl?.textContent ?? "";
@@ -343,6 +367,7 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: string[]
         formula,
         el: c,
         style: c.getAttribute("s") ?? undefined,
+        phonetic,
       };
       if (kind === "n") {
         const fmt = resolveXlsxFmt(styles, cell.style);
