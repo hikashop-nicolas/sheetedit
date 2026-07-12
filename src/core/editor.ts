@@ -113,6 +113,11 @@ export function injectStyles(): void {
     .sheetedit-table th.rownum { position:sticky; left:0; z-index:5; top:auto; text-align:right; background:#f1f1f4; }
     /* Frozen-pane cells: opaque so scrolled content does not show through the sticky cell. */
     .sheetedit-table td.frz { background:#fff; }
+    /* Vertical alignment: table cells align their inline content natively (flex/grid would
+       drop display:table-cell and break the row height). The input is inline-block. */
+    .sheetedit-table td.va-top { vertical-align:top; }
+    .sheetedit-table td.va-bottom { vertical-align:bottom; }
+    .sheetedit-table td.va-top > input, .sheetedit-table td.va-bottom > input { display:inline-block; }
     /* Resize grips: a thin strip on the header border, wide enough to grab on touch. */
     .sheetedit-colgrip { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:4; touch-action:none; }
     .sheetedit-rowgrip { position:absolute; left:0; bottom:-4px; width:100%; height:9px; cursor:row-resize; z-index:4; touch-action:none; }
@@ -1353,7 +1358,12 @@ export function createSheetEditor(
         if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
         if (cs.color) input.style.color = cs.color;
         if (cs.align) input.style.textAlign = cs.align;
-        // wrap/valign persist to the file but an <input> grid cell cannot show them.
+        // Vertical alignment: flex-align the input within the (taller) cell. Middle is the
+        // input's natural placement, so only top/bottom need a class.
+        if (cs.valign === "top") td.classList.add("va-top");
+        else if (cs.valign === "bottom") td.classList.add("va-bottom");
+        // wrap still persists to the file but the single-line <input> cannot show it (would
+        // need auto-grown row heights).
       }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
