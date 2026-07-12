@@ -193,6 +193,26 @@ describe("xlsx", () => {
     expect(readWorkbook(makeXlsx()).sheets[0]!.freeze).toBeUndefined();
   });
 
+  it("a formula that reads a date inherits a date format for display", () => {
+    const styles = `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="1"><xf numFmtId="14"/></cellXfs></styleSheet>`;
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" s="0"><v>45658</v></c></row><row r="2"><c r="A2"><f>A1+1</f><v>0</v></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+      "xl/styles.xml": strToU8(styles),
+    });
+    const wb = readWorkbook(bytes);
+    recalc(wb);
+    const a2 = wb.sheets[0]!.cells.get("2:1")!;
+    expect(a2.value).toBe("45659"); // the underlying serial is unchanged
+    expect(a2.display).toBeTruthy(); // but it displays as a date, not the bare serial
+    expect(a2.display).not.toBe("45659");
+    expect(a2.display).toContain("/"); // numFmtId 14 is a slash-separated date
+  });
+
   it("resolves defined names (named ranges) in recalc", () => {
     const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>3</v></c></row><row r="2"><c r="A2"><v>4</v></c></row><row r="3"><c r="A3"><f>SUM(Sales)</f><v>0</v></c></row><row r="4"><c r="A4"><f>Rate*10</f><v>0</v></c></row></sheetData></worksheet>`;
     const wbXml = `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="Sales">Sheet1!$A$1:$A$2</definedName><definedName name="Rate">Sheet1!$A$1</definedName></definedNames></workbook>`;
