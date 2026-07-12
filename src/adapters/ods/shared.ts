@@ -1,5 +1,6 @@
 // Shared ODS (ODF spreadsheet) namespaces, formula syntax conversion and
 // length/colour parsing, used by the read, write and style modules.
+import type { Phonetic } from "../../core/model";
 
 export const ODS = {
   office: "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
@@ -87,6 +88,49 @@ export function odsCellText(cell: Element): string {
   return Array.from(cell.getElementsByTagName("text:p"))
     .map((p) => p.textContent ?? "")
     .join("\n");
+}
+
+// Ruby-aware cell text: the base text (plain text + <text:ruby-base>) plus the phonetic
+// (furigana) runs from <text:ruby-text>. Without this, textContent folds the reading into
+// the value (東京 + トウキョウ run together), the ODF analogue of the xlsx rPh bug.
+export function odsCellRich(cell: Element): { text: string; phonetic?: Phonetic[] } {
+  const out = { text: "", phonetic: [] as Phonetic[] };
+  const walk = (node: Node): void => {
+    for (const ch of Array.from(node.childNodes)) {
+      if (ch.nodeType === 3) {
+        out.text += ch.textContent ?? "";
+        continue;
+      }
+      if (ch.nodeType !== 1) continue;
+      const el = ch as Element;
+      switch (el.localName) {
+        case "ruby": {
+          const base = el.getElementsByTagName("text:ruby-base")[0]?.textContent ?? "";
+          const reading = el.getElementsByTagName("text:ruby-text")[0]?.textContent ?? "";
+          const sb = out.text.length;
+          out.text += base;
+          if (reading) out.phonetic.push({ sb, eb: out.text.length, reading });
+          break;
+        }
+        case "s":
+          out.text += " ".repeat(Math.max(1, Number(el.getAttribute("text:c") || "1")));
+          break;
+        case "tab":
+          out.text += "\t";
+          break;
+        case "line-break":
+          out.text += "\n";
+          break;
+        default:
+          walk(el); // spans and other inline wrappers: descend
+      }
+    }
+  };
+  Array.from(cell.getElementsByTagName("text:p")).forEach((p, i) => {
+    if (i > 0) out.text += "\n";
+    walk(p);
+  });
+  return out.phonetic.length ? { text: out.text, phonetic: out.phonetic } : { text: out.text };
 }
 
 // Convert an ODF length ("2.5cm", "96pt", "1in", "0.45mm", "12px") to CSS px.

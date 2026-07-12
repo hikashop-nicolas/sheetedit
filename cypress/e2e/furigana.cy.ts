@@ -34,4 +34,13 @@ describe("furigana (phonetic ruby)", () => {
     cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("not.be.visible");
     cy.get('input[aria-label="A1"]').should("have.value", "東京");
   });
+
+  it("renders ODF text:ruby the same way", () => {
+    open("cypress/fixtures/furigana.ods");
+    cy.get('input[aria-label="A1"]').should("have.value", "東京");
+    cy.get('input[aria-label="A1"]').closest("td").as("cellA1");
+    cy.get("@cellA1").should("have.class", "has-ruby");
+    cy.get("@cellA1").find("ruby rt").should("have.text", "トウキョウ");
+    cy.get('input[aria-label="B1"]').closest("td").should("not.have.class", "has-ruby");
+  });
 });

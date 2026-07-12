@@ -162,4 +162,16 @@ const furiganaXlsx = zipSync({
 });
 writeFileSync(join(here, "fixtures", "furigana.xlsx"), furiganaXlsx);
 
-console.log("wrote sample.xlsx, sample.ods, frozen.xlsx, hidden.xlsx and furigana.xlsx");
+// --- furigana.ods: the ODF analogue, a cell whose <text:p> carries a <text:ruby> run. ---
+const furiganaOdsContent = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Furigana"><table:table-row><table:table-cell office:value-type="string"><text:p><text:ruby><text:ruby-base>東京</text:ruby-base><text:ruby-text>トウキョウ</text:ruby-text></text:ruby></text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>plain</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+const furiganaOds = zipSync({
+  mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+  "content.xml": strToU8(furiganaOdsContent),
+  "META-INF/manifest.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`,
+  ),
+});
+writeFileSync(join(here, "fixtures", "furigana.ods"), furiganaOds);
+
+console.log("wrote sample.xlsx, sample.ods, frozen.xlsx, hidden.xlsx, furigana.xlsx and furigana.ods");

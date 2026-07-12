@@ -358,6 +358,17 @@ describe("ods", () => {
     expect(readWorkbook(bytes).sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
   });
 
+  it("reads furigana from ODF text:ruby as phonetic runs, not the reading folded in", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="J"><table:table-row><table:table-cell office:value-type="string"><text:p><text:ruby><text:ruby-base>東京</text:ruby-base><text:ruby-text>トウキョウ</text:ruby-text></text:ruby>都</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    const cell = readWorkbook(bytes).sheets[0]!.cells.get("1:1")!;
+    expect(cell.value).toBe("東京都"); // base text (ruby-base + plain), reading not folded in
+    expect(cell.phonetic).toEqual([{ sb: 0, eb: 2, reading: "トウキョウ" }]);
+  });
+
   it("reads hidden rows/columns from ODF table:visibility", () => {
     const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="S"><table:table-column/><table:table-column table:visibility="collapse"/><table:table-row><table:table-cell office:value-type="string" office:string-value="a"><text:p>a</text:p></table:table-cell></table:table-row><table:table-row table:visibility="collapse"><table:table-cell office:value-type="string" office:string-value="b"><text:p>b</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
     const bytes = zipSync({

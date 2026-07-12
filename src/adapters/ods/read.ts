@@ -1,7 +1,7 @@
-import type { Cell, CellKind, CellStyle, Sheet, Workbook } from "../../core/model";
+import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
 import { formatNumber, key, noteExtent, numToStr, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
-import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellText, odsColorOf, odsLenToPx } from "./shared";
+import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
 // ---------------------------------------------------------------------------
@@ -284,6 +284,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
     let numFmt: string | undefined;
     let odsValueType: string | undefined;
     let odsCurrency: string | undefined;
+    let phonetic: Phonetic[] | undefined;
     if (valueType === "float" || valueType === "percentage" || valueType === "currency") {
       value = cellEl.getAttribute("office:value") ?? text;
       // ODF stores the producer's formatted text in <text:p>; use it as the display.
@@ -298,7 +299,9 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       value = cellEl.getAttribute("office:boolean-value") === "true" ? "TRUE" : "FALSE";
       kind = "b";
     } else if (valueType === "string") {
-      value = cellEl.getAttribute("office:string-value") ?? odsCellText(cellEl);
+      const rich = odsCellRich(cellEl); // base text + furigana (text:ruby), not the reading folded in
+      value = cellEl.getAttribute("office:string-value") ?? rich.text;
+      phonetic = rich.phonetic;
       kind = "s";
     } else if (valueType === "date") {
       // Model dates as serials so arithmetic and re-formatting work; the
@@ -329,7 +332,9 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       }
       if (text !== "" && text !== value) display = text;
     } else {
-      value = odsCellText(cellEl);
+      const rich = odsCellRich(cellEl);
+      value = rich.text;
+      phonetic = rich.phonetic;
       kind = value === "" ? "blank" : "s";
     }
     const has = value !== "" || formulaRaw != null || style != null;
@@ -351,6 +356,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       style,
       cellStyle: style ? styles.cell.get(style) : undefined,
       el: cellEl,
+      phonetic,
     };
     out.push({ has: true, span: Math.min(crep, REPEAT_CAP), startCol, colSpan, rowSpan, cell });
   }
