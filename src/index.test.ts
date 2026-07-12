@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
   a1ToOdf,
+  applyResult,
   createSheetEditor,
   odfToA1,
   readWorkbook,
@@ -1065,5 +1066,59 @@ describe("editor API", () => {
     expect(ed.getCellValue("Z99")).toBe(""); // empty/out of range
     ed.destroy();
     container.remove();
+  });
+});
+
+describe("formula engine coverage", () => {
+  const xlsx2 = (s1: string, s2: string): Uint8Array =>
+    zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(
+        `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/><sheet name="Sheet2" sheetId="2" r:id="rId2"/></sheets></workbook>`,
+      ),
+      "xl/_rels/workbook.xml.rels": strToU8(
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`,
+      ),
+      "xl/worksheets/sheet1.xml": strToU8(s1),
+      "xl/worksheets/sheet2.xml": strToU8(s2),
+    });
+  const WS = (rows: string) => `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`;
+
+  it("recalculates a cross-sheet reference", () => {
+    const wb = readWorkbook(
+      xlsx2(WS(`<row r="1"><c r="A1"><f>Sheet2!A1+3</f><v>0</v></c></row>`), WS(`<row r="1"><c r="A1"><v>10</v></c></row>`)),
+    );
+    recalc(wb);
+    expect(wb.sheets[0]!.cells.get("1:1")?.value).toBe("13"); // Sheet2!A1 (10) + 3
+  });
+
+  it("flags a circular reference on every cell in the cycle", () => {
+    const wb = readWorkbook(xlsx2(WS(`<row r="1"><c r="A1"><f>B1+1</f><v>0</v></c><c r="B1"><f>A1+1</f><v>0</v></c></row>`), WS("")));
+    recalc(wb);
+    expect(wb.sheets[0]!.cells.get("1:1")?.calcFailed).toBe("circular");
+    expect(wb.sheets[0]!.cells.get("1:2")?.calcFailed).toBe("circular");
+  });
+
+  it("collapses an array-valued result to its top-left cell (no spill yet)", () => {
+    const cell = { row: 1, col: 1, value: "", kind: "blank" } as Parameters<typeof applyResult>[0];
+    applyResult(cell, [
+      [7, 8],
+      [9, 10],
+    ]);
+    expect(cell.value).toBe("7");
+    expect(cell.kind).toBe("n");
+  });
+
+  it("caps a repeated ODS content row at REPEAT_CAP and preserves the tail as a run", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="S"><table:table-row table:number-rows-repeated="3000"><table:table-cell office:value-type="string" office:string-value="x"><text:p>x</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    const s = readWorkbook(bytes).sheets[0]!;
+    expect(s.maxRow).toBe(1024); // expanded rows are capped
+    expect(s.odsRowRuns?.length).toBe(1); // the un-expanded remainder is kept verbatim
+    expect(s.odsRowRuns?.[0]).toMatchObject({ from: 1025, to: 3000 });
   });
 });
