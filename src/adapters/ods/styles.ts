@@ -100,7 +100,104 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
  * and maps to the cell's ODF value type on save (date/time/percentage/currency);
  * consumer apps then render it with their default format for that type.
  */
-export function setOdsCellNumFmt(_wb: Workbook, _sheet: Sheet, cell: Cell, fmt: string | number | undefined, currency?: string): void {
+// Build an ODF number data-style (<number:*-style>) matching a preset format code, so other
+// apps render the chosen format instead of their default for the value type.
+function buildOdsNumberStyle(doc: Document, fmt: string, currency?: string): Element {
+  const N = (tag: string) => doc.createElementNS(ODS.number, `number:${tag}`);
+  const text = (s: string) => {
+    const t = N("text");
+    t.textContent = s;
+    return t;
+  };
+  const decimals = (/\.(0+)/.exec(fmt)?.[1]?.length ?? 0).toString();
+  const numberEl = () => {
+    const n = N("number");
+    n.setAttributeNS(ODS.number, "number:decimal-places", decimals);
+    n.setAttributeNS(ODS.number, "number:min-integer-digits", "1");
+    if (/#,##0/.test(fmt)) n.setAttributeNS(ODS.number, "number:grouping", "true");
+    return n;
+  };
+  // Date / time components in file order; "mm" after an hour token is minutes, else month.
+  const appendDateTime = (st: Element) => {
+    let seenHour = false;
+    const re = /(yyyy|yy|mm|m|dd|d|hh|h|ss|s)|([^a-zA-Z]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(fmt))) {
+      if (m[2] != null) {
+        st.appendChild(text(m[2]));
+        continue;
+      }
+      const tok = m[1]!;
+      const long = tok.length >= 2;
+      const el = (name: string) => {
+        const e = N(name);
+        if (long) e.setAttributeNS(ODS.number, "number:style", "long");
+        st.appendChild(e);
+      };
+      if (tok[0] === "y") el("year");
+      else if (tok[0] === "d") el("day");
+      else if (tok[0] === "h") {
+        el("hours");
+        seenHour = true;
+      } else if (tok[0] === "s") el("seconds");
+      else el(seenHour ? "minutes" : "month");
+    }
+  };
+  if (currency) {
+    const st = N("currency-style");
+    const sym = /"([^"]+)"/.exec(fmt)?.[1] ?? currency;
+    const symBefore = fmt.indexOf('"') < fmt.search(/[#0]/);
+    const symEl = () => {
+      const c = N("currency-symbol");
+      c.textContent = sym;
+      return c;
+    };
+    if (symBefore) st.appendChild(symEl());
+    else {
+      st.appendChild(numberEl());
+      st.appendChild(text(" "));
+      st.appendChild(symEl());
+      return st;
+    }
+    st.appendChild(numberEl());
+    return st;
+  }
+  if (fmt.includes("%")) {
+    const st = N("percentage-style");
+    st.appendChild(numberEl());
+    st.appendChild(text("%"));
+    return st;
+  }
+  if (isDateFmt(fmt)) {
+    const st = N(isTimeOnlyFmt(fmt) ? "time-style" : "date-style");
+    appendDateTime(st);
+    return st;
+  }
+  const st = N("number-style");
+  st.appendChild(numberEl());
+  return st;
+}
+
+// Intern a number data-style (deduped by serialized content), returning its style:name.
+function ensureOdsDataStyle(doc: Document, autoStyles: Element, fmt: string | number, currency?: string): string | undefined {
+  if (typeof fmt !== "string") return undefined; // only the picker's string presets are generated
+  const st = buildOdsNumberStyle(doc, fmt, currency);
+  const sig = st.localName + Array.from(st.childNodes).map((n) => new XMLSerializer().serializeToString(n)).join("");
+  for (const ex of Array.from(autoStyles.children)) {
+    if (ex.localName === st.localName && ex.localName + Array.from(ex.childNodes).map((n) => new XMLSerializer().serializeToString(n)).join("") === sig)
+      return ex.getAttribute("style:name") ?? undefined;
+  }
+  const used = new Set(Array.from(doc.getElementsByTagName("style:style")).map((s) => s.getAttribute("style:name")));
+  for (const s of Array.from(autoStyles.children)) used.add(s.getAttribute("style:name"));
+  let n = 1;
+  while (used.has("N" + n)) n++;
+  const name = "N" + n;
+  st.setAttributeNS(ODS.style, "style:name", name);
+  autoStyles.appendChild(st);
+  return name;
+}
+
+export function setOdsCellNumFmt(wb: Workbook, _sheet: Sheet, cell: Cell, fmt: string | number | undefined, currency?: string): void {
   cell.numFmt = fmt;
   cell.numFmtDirty = false;
   cell.odsCurrency = undefined;
@@ -112,6 +209,19 @@ export function setOdsCellNumFmt(_wb: Workbook, _sheet: Sheet, cell: Cell, fmt: 
     cell.odsCurrency = currency;
   } else cell.odsValueType = undefined;
   cell.display = cell.kind === "n" && fmt != null ? formatNumber(fmt, cell.value) ?? undefined : undefined;
+  // Emit an ODF data-style so other apps render the chosen format; reference it on the cell's
+  // table-cell style. General (fmt == null) clears any data-style-name.
+  const doc = wb.contentDoc;
+  if (doc) {
+    const autoStyles = ensureOdsAutoStyles(doc);
+    const dataName = fmt != null ? ensureOdsDataStyle(doc, autoStyles, fmt, currency) : undefined;
+    const orig = cell.style ? findOdsStyleByName(doc, cell.style) : undefined;
+    const st = orig ? (orig.cloneNode(true) as Element) : doc.createElementNS(ODS.style, "style:style");
+    st.removeAttribute("style:name");
+    if (dataName) st.setAttributeNS(ODS.style, "style:data-style-name", dataName);
+    else st.removeAttribute("style:data-style-name");
+    cell.style = internOdsStyle(doc, autoStyles, "table-cell", "ce", st);
+  }
   cell.edited = true;
 }
 

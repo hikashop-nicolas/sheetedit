@@ -10,6 +10,7 @@ import {
   recalc,
   setCellInput,
   shiftFormula,
+  setOdsCellNumFmt,
   setOdsCellStyle,
   setOdsColWidth,
   setOdsMerge,
@@ -1155,5 +1156,34 @@ describe("underline flavours", () => {
     setOdsCellStyle(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, { bold: true }); // re-style
     const out = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
     expect(out).toContain('style:text-underline-style="dotted"'); // not degraded to solid
+  });
+});
+
+describe("ODS number data-styles", () => {
+  it("emits a <number:number-style> data-style and references it when a number format is applied", () => {
+    const wb = readWorkbook(makeOds()); // A1 = 2 (float)
+    setOdsCellNumFmt(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, "#,##0.00");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    expect(content).toContain("number:number-style");
+    expect(content).toContain('number:decimal-places="2"');
+    expect(content).toContain('number:grouping="true"');
+    expect(content).toContain("style:data-style-name");
+  });
+
+  it("emits a <number:date-style> with day/month/year for a date format", () => {
+    const wb = readWorkbook(makeOds());
+    setOdsCellNumFmt(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, "dd/mm/yyyy");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    expect(content).toContain("number:date-style");
+    expect(content).toContain("number:day");
+    expect(content).toContain("number:month");
+    expect(content).toContain("number:year");
+  });
+
+  it("emits a percentage data-style with a trailing %", () => {
+    const wb = readWorkbook(makeOds());
+    setOdsCellNumFmt(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, "0.00%");
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    expect(content).toContain("number:percentage-style");
   });
 });

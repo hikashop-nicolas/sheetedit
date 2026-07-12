@@ -8,6 +8,7 @@ export const ODS = {
   text: "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
   style: "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
   fo: "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
+  number: "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0",
 };
 export const REPEAT_CAP = 1024;
 
