@@ -65,6 +65,18 @@ export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): v
     t.setAttribute("xml:space", "preserve");
     t.textContent = cell.value;
     is.appendChild(t);
+    // Furigana: emit the phonetic guide as <rPh> runs after the base text.
+    for (const p of cell.phonetic ?? []) {
+      if (!p.reading) continue;
+      const rPh = doc.createElementNS(ns, "rPh");
+      rPh.setAttribute("sb", String(p.sb));
+      rPh.setAttribute("eb", String(p.eb));
+      const rt = doc.createElementNS(ns, "t");
+      rt.textContent = p.reading;
+      rPh.appendChild(rt);
+      is.appendChild(rPh);
+    }
+    if (cell.phonetic?.length) is.appendChild(doc.createElementNS(ns, "phoneticPr")); // hints Excel to show it
     c.appendChild(is);
   }
 }

@@ -35,6 +35,24 @@ describe("furigana (phonetic ruby)", () => {
     cy.get('input[aria-label="A1"]').should("have.value", "東京");
   });
 
+  it("adds and removes furigana on a cell via the toolbar", () => {
+    cy.viewport(1400, 800); // wide enough that the style cluster stays inline
+    open("cypress/fixtures/sample.xlsx"); // A1 = "item" (a text cell)
+    cy.get('input[aria-label="A1"]').click(); // select the cell
+    cy.contains(".sheetedit-toolbar button", "ふ").click();
+    cy.get(".sheetedit-furi-input").should("be.visible").type("アイテム");
+    cy.contains(".sheetedit-furi-pop button", "Set").click();
+    // The reading now renders as ruby over the cell.
+    cy.get('input[aria-label="A1"]').closest("td").as("a1");
+    cy.get("@a1").should("have.class", "has-ruby");
+    cy.get("@a1").find("ruby rt").should("have.text", "アイテム");
+    cy.get('input[aria-label="A1"]').should("have.value", "item"); // value unchanged
+    // Remove it again.
+    cy.contains(".sheetedit-toolbar button", "ふ").click();
+    cy.contains(".sheetedit-furi-pop button", "Remove").click();
+    cy.get('input[aria-label="A1"]').closest("td").should("not.have.class", "has-ruby");
+  });
+
   it("renders ODF text:ruby the same way", () => {
     open("cypress/fixtures/furigana.ods");
     cy.get('input[aria-label="A1"]').should("have.value", "東京");

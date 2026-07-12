@@ -214,6 +214,27 @@ describe("xlsx", () => {
     expect(s2.cells.get("1:1")?.phonetic).toEqual([{ sb: 0, eb: 2, reading: "トウキョウ" }]);
   });
 
+  it("authors furigana on a cell and writes it back as rPh", () => {
+    const wb = readWorkbook(makeXlsx()); // B1 = "hello" (shared string)
+    const cell = wb.sheets[0]!.cells.get("1:2")!;
+    expect(cell.value).toBe("hello");
+    cell.phonetic = [{ sb: 0, eb: cell.value.length, reading: "ハロー" }];
+    cell.edited = true; // authoring furigana marks the cell edited
+    const out = writeWorkbook(wb);
+    expect(strFromU8(unzipSync(out)["xl/worksheets/sheet1.xml"])).toContain("<rPh"); // emitted
+    const c2 = readWorkbook(out).sheets[0]!.cells.get("1:2")!;
+    expect(c2.value).toBe("hello");
+    expect(c2.phonetic).toEqual([{ sb: 0, eb: 5, reading: "ハロー" }]);
+    // Deleting furigana (clear phonetic) writes a plain string with no rPh.
+    const wb2 = readWorkbook(out);
+    const c3 = wb2.sheets[0]!.cells.get("1:2")!;
+    c3.phonetic = undefined;
+    c3.edited = true;
+    const c4 = readWorkbook(writeWorkbook(wb2)).sheets[0]!.cells.get("1:2")!;
+    expect(c4.value).toBe("hello");
+    expect(c4.phonetic).toBeUndefined();
+  });
+
   it("reads hidden rows/columns and preserves them on save", () => {
     const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>b</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>c</t></is></c></row></sheetData></worksheet>`;
     const bytes = zipSync({
@@ -367,6 +388,20 @@ describe("ods", () => {
     const cell = readWorkbook(bytes).sheets[0]!.cells.get("1:1")!;
     expect(cell.value).toBe("東京都"); // base text (ruby-base + plain), reading not folded in
     expect(cell.phonetic).toEqual([{ sb: 0, eb: 2, reading: "トウキョウ" }]);
+  });
+
+  it("authors furigana on an ODF cell and writes it back as text:ruby", () => {
+    const wb = readWorkbook(makeOds()); // B1 = "hello"
+    const cell = wb.sheets[0]!.cells.get("1:2")!;
+    expect(cell.value).toBe("hello");
+    cell.phonetic = [{ sb: 0, eb: cell.value.length, reading: "ハロー" }];
+    cell.edited = true;
+    const out = writeWorkbook(wb);
+    const xml = strFromU8(unzipSync(out)["content.xml"]);
+    expect(xml).toContain("text:ruby-text"); // emitted the reading
+    const c2 = readWorkbook(out).sheets[0]!.cells.get("1:2")!;
+    expect(c2.value).toBe("hello");
+    expect(c2.phonetic).toEqual([{ sb: 0, eb: 5, reading: "ハロー" }]);
   });
 
   it("reads hidden rows/columns from ODF table:visibility", () => {

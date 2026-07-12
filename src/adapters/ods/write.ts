@@ -1,4 +1,4 @@
-import type { Cell, Sheet, Workbook } from "../../core/model";
+import type { Cell, Phonetic, Sheet, Workbook } from "../../core/model";
 import { getCell, key, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
@@ -54,9 +54,32 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
   } else if (cell.kind === "s" || cell.kind === "e") {
     c.setAttributeNS(ODS.office, "office:value-type", "string");
     c.setAttributeNS(ODS.office, "office:string-value", cell.value);
-    addText(cell.value);
+    if (cell.phonetic?.length) c.appendChild(makeRubyP(doc, cell.value, cell.phonetic));
+    else addText(cell.value);
   }
   return c;
+}
+
+// A <text:p> that renders base text with furigana as <text:ruby> over base[sb..eb).
+function makeRubyP(doc: Document, base: string, runs: Phonetic[]): Element {
+  const p = doc.createElementNS(ODS.text, "text:p");
+  let pos = 0;
+  for (const ph of [...runs].filter((x) => x.reading).sort((a, b) => a.sb - b.sb)) {
+    const sb = Math.max(pos, Math.min(base.length, ph.sb));
+    const eb = Math.max(sb, Math.min(base.length, ph.eb || base.length));
+    if (sb > pos) p.appendChild(doc.createTextNode(base.slice(pos, sb)));
+    const ruby = doc.createElementNS(ODS.text, "text:ruby");
+    const rb = doc.createElementNS(ODS.text, "text:ruby-base");
+    rb.textContent = base.slice(sb, eb);
+    const rt = doc.createElementNS(ODS.text, "text:ruby-text");
+    rt.textContent = ph.reading;
+    ruby.appendChild(rb);
+    ruby.appendChild(rt);
+    p.appendChild(ruby);
+    pos = eb;
+  }
+  if (pos < base.length) p.appendChild(doc.createTextNode(base.slice(pos)));
+  return p;
 }
 
 // --- ods style write-back -------------------------------------------------

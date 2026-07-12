@@ -64,6 +64,8 @@ export function buildToolbar(ctx: {
   curStyle(): CellStyle | undefined;
   openBorderPopover(anchor: HTMLElement): void;
   toggleMerge(): void;
+  /** Open the furigana (phonetic reading) editor for the active cell, anchored at `btn`. */
+  editFurigana(btn: HTMLElement): void;
 }): ToolbarHandle {
   const { toolbar, wrap } = ctx;
   toolbar.innerHTML = "";
@@ -107,6 +109,8 @@ export function buildToolbar(ctx: {
   const strike = tbBtn("S", t("strikethrough"), () => ctx.applyStyle({ strike: !ctx.curStyle()?.strike }));
   strike.style.textDecoration = "line-through";
   const borderBtn = tbIcon(ICON.borders, t("borders"), () => ctx.openBorderPopover(borderBtn));
+  // Furigana editor: a compact "ふ" button (the feature is inherently Japanese; the title explains).
+  const furiBtn = tbBtn("ふ", t("furiganaTitle"), () => ctx.editFurigana(furiBtn));
 
   // Font family / size: stateless menus (like the toolbar's other controls, they
   // read nothing back); the placeholder row re-selects itself after each apply.
@@ -191,6 +195,7 @@ export function buildToolbar(ctx: {
     sep(),
     borderBtn,
     tbIcon(ICON.merge, t("merge"), ctx.toggleMerge),
+    furiBtn,
   ];
 
   // Collapsible cluster: inline when it fits, otherwise one "Aa" button + popover.

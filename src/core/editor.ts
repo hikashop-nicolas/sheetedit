@@ -83,6 +83,10 @@ export function injectStyles(): void {
     }
     .sheetedit-table td.has-ruby .sheetedit-ruby rt { font-size:0.6em; line-height:1; user-select:none; }
     .sheetedit-table td.has-ruby:focus-within .sheetedit-ruby { display:none; }
+    .sheetedit-furi-pop { min-width:180px; gap:6px; }
+    .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
+    .sheetedit-furi-row { display:flex; gap:4px; }
+    .sheetedit-furi-row .sheetedit-pop-item { flex:1; text-align:center; }
     .sheetedit-pop { position:fixed; z-index:30; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
     .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:var(--sheetedit-text, #e6e6e6); border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
     .sheetedit-pop-item:hover { background:var(--sheetedit-btn, #3a3f47); }
@@ -608,6 +612,94 @@ export function createSheetEditor(
     renderGrid();
   };
 
+  // Furigana authoring: set (or clear, when the reading is empty) the phonetic guide on the
+  // active text cell as a single whole-cell run. The write path emits it as rPh / text:ruby.
+  const furiTarget = (): { sheet: Sheet; r: number; c: number; cell: Cell } | null => {
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return null;
+    const sheet = wb.sheets[active];
+    const pos = activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : null);
+    if (!sheet || !pos) return null;
+    const cell = getCell(sheet, pos.r, pos.c);
+    return cell && cell.value !== "" && cell.kind === "s" ? { sheet, r: pos.r, c: pos.c, cell } : null;
+  };
+  const applyFurigana = (reading: string): void => {
+    const tgt = furiTarget();
+    if (!tgt) return;
+    recordCells([{ r: tgt.r, c: tgt.c }], () => {
+      const rd = reading.trim();
+      tgt.cell.phonetic = rd ? [{ sb: 0, eb: tgt.cell.value.length, reading: rd }] : undefined;
+      tgt.cell.edited = true;
+    });
+    mark();
+    renderGrid();
+  };
+  let furiPop: HTMLElement | null = null;
+  const openFuriganaPopover = (btn: HTMLElement): void => {
+    if (furiPop) {
+      furiPop.remove();
+      furiPop = null;
+      return;
+    }
+    const tgt = furiTarget();
+    if (!tgt) return; // furigana needs a non-empty text cell
+    const pop = document.createElement("div");
+    pop.className = "sheetedit-pop sheetedit-furi-pop";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "sheetedit-furi-input";
+    input.placeholder = t("furiReading");
+    input.setAttribute("aria-label", t("furiReading"));
+    input.value = tgt.cell.phonetic?.[0]?.reading ?? "";
+    const close = () => {
+      pop.remove();
+      furiPop = null;
+      document.removeEventListener("pointerdown", onOutside, true);
+    };
+    const onOutside = (e: Event) => {
+      const n = e.target as Node;
+      if (!pop.contains(n) && !btn.contains(n)) close();
+    };
+    const commit = () => {
+      applyFurigana(input.value);
+      close();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      }
+    });
+    const row = document.createElement("div");
+    row.className = "sheetedit-furi-row";
+    const mkBtn = (label: string, fn: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sheetedit-pop-item";
+      b.textContent = label;
+      b.addEventListener("click", fn);
+      return b;
+    };
+    row.append(
+      mkBtn(t("furiSet"), commit),
+      mkBtn(t("furiRemove"), () => {
+        applyFurigana("");
+        close();
+      }),
+    );
+    pop.append(input, row);
+    document.body.appendChild(pop);
+    furiPop = pop;
+    const r = btn.getBoundingClientRect();
+    pop.style.left = `${Math.round(r.left)}px`;
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    input.focus();
+    input.select();
+    setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+  };
+
   // Apply a border mode across the selection, computing per-cell sides from each cell's
   // position in the rectangle (e.g. "outer" only borders the perimeter).
   type BorderMode = "all" | "outer" | "top" | "bottom" | "left" | "right" | "none";
@@ -771,6 +863,7 @@ export function createSheetEditor(
     curStyle,
     openBorderPopover,
     toggleMerge,
+    editFurigana: openFuriganaPopover,
   });
 
   const mark = () => {
