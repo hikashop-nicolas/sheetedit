@@ -1128,13 +1128,18 @@ export function createSheetEditor(
   let coveredSet = new Set<string>();
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
 
+  // Effective row height / column width: a hidden line collapses to zero, otherwise the
+  // file's custom size or the default. These drive the virtual size index and the DOM.
+  const effRowH = (sheet: Sheet, r: number): number => (sheet.hiddenRows?.has(r) ? 0 : (sheet.rowHeights?.get(r) ?? ROW_H));
+  const effColW = (sheet: Sheet, c: number): number => (sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? COL_W));
+
   const rebuildSizeIndexes = (sheet: Sheet) => {
-    heightRows = [...(sheet.rowHeights?.keys() ?? [])].sort((a, b) => a - b);
+    heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? [])])].sort((a, b) => a - b);
     heightPrefix = [0];
-    for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (sheet.rowHeights!.get(r)! - ROW_H));
-    widthCols = [...(sheet.colWidths?.keys() ?? [])].sort((a, b) => a - b);
+    for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (effRowH(sheet, r) - ROW_H));
+    widthCols = [...new Set([...(sheet.colWidths?.keys() ?? []), ...(sheet.hiddenCols ?? [])])].sort((a, b) => a - b);
     widthPrefix = [0];
-    for (const c of widthCols) widthPrefix.push(widthPrefix[widthPrefix.length - 1]! + (sheet.colWidths!.get(c)! - COL_W));
+    for (const c of widthCols) widthPrefix.push(widthPrefix[widthPrefix.length - 1]! + (effColW(sheet, c) - COL_W));
   };
   const sumBefore = (lines: number[], prefix: number[], i: number): number => {
     let lo = 0;
@@ -1306,7 +1311,7 @@ export function createSheetEditor(
 
   const buildRow = (sheet: Sheet, r: number, c1: number, c2: number, fz: { fr: number; fc: number; headerH: number }): HTMLTableRowElement => {
     const tr = document.createElement("tr");
-    tr.style.height = `${sheet.rowHeights?.get(r) ?? ROW_H}px`;
+    tr.style.height = `${effRowH(sheet, r)}px`;
     const frozenRow = r <= fz.fr;
     const rowTop = fz.headerH + yOfRow(r); // where a frozen row sticks, just below the header
     const rn = document.createElement("th");
@@ -1331,14 +1336,14 @@ export function createSheetEditor(
     tr.appendChild(rn);
     // Frozen columns: always rendered (independent of the horizontal window), sticky-left.
     for (let c = 1; c <= fz.fc; c++) {
-      if (coveredSet.has(key(r, c))) continue;
+      if (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c))) continue;
       const td = buildCell(sheet, r, c);
       freezeCell(td, { left: rnW() + xOfCol(c), top: frozenRow ? rowTop : undefined, z: frozenRow ? 6 : 3 });
       tr.appendChild(td);
     }
     tr.appendChild(document.createElement("td")); // left spacer column
     for (let c = c1; c <= c2; c++) {
-      if (coveredSet.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
+      if (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c))) continue; // hidden, or part of a merge
       const td = buildCell(sheet, r, c);
       if (frozenRow) freezeCell(td, { top: rowTop, z: 4 });
       tr.appendChild(td);
@@ -1427,12 +1432,13 @@ export function createSheetEditor(
       colgroup.appendChild(col);
       return col;
     };
+    // Hidden columns are skipped everywhere (colgroup, header, cells) so they collapse.
+    // The col elements are kept by column number for the resize grips.
+    const colElByC = new Map<number, HTMLElement>();
     addCol(rnW());
-    const frozenColEls: HTMLElement[] = [];
-    for (let c = 1; c <= fc; c++) frozenColEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
+    for (let c = 1; c <= fc; c++) if (!sheet.hiddenCols?.has(c)) colElByC.set(c, addCol(effColW(sheet, c)));
     addCol(leftW);
-    const colEls: HTMLElement[] = [];
-    for (let c = ec1; c <= c2; c++) colEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
+    for (let c = ec1; c <= c2; c++) if (!sheet.hiddenCols?.has(c)) colElByC.set(c, addCol(effColW(sheet, c)));
     addCol(rightW);
     tableEl.appendChild(colgroup);
     tableEl.style.width = `${rnW() + gridW}px`;
@@ -1463,12 +1469,13 @@ export function createSheetEditor(
     corner.addEventListener("click", () => setSel(1, 1, totalRows, totalCols));
     head.appendChild(corner);
     for (let c = 1; c <= fc; c++) {
-      const th = makeColHead(c, frozenColEls[c - 1]!);
+      if (sheet.hiddenCols?.has(c)) continue;
+      const th = makeColHead(c, colElByC.get(c)!);
       freezeCell(th, { left: rnW() + xOfCol(c), z: 9 }); // header is already sticky-top
       head.appendChild(th);
     }
     head.appendChild(document.createElement("th")); // left spacer
-    for (let c = ec1; c <= c2; c++) head.appendChild(makeColHead(c, colEls[c - ec1]!));
+    for (let c = ec1; c <= c2; c++) if (!sheet.hiddenCols?.has(c)) head.appendChild(makeColHead(c, colElByC.get(c)!));
     head.appendChild(document.createElement("th")); // right spacer
     tableEl.appendChild(head);
 
@@ -1476,12 +1483,12 @@ export function createSheetEditor(
     const fz = { fr, fc, headerH: head.offsetHeight || 0 };
 
     const cellCols = fc + (c2 - ec1 + 1) + 3; // rownum + frozen cols + spacer + window + spacer
-    for (let r = 1; r <= fr; r++) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
+    for (let r = 1; r <= fr; r++) if (!sheet.hiddenRows?.has(r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
     const topSpacer = document.createElement("tr");
     topSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
     topSpacer.style.height = `${Math.max(0, yOfRow(er1) - yOfRow(fr + 1))}px`;
     tableEl.appendChild(topSpacer);
-    for (let r = er1; r <= r2; r++) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz));
+    for (let r = er1; r <= r2; r++) if (!sheet.hiddenRows?.has(r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz));
     const bottomSpacer = document.createElement("tr");
     bottomSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
     bottomSpacer.style.height = `${Math.max(0, yOfRow(totalRows + 1) - yOfRow(r2 + 1))}px`;

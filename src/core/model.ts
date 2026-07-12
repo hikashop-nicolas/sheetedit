@@ -77,6 +77,10 @@ export interface Sheet {
   colWidths?: Map<number, number>;
   /** 1-based row -> height in px (from the file's <row ht>), when specified. */
   rowHeights?: Map<number, number>;
+  /** 1-based rows / columns hidden in the file (<row hidden> / <col hidden> / ODF
+      table:visibility). Rendered collapsed (zero size); preserved on save. */
+  hiddenRows?: Set<number>;
+  hiddenCols?: Set<number>;
   /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /

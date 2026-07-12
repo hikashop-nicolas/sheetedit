@@ -145,17 +145,24 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
 }
 
 export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
-  // Column widths: walk <table:table-column> (each may repeat) and map to px.
+  // Column widths + hidden state: walk <table:table-column> (each may repeat) and map to px.
   const cols = new Map<number, number>();
+  const hiddenCols = new Set<number>();
+  const isHidden = (el: Element): boolean => {
+    const v = el.getAttribute("table:visibility");
+    return v === "collapse" || v === "filter";
+  };
   let colIdx = 0;
   const collectCols = (parent: Element) => {
     for (const ch of Array.from(parent.children)) {
       if (ch.localName === "table-column") {
         const rep = Math.max(1, Number(ch.getAttribute("table:number-columns-repeated") || "1"));
         const w = styles.colW.get(ch.getAttribute("table:style-name") ?? "");
+        const hidden = isHidden(ch);
         for (let i = 0; i < Math.min(rep, REPEAT_CAP); i++) {
           colIdx++;
           if (w) cols.set(colIdx, w);
+          if (hidden) hiddenCols.add(colIdx);
         }
       } else if (ch.localName === "table-header-columns" || ch.localName === "table-columns") {
         collectCols(ch);
@@ -164,6 +171,7 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
   };
   collectCols(table);
   if (cols.size) sheet.colWidths = cols;
+  if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
 
   let rowNum = 0;
   const rows: { el: Element; header: boolean }[] = [];
@@ -179,6 +187,7 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
   };
   collect(table);
   const rowHeights = new Map<number, number>();
+  const hiddenRows = new Set<number>();
   const rowStyles = new Map<number, string>();
   const rowEls = new Map<number, Element>();
   const rowRuns: { from: number; to: number; el: Element }[] = [];
@@ -203,9 +212,11 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
     if (worthKeeping) for (let k = 0; k < Math.min(rrep, REPEAT_CAP); k++) rowEls.set(rowNum + 1 + k, rowEl);
     // A content run repeated beyond the cap: the un-expanded tail is preserved verbatim.
     if (rowHasContent && rrep > REPEAT_CAP) rowRuns.push({ from: rowNum + 1 + REPEAT_CAP, to: rowNum + rrep, el: rowEl });
+    const rowHidden = isHidden(rowEl);
     for (let k = 0; k < copies; k++) {
       const r = rowNum + 1 + k;
       if (rh) rowHeights.set(r, rh);
+      if (rowHidden) hiddenRows.add(r);
       if (rowStyle) rowStyles.set(r, rowStyle);
       for (const pc of parsedCells) {
         if (!pc.has) {
@@ -226,6 +237,7 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
     rowNum += rrep;
   }
   if (rowHeights.size) sheet.rowHeights = rowHeights;
+  if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
   if (rowStyles.size) sheet.odsRowStyles = rowStyles;
   if (rowEls.size) sheet.odsRowEls = rowEls;
   if (rowRuns.length) sheet.odsRowRuns = rowRuns;

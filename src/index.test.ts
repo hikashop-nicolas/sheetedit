@@ -191,6 +191,25 @@ describe("xlsx", () => {
   it("leaves freeze undefined when there is no frozen pane", () => {
     expect(readWorkbook(makeXlsx()).sheets[0]!.freeze).toBeUndefined();
   });
+
+  it("reads hidden rows/columns and preserves them on save", () => {
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="2" max="2" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>b</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>c</t></is></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="H" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+    });
+    const wb = readWorkbook(bytes);
+    const s = wb.sheets[0]!;
+    expect([...(s.hiddenRows ?? [])]).toEqual([2]);
+    expect([...(s.hiddenCols ?? [])]).toEqual([2]);
+    setCellInput(s, 1, 1, "z"); // an edit forces a re-serialize; the hidden flags must survive
+    const s2 = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect([...(s2.hiddenRows ?? [])]).toEqual([2]);
+    expect([...(s2.hiddenCols ?? [])]).toEqual([2]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -315,6 +334,17 @@ describe("ods", () => {
       "settings.xml": strToU8(settings),
     } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
     expect(readWorkbook(bytes).sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
+  });
+
+  it("reads hidden rows/columns from ODF table:visibility", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="S"><table:table-column/><table:table-column table:visibility="collapse"/><table:table-row><table:table-cell office:value-type="string" office:string-value="a"><text:p>a</text:p></table:table-cell></table:table-row><table:table-row table:visibility="collapse"><table:table-cell office:value-type="string" office:string-value="b"><text:p>b</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    const s = readWorkbook(bytes).sheets[0]!;
+    expect([...(s.hiddenCols ?? [])]).toEqual([2]);
+    expect([...(s.hiddenRows ?? [])]).toEqual([2]);
   });
 });
 

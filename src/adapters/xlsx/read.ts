@@ -207,27 +207,37 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       const colsEl = doc.getElementsByTagName("cols")[0];
       if (colsEl) {
         const cw = new Map<number, number>();
+        const hiddenCols = new Set<number>();
         for (const col of Array.from(colsEl.children)) {
           if (col.localName !== "col") continue;
           const min = Number(col.getAttribute("min") || "0");
           const max = Number(col.getAttribute("max") || "0");
           const width = Number(col.getAttribute("width") || "0");
-          if (!min || !width) continue;
-          const px = Math.round(width * 7 + 5);
-          for (let c = min; c <= Math.min(max || min, min + 1000); c++) cw.set(c, px);
+          if (!min) continue;
+          const last = Math.min(max || min, min + 1000);
+          const hidden = col.getAttribute("hidden") === "1" || col.getAttribute("hidden") === "true";
+          for (let c = min; c <= last; c++) {
+            if (width) cw.set(c, Math.round(width * 7 + 5));
+            if (hidden) hiddenCols.add(c);
+          }
         }
         if (cw.size) sheet.colWidths = cw;
+        if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
       }
-      // Row heights: <row r ht customHeight/>. ht is in points; convert to px (~4/3 px/pt).
+      // Row heights: <row r ht customHeight hidden/>. ht is in points; convert to px (~4/3 px/pt).
       if (sheetData) {
         const rh = new Map<number, number>();
+        const hiddenRows = new Set<number>();
         for (const rowEl of Array.from(sheetData.children)) {
           if (rowEl.localName !== "row") continue;
           const r = Number(rowEl.getAttribute("r") || "0");
+          if (!r) continue;
           const ht = Number(rowEl.getAttribute("ht") || "0");
-          if (r && ht) rh.set(r, Math.round((ht * 4) / 3));
+          if (ht) rh.set(r, Math.round((ht * 4) / 3));
+          if (rowEl.getAttribute("hidden") === "1" || rowEl.getAttribute("hidden") === "true") hiddenRows.add(r);
         }
         if (rh.size) sheet.rowHeights = rh;
+        if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
       }
       // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
       // xSplit / ySplit are the counts of frozen leading columns / rows.
