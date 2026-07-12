@@ -621,7 +621,10 @@ export function createSheetEditor(
       for (const pos of positions) setCellStyle(sheet, ensureCell(sheet, pos.r, pos.c), change);
     });
     mark();
-    renderGrid();
+    // Wrap toggles or wrap cells change row heights, so full re-render; everything else patches
+    // the rendered cells in place, keeping focus and scroll.
+    if (change.wrap !== undefined || positions.some((p) => getCell(sheet, p.r, p.c)?.cellStyle?.wrap)) renderGrid();
+    else patchStyle(positions);
   };
 
   // Apply a number format preset to the selection (General when fmt is undefined).
@@ -756,7 +759,7 @@ export function createSheetEditor(
       }
     });
     mark();
-    renderGrid();
+    patchStyle(positions); // borders are style-only; patch in place, keeping focus and scroll
   };
 
   let borderPop: HTMLElement | null = null;
@@ -1362,6 +1365,58 @@ export function createSheetEditor(
     td.style.zIndex = String(opts.z);
   };
 
+  // Apply a cell's visual style (fill/borders on the td, font/colour/align on the input) after
+  // resetting the style-derived properties, so this both builds a fresh cell and re-styles an
+  // existing one in place (a patch that avoids a full renderGrid, keeping focus and scroll).
+  const applyCellVisualStyle = (td: HTMLElement, input: HTMLInputElement, cell: Cell | undefined): void => {
+    td.style.background = "";
+    td.style.boxShadow = "";
+    td.classList.remove("va-top", "va-bottom");
+    input.style.fontWeight = "";
+    input.style.fontStyle = "";
+    input.style.textDecoration = "";
+    input.style.textDecorationStyle = "";
+    input.style.fontSize = "";
+    input.style.fontFamily = "";
+    input.style.color = "";
+    input.style.textAlign = "";
+    const cs = cell?.cellStyle;
+    if (!cs) return;
+    if (cs.bg) td.style.background = cs.bg;
+    if (cs.borders) {
+      const bd = cs.borders;
+      const g = "#e3e3e6";
+      const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
+      if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
+      if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
+      td.style.boxShadow = sh.join(", ");
+    }
+    if (cs.bold) input.style.fontWeight = "700";
+    if (cs.italic) input.style.fontStyle = "italic";
+    if (cs.underline || cs.strike) {
+      input.style.textDecoration = `${cs.underline ? "underline" : ""} ${cs.strike ? "line-through" : ""}`.trim();
+      if (cs.underline && cs.underlineStyle) input.style.textDecorationStyle = cs.underlineStyle;
+    }
+    if (cs.fontSize) input.style.fontSize = `${cs.fontSize}pt`;
+    if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
+    if (cs.color) input.style.color = cs.color;
+    if (cs.align) input.style.textAlign = cs.align;
+    if (cs.valign === "top") td.classList.add("va-top");
+    else if (cs.valign === "bottom") td.classList.add("va-bottom");
+  };
+
+  // Re-style the given cells in place (only those currently rendered), preserving the DOM,
+  // focus and scroll. Used for non-geometry style changes instead of a full renderGrid.
+  const patchStyle = (positions: { r: number; c: number }[]): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    for (const pos of positions) {
+      const td = tds.get(key(pos.r, pos.c));
+      const input = inputs.get(key(pos.r, pos.c));
+      if (td && input) applyCellVisualStyle(td, input, getCell(sheet, pos.r, pos.c));
+    }
+  };
+
   // Build one data cell's <td> (input, styles, listeners). Extracted from buildRow so a
   // frozen column can reuse it outside the horizontal window loop.
   const buildCell = (sheet: Sheet, r: number, c: number): HTMLTableCellElement => {
@@ -1384,36 +1439,7 @@ export function createSheetEditor(
         input.title = t(cell.calcFailed === "circular" ? "calcCircular" : cell.calcFailed === "name" ? "calcName" : "calcEval");
       }
       // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
-      const cs = cell?.cellStyle;
-      if (cs) {
-        if (cs.bg) td.style.background = cs.bg;
-        if (cs.borders) {
-          // Override the default gridline box-shadow: keep light right/bottom unless the
-          // file specifies a border there, and add the file's top/left where present.
-          const bd = cs.borders;
-          const g = "#e3e3e6";
-          const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
-          if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
-          if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
-          td.style.boxShadow = sh.join(", ");
-        }
-        if (cs.bold) input.style.fontWeight = "700";
-        if (cs.italic) input.style.fontStyle = "italic";
-        if (cs.underline || cs.strike) {
-          input.style.textDecoration = `${cs.underline ? "underline" : ""} ${cs.strike ? "line-through" : ""}`.trim();
-          if (cs.underline && cs.underlineStyle) input.style.textDecorationStyle = cs.underlineStyle;
-        }
-        if (cs.fontSize) input.style.fontSize = `${cs.fontSize}pt`;
-        if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
-        if (cs.color) input.style.color = cs.color;
-        if (cs.align) input.style.textAlign = cs.align;
-        // Vertical alignment: flex-align the input within the (taller) cell. Middle is the
-        // input's natural placement, so only top/bottom need a class.
-        if (cs.valign === "top") td.classList.add("va-top");
-        else if (cs.valign === "bottom") td.classList.add("va-bottom");
-        // wrap still persists to the file but the single-line <input> cannot show it (would
-        // need auto-grown row heights).
-      }
+      applyCellVisualStyle(td, input, cell);
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
       input.addEventListener("mousedown", (e) => {
