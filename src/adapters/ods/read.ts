@@ -123,6 +123,22 @@ function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: n
   return out;
 }
 
+// One ODF cell address ("$Sheet1.$A$1" or ".$A$1") -> A1 ("Sheet1!A1" or "A1").
+function odfRefToA1(part: string): string {
+  const dot = part.indexOf(".");
+  const sheet = dot > 0 ? part.slice(0, dot).replace(/^\$/, "").replace(/^'|'$/g, "") : "";
+  const cell = part.slice(dot + 1).replace(/\$/g, "");
+  return sheet ? `${sheet}!${cell}` : cell;
+}
+// An ODF cell-range-address -> an A1 reference ("Sheet1!A1:B2"); the end cell drops its sheet.
+function odfAddrToA1(addr: string): string {
+  const parts = addr.split(":");
+  const first = odfRefToA1(parts[0]!);
+  if (parts.length === 1) return first;
+  const second = odfRefToA1(parts[1]!);
+  return `${first}:${second.includes("!") ? second.split("!")[1] : second}`;
+}
+
 export function readOds(files: Record<string, Uint8Array>): Workbook {
   const contentFile = files["content.xml"];
   if (!contentFile) throw new Error("not an .ods: content.xml missing");
@@ -133,6 +149,15 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   const styles = parseOdsStyles(docs);
   const freezeByName = readOdsFreeze(files);
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
+  // Defined names: <table:named-range table:name="X" table:cell-range-address="$Sheet1.$A$1:.$B$2"/>.
+  // Convert the ODF address to an A1 reference ("Sheet1!A1:B2") for recalc.
+  const definedNames = new Map<string, string>();
+  for (const nr of Array.from(contentDoc.getElementsByTagName("table:named-range"))) {
+    const name = nr.getAttribute("table:name");
+    const addr = nr.getAttribute("table:cell-range-address");
+    if (name && addr) definedNames.set(name, odfAddrToA1(addr));
+  }
+  if (definedNames.size) wb.definedNames = definedNames;
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };

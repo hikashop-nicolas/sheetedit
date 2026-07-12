@@ -189,6 +189,15 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const wbXml = files["xl/workbook.xml"];
   if (!wbXml) throw new Error("not an .xlsx: xl/workbook.xml missing");
   const wbDoc = parseXml(wbXml);
+  // Workbook-level defined names: <definedNames><definedName name="X">Sheet1!$A$1:$A$10<...
+  // Skip sheet-scoped names (localSheetId) and function/print built-ins; recalc reads the map.
+  const definedNames = new Map<string, string>();
+  for (const dn of Array.from(wbDoc.getElementsByTagName("definedName"))) {
+    const name = dn.getAttribute("name");
+    const target = dn.textContent?.trim();
+    if (name && target && dn.getAttribute("localSheetId") == null && !name.startsWith("_xlnm")) definedNames.set(name, target);
+  }
+  if (definedNames.size) wb.definedNames = definedNames;
   const rels = new Map<string, string>();
   const relsFile = files["xl/_rels/workbook.xml.rels"];
   const relsDoc = relsFile ? parseXmlOpt(relsFile) : undefined;

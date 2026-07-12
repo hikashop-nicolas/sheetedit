@@ -193,6 +193,23 @@ describe("xlsx", () => {
     expect(readWorkbook(makeXlsx()).sheets[0]!.freeze).toBeUndefined();
   });
 
+  it("resolves defined names (named ranges) in recalc", () => {
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>3</v></c></row><row r="2"><c r="A2"><v>4</v></c></row><row r="3"><c r="A3"><f>SUM(Sales)</f><v>0</v></c></row><row r="4"><c r="A4"><f>Rate*10</f><v>0</v></c></row></sheetData></worksheet>`;
+    const wbXml = `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="Sales">Sheet1!$A$1:$A$2</definedName><definedName name="Rate">Sheet1!$A$1</definedName></definedNames></workbook>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(wbXml),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+    });
+    const wb = readWorkbook(bytes);
+    expect(wb.definedNames?.get("Sales")).toBe("Sheet1!$A$1:$A$2");
+    recalc(wb);
+    expect(wb.sheets[0]!.cells.get("3:1")?.value).toBe("7"); // SUM(Sales) = 3 + 4
+    expect(wb.sheets[0]!.cells.get("4:1")?.value).toBe("30"); // Rate*10 = 3 * 10
+  });
+
   it("reads furigana (rPh) as phonetic runs, not concatenated into the value", () => {
     const sst = `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1"><si><t>東京</t><rPh sb="0" eb="2"><t>トウキョウ</t></rPh><phoneticPr fontId="1"/></si></sst>`;
     const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>`;
@@ -378,6 +395,18 @@ describe("ods", () => {
       "settings.xml": strToU8(settings),
     } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
     expect(readWorkbook(bytes).sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
+  });
+
+  it("resolves ODF named ranges in recalc", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:named-expressions><table:named-range table:name="Sales" table:cell-range-address="$Sheet1.$A$1:.$A$2"/></table:named-expressions><table:table table:name="Sheet1"><table:table-row><table:table-cell office:value-type="float" office:value="3"><text:p>3</text:p></table:table-cell></table:table-row><table:table-row><table:table-cell office:value-type="float" office:value="4"><text:p>4</text:p></table:table-cell></table:table-row><table:table-row><table:table-cell table:formula="of:=SUM(Sales)" office:value-type="float" office:value="0"><text:p>0</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    const wb = readWorkbook(bytes);
+    expect(wb.definedNames?.get("Sales")).toBe("Sheet1!A1:A2");
+    recalc(wb);
+    expect(wb.sheets[0]!.cells.get("3:1")?.value).toBe("7"); // SUM(Sales) = 3 + 4
   });
 
   it("reads furigana from ODF text:ruby as phonetic runs, not the reading folded in", () => {

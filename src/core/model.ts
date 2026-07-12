@@ -133,6 +133,9 @@ export interface Workbook {
   stylesDirty?: boolean; // xlsx styles.xml changed and must be re-serialized
   /** csv: the sniffed (or hinted) field delimiter. */
   csvDelimiter?: string;
+  /** Workbook-level defined names -> an A1 reference ("Sheet1!A1:A10", "A1"), so recalc
+      can resolve named ranges in formulas. */
+  definedNames?: Map<string, string>;
 }
 
 /** A style change to apply to a cell (only the set fields change). */
