@@ -216,6 +216,23 @@ describe("xlsx", () => {
     expect(a2.display).toContain("/"); // numFmtId 14 is a slash-separated date
   });
 
+  it("spills a legacy array formula across its ref range on recalc", () => {
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f t="array" ref="A1:B2">{5,6;7,8}</f><v>5</v></c><c r="B1"><v>99</v></c></row><row r="2"><c r="A2"><v>88</v></c><c r="B2"><v>77</v></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+    });
+    const wb = readWorkbook(bytes);
+    expect(getCell(wb.sheets[0]!, 1, 1)?.arrayRef).toBe("A1:B2");
+    recalc(wb);
+    const v = (r: number, c: number) => getCell(wb.sheets[0]!, r, c)?.value;
+    expect([v(1, 1), v(1, 2), v(2, 1), v(2, 2)]).toEqual(["5", "6", "7", "8"]); // spilled, not stale 99/88/77
+    expect(getCell(wb.sheets[0]!, 1, 2)?.spill).toBe(true);
+  });
+
   it("orders a formula inside a summed range before its dependent (indexed dep build)", () => {
     const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>5</v></c><c r="B1"><f>SUM(A1:A3)</f><v>0</v></c></row><row r="2"><c r="A2"><f>A1*2</f><v>0</v></c></row><row r="3"><c r="A3"><v>1</v></c></row></sheetData></worksheet>`;
     const bytes = zipSync({

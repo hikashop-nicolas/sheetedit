@@ -52,6 +52,11 @@ export interface Cell {
   numFmt?: string | number;
   /** Formula text in A1 syntax, without the leading "=". Undefined if not a formula. */
   formula?: string;
+  /** Legacy array formula: the A1 spill range this formula fills (xlsx <f t="array" ref>,
+      ODF matrix span). Only the top-left cell carries the formula + this ref. */
+  arrayRef?: string;
+  /** This cell is filled by another cell's array formula (a spill result), not its own. */
+  spill?: boolean;
   /** xlsx: the <c> element in the worksheet DOM (for surgical edits). */
   el?: Element;
   /** ods: the original <table:table-cell> element (cloned verbatim if untouched). */

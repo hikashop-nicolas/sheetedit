@@ -381,6 +381,8 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichStri
         style: c.getAttribute("s") ?? undefined,
         phonetic,
       };
+      // Legacy array formula: the top-left cell carries <f t="array" ref="A1:C3">.
+      if (fEl?.getAttribute("t") === "array") cell.arrayRef = fEl.getAttribute("ref") ?? undefined;
       if (kind === "n") {
         const fmt = resolveXlsxFmt(styles, cell.style);
         if (fmt != null) {
