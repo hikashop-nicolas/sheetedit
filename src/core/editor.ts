@@ -86,11 +86,13 @@ export function injectStyles(): void {
        against their neighbours and touch, like a real spreadsheet. */
     .sheetedit-table td { background:#fff; box-shadow: inset -1px -1px 0 0 #e3e3e6; }
     .sheetedit-table th {
-      position:sticky; top:0; z-index:2; background:#f1f1f4; color:#555; font-weight:600;
+      position:sticky; top:0; z-index:8; background:#f1f1f4; color:#555; font-weight:600;
       padding:3px 8px; text-align:center; user-select:none;
     }
-    .sheetedit-table th.corner { left:0; z-index:3; }
-    .sheetedit-table th.rownum { position:sticky; left:0; z-index:1; top:auto; text-align:right; background:#f1f1f4; }
+    .sheetedit-table th.corner { left:0; z-index:9; }
+    .sheetedit-table th.rownum { position:sticky; left:0; z-index:5; top:auto; text-align:right; background:#f1f1f4; }
+    /* Frozen-pane cells: opaque so scrolled content does not show through the sticky cell. */
+    .sheetedit-table td.frz { background:#fff; }
     /* Resize grips: a thin strip on the header border, wide enough to grab on touch. */
     .sheetedit-colgrip { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:4; touch-action:none; }
     .sheetedit-rowgrip { position:absolute; left:0; bottom:-4px; width:100%; height:9px; cursor:row-resize; z-index:4; touch-action:none; }
@@ -1161,27 +1163,20 @@ export function createSheetEditor(
   /** Row-number column width: grows with the digit count of the last row. */
   const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8);
 
-  const buildRow = (sheet: Sheet, r: number, c1: number, c2: number): HTMLTableRowElement => {
-    const tr = document.createElement("tr");
-    tr.style.height = `${sheet.rowHeights?.get(r) ?? ROW_H}px`;
-    const rn = document.createElement("th");
-    rn.className = "rownum";
-    rn.textContent = String(r);
-    rn.title = t("selectRow", { row: r });
-    rn.addEventListener("click", () => {
-      if (resizing) return;
-      anchor = { r, c: 1 };
-      setSel(r, 1, r, totalCols);
-    });
-    rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
-    const rgrip = document.createElement("div");
-    rgrip.className = "sheetedit-rowgrip";
-    rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, sheet.rowHeights?.get(r) ?? ROW_H));
-    rn.appendChild(rgrip);
-    tr.appendChild(rn);
-    tr.appendChild(document.createElement("td")); // left spacer column
-    for (let c = c1; c <= c2; c++) {
-      if (coveredSet.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
+  // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
+  // the left (a frozen column), or both (the frozen corner). z-index stacks it under the
+  // row/column headers but over ordinary cells.
+  const freezeCell = (td: HTMLElement, opts: { left?: number; top?: number; z: number }): void => {
+    td.classList.add("frz");
+    td.style.position = "sticky";
+    if (opts.left != null) td.style.left = `${opts.left}px`;
+    if (opts.top != null) td.style.top = `${opts.top}px`;
+    td.style.zIndex = String(opts.z);
+  };
+
+  // Build one data cell's <td> (input, styles, listeners). Extracted from buildRow so a
+  // frozen column can reuse it outside the horizontal window loop.
+  const buildCell = (sheet: Sheet, r: number, c: number): HTMLTableCellElement => {
       const td = document.createElement("td");
       td.dataset.rc = key(r, c);
       tds.set(key(r, c), td);
@@ -1305,8 +1300,48 @@ export function createSheetEditor(
         }
       });
       td.appendChild(input);
-      tr.appendChild(td);
       inputs.set(ki, input);
+      return td;
+  };
+
+  const buildRow = (sheet: Sheet, r: number, c1: number, c2: number, fz: { fr: number; fc: number; headerH: number }): HTMLTableRowElement => {
+    const tr = document.createElement("tr");
+    tr.style.height = `${sheet.rowHeights?.get(r) ?? ROW_H}px`;
+    const frozenRow = r <= fz.fr;
+    const rowTop = fz.headerH + yOfRow(r); // where a frozen row sticks, just below the header
+    const rn = document.createElement("th");
+    rn.className = "rownum";
+    rn.textContent = String(r);
+    rn.title = t("selectRow", { row: r });
+    rn.addEventListener("click", () => {
+      if (resizing) return;
+      anchor = { r, c: 1 };
+      setSel(r, 1, r, totalCols);
+    });
+    rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
+    const rgrip = document.createElement("div");
+    rgrip.className = "sheetedit-rowgrip";
+    rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, sheet.rowHeights?.get(r) ?? ROW_H));
+    rn.appendChild(rgrip);
+    if (frozenRow) {
+      rn.classList.add("frz");
+      rn.style.top = `${rowTop}px`;
+      rn.style.zIndex = "7"; // a frozen row's number sticks above its own frozen cells
+    }
+    tr.appendChild(rn);
+    // Frozen columns: always rendered (independent of the horizontal window), sticky-left.
+    for (let c = 1; c <= fz.fc; c++) {
+      if (coveredSet.has(key(r, c))) continue;
+      const td = buildCell(sheet, r, c);
+      freezeCell(td, { left: rnW() + xOfCol(c), top: frozenRow ? rowTop : undefined, z: frozenRow ? 6 : 3 });
+      tr.appendChild(td);
+    }
+    tr.appendChild(document.createElement("td")); // left spacer column
+    for (let c = c1; c <= c2; c++) {
+      if (coveredSet.has(key(r, c))) continue; // part of a merge; the top-left cell spans it
+      const td = buildCell(sheet, r, c);
+      if (frozenRow) freezeCell(td, { top: rowTop, z: 4 });
+      tr.appendChild(td);
     }
     tr.appendChild(document.createElement("td")); // right spacer column
     return tr;
@@ -1375,9 +1410,15 @@ export function createSheetEditor(
     tds = new Map();
     tableEl.textContent = "";
 
-    // Column skeleton: row numbers, a left spacer, the window's columns, a right spacer.
+    // Column skeleton: row numbers, the frozen columns, a left spacer for the window's
+    // horizontal offset, the window's columns, a right spacer. Frozen rows/columns render
+    // regardless of the scroll position; the window covers only the rest.
+    const fr = sheet.freeze?.rows ?? 0;
+    const fc = sheet.freeze?.cols ?? 0;
+    const ec1 = Math.max(c1, fc + 1); // horizontal window starts after the frozen columns
+    const er1 = Math.max(r1, fr + 1); // vertical window starts after the frozen rows
     const gridW = xOfCol(totalCols + 1);
-    const leftW = xOfCol(c1);
+    const leftW = Math.max(0, xOfCol(ec1) - xOfCol(fc + 1)); // gap between frozen cols and window
     const rightW = Math.max(0, gridW - xOfCol(c2 + 1));
     const colgroup = document.createElement("colgroup");
     const addCol = (w: number) => {
@@ -1387,21 +1428,17 @@ export function createSheetEditor(
       return col;
     };
     addCol(rnW());
+    const frozenColEls: HTMLElement[] = [];
+    for (let c = 1; c <= fc; c++) frozenColEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
     addCol(leftW);
     const colEls: HTMLElement[] = [];
-    for (let c = c1; c <= c2; c++) colEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
+    for (let c = ec1; c <= c2; c++) colEls.push(addCol(sheet.colWidths?.get(c) ?? COL_W));
     addCol(rightW);
     tableEl.appendChild(colgroup);
     tableEl.style.width = `${rnW() + gridW}px`;
 
-    const head = document.createElement("tr");
-    const corner = document.createElement("th");
-    corner.className = "corner";
-    corner.title = t("selectAll");
-    corner.addEventListener("click", () => setSel(1, 1, totalRows, totalCols));
-    head.appendChild(corner);
-    head.appendChild(document.createElement("th")); // left spacer
-    for (let c = c1; c <= c2; c++) {
+    // A column header cell (letter, select-column click, resize grip).
+    const makeColHead = (c: number, colEl: HTMLElement): HTMLTableCellElement => {
       const th = document.createElement("th");
       th.className = "colhead";
       th.textContent = colToLetters(c);
@@ -1414,22 +1451,37 @@ export function createSheetEditor(
       th.addEventListener("contextmenu", (e) => openLineMenu(e, "col", c));
       const grip = document.createElement("div");
       grip.className = "sheetedit-colgrip";
-      const colEl = colEls[c - c1]!;
-      grip.addEventListener("pointerdown", (e) =>
-        startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? COL_W),
-      );
+      grip.addEventListener("pointerdown", (e) => startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? COL_W));
       th.appendChild(grip);
+      return th;
+    };
+
+    const head = document.createElement("tr");
+    const corner = document.createElement("th");
+    corner.className = "corner";
+    corner.title = t("selectAll");
+    corner.addEventListener("click", () => setSel(1, 1, totalRows, totalCols));
+    head.appendChild(corner);
+    for (let c = 1; c <= fc; c++) {
+      const th = makeColHead(c, frozenColEls[c - 1]!);
+      freezeCell(th, { left: rnW() + xOfCol(c), z: 9 }); // header is already sticky-top
       head.appendChild(th);
     }
+    head.appendChild(document.createElement("th")); // left spacer
+    for (let c = ec1; c <= c2; c++) head.appendChild(makeColHead(c, colEls[c - ec1]!));
     head.appendChild(document.createElement("th")); // right spacer
     tableEl.appendChild(head);
 
-    const cellCols = c2 - c1 + 1 + 3; // rownum + left spacer + window + right spacer
+    // Frozen rows stick just below the header; measure the header height once for the offset.
+    const fz = { fr, fc, headerH: head.offsetHeight || 0 };
+
+    const cellCols = fc + (c2 - ec1 + 1) + 3; // rownum + frozen cols + spacer + window + spacer
+    for (let r = 1; r <= fr; r++) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
     const topSpacer = document.createElement("tr");
     topSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
-    topSpacer.style.height = `${Math.max(0, yOfRow(r1))}px`;
+    topSpacer.style.height = `${Math.max(0, yOfRow(er1) - yOfRow(fr + 1))}px`;
     tableEl.appendChild(topSpacer);
-    for (let r = r1; r <= r2; r++) tableEl.appendChild(buildRow(sheet, r, c1, c2));
+    for (let r = er1; r <= r2; r++) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz));
     const bottomSpacer = document.createElement("tr");
     bottomSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
     bottomSpacer.style.height = `${Math.max(0, yOfRow(totalRows + 1) - yOfRow(r2 + 1))}px`;

@@ -229,6 +229,17 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         }
         if (rh.size) sheet.rowHeights = rh;
       }
+      // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
+      // xSplit / ySplit are the counts of frozen leading columns / rows.
+      const pane = doc.getElementsByTagName("pane")[0];
+      if (pane) {
+        const state = pane.getAttribute("state");
+        if (state === "frozen" || state === "frozenSplit") {
+          const rows = Math.max(0, Math.floor(Number(pane.getAttribute("ySplit") || "0")));
+          const cols = Math.max(0, Math.floor(Number(pane.getAttribute("xSplit") || "0")));
+          if (rows > 0 || cols > 0) sheet.freeze = { rows, cols };
+        }
+      }
       // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.
       const mergeEls = doc.getElementsByTagName("mergeCell");
       if (mergeEls.length) {

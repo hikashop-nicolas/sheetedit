@@ -171,6 +171,26 @@ describe("xlsx", () => {
     expect(ws).toContain("added");
     expect(readWorkbook(out).sheets[0]!.cells.get("1:5")?.value).toBe("added");
   });
+
+  it("reads frozen panes from the sheetView <pane> and preserves them on save", () => {
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane xSplit="2" ySplit="1" topLeftCell="C2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>x</t></is></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="F" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+    });
+    const wb = readWorkbook(bytes);
+    expect(wb.sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 }); // ySplit rows, xSplit cols
+    // The <pane> lives in the untouched sheetView, so a round-trip keeps the freeze.
+    setCellInput(wb.sheets[0]!, 1, 1, "y");
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
+  });
+
+  it("leaves freeze undefined when there is no frozen pane", () => {
+    expect(readWorkbook(makeXlsx()).sheets[0]!.freeze).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -284,6 +304,17 @@ describe("ods", () => {
     expect(s2.cells.get("1:3")?.value).toBe("30");
     expect(s2.cells.get("1:2")?.value).toBe("hello");
     expect(s2.cells.get("1:3")?.formula).toBe("A1*3");
+  });
+
+  it("reads frozen panes from ODF settings.xml (SplitMode 2 = frozen)", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="F"><table:table-row><table:table-cell office:value-type="string" office:string-value="x"><text:p>x</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const settings = `<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"><office:settings><config:config-item-set config:name="ooo:view-settings"><config:config-item-map-indexed config:name="Views"><config:config-item-map-entry><config:config-item-map-named config:name="Tables"><config:config-item-map-entry config:name="F"><config:config-item config:name="HorizontalSplitMode" config:type="short">2</config:config-item><config:config-item config:name="VerticalSplitMode" config:type="short">2</config:config-item><config:config-item config:name="HorizontalSplitPosition" config:type="int">2</config:config-item><config:config-item config:name="VerticalSplitPosition" config:type="int">1</config:config-item></config:config-item-map-entry></config:config-item-map-named></config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set></office:settings></office:document-settings>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+      "settings.xml": strToU8(settings),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    expect(readWorkbook(bytes).sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
   });
 });
 

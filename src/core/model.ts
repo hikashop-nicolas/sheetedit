@@ -79,6 +79,9 @@ export interface Sheet {
   rowHeights?: Map<number, number>;
   /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
+  /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
+      view settings). Rendered as sticky; preserved on save via the untouched view XML. */
+  freeze?: { rows: number; cols: number };
   // xlsx
   doc?: Document;
   sheetData?: Element;

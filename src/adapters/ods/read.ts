@@ -94,6 +94,35 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
   return { cell, colW, rowH };
 }
 
+// Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
+// "frozen" (1 = split, 0 = none); the SplitPosition is the count of frozen columns / rows.
+function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: number; cols: number }> {
+  const out = new Map<string, { rows: number; cols: number }>();
+  const f = files["settings.xml"];
+  if (!f) return out;
+  const doc = parseXmlOpt(f);
+  if (!doc) return out;
+  const tablesMaps = Array.from(doc.getElementsByTagName("config:config-item-map-named")).filter(
+    (m) => m.getAttribute("config:name") === "Tables",
+  );
+  for (const tables of tablesMaps) {
+    for (const entry of Array.from(tables.children)) {
+      if (entry.localName !== "config-item-map-entry") continue;
+      const name = entry.getAttribute("config:name");
+      if (!name) continue;
+      const item = (key: string): number => {
+        for (const ci of Array.from(entry.children))
+          if (ci.localName === "config-item" && ci.getAttribute("config:name") === key) return Number(ci.textContent || "0");
+        return 0;
+      };
+      const cols = item("HorizontalSplitMode") === 2 ? Math.max(0, Math.floor(item("HorizontalSplitPosition"))) : 0;
+      const rows = item("VerticalSplitMode") === 2 ? Math.max(0, Math.floor(item("VerticalSplitPosition"))) : 0;
+      if (rows > 0 || cols > 0) out.set(name, { rows, cols });
+    }
+  }
+  return out;
+}
+
 export function readOds(files: Record<string, Uint8Array>): Workbook {
   const contentFile = files["content.xml"];
   if (!contentFile) throw new Error("not an .ods: content.xml missing");
@@ -102,10 +131,13 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   const odsStylesDoc = files["styles.xml"] ? parseXmlOpt(files["styles.xml"]) : undefined;
   if (odsStylesDoc) docs.push(odsStylesDoc);
   const styles = parseOdsStyles(docs);
+  const freezeByName = readOdsFreeze(files);
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
+    const fz = freezeByName.get(name);
+    if (fz) sheet.freeze = fz;
     readOdsTable(sheet, table, styles);
     wb.sheets.push(sheet);
   }

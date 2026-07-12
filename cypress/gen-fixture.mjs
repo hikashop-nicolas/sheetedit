@@ -71,4 +71,39 @@ const ods = zipSync({
 });
 writeFileSync(join(here, "fixtures", "sample.ods"), ods);
 
-console.log("wrote sample.xlsx and sample.ods");
+// --- frozen.xlsx: a large sheet (60 rows x 12 cols) with the top row and first column
+// frozen (<pane xSplit ySplit state="frozen">). Each cell's text is its own A1 ref so the
+// e2e can target and identify cells while scrolling. ---
+const colL = (c) => String.fromCharCode(64 + c); // 1 -> A ... 12 -> L
+let frozenRows = "";
+for (let r = 1; r <= 60; r++) {
+  let cells = "";
+  for (let c = 1; c <= 12; c++) {
+    const ref = `${colL(c)}${r}`;
+    cells += `<c r="${ref}" t="inlineStr"><is><t>${ref}</t></is></c>`;
+  }
+  frozenRows += `<row r="${r}">${cells}</row>`;
+}
+const frozenSheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+ <sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="B2" sqref="B2"/></sheetView></sheetViews>
+ <sheetData>${frozenRows}</sheetData>
+</worksheet>`;
+const frozenXlsx = zipSync({
+  "[Content_Types].xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+  ),
+  "_rels/.rels": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+  ),
+  "xl/workbook.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Frozen" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+  ),
+  "xl/_rels/workbook.xml.rels": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+  ),
+  "xl/worksheets/sheet1.xml": strToU8(frozenSheet),
+});
+writeFileSync(join(here, "fixtures", "frozen.xlsx"), frozenXlsx);
+
+console.log("wrote sample.xlsx, sample.ods and frozen.xlsx");
