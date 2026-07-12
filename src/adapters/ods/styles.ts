@@ -69,9 +69,21 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
   const tp = child("style:text-properties");
   odsSetOrRemove(tp, "fo:font-weight", cs.bold ? "bold" : undefined);
   odsSetOrRemove(tp, "fo:font-style", cs.italic ? "italic" : undefined);
-  odsSetOrRemove(tp, "style:text-underline-style", cs.underline ? "solid" : undefined, ODS.style);
+  // Map the CSS underline flavour back to ODF: dotted/dashed/wavy as the line style, double
+  // as text-underline-type. Absent flavour = plain solid.
+  const uStyle = !cs.underline
+    ? undefined
+    : cs.underlineStyle === "dotted"
+      ? "dotted"
+      : cs.underlineStyle === "dashed"
+        ? "dash"
+        : cs.underlineStyle === "wavy"
+          ? "wave"
+          : "solid";
+  odsSetOrRemove(tp, "style:text-underline-style", uStyle, ODS.style);
   odsSetOrRemove(tp, "style:text-underline-width", cs.underline ? "auto" : undefined, ODS.style);
   odsSetOrRemove(tp, "style:text-underline-color", cs.underline ? "font-color" : undefined, ODS.style);
+  odsSetOrRemove(tp, "style:text-underline-type", cs.underline && cs.underlineStyle === "double" ? "double" : undefined, ODS.style);
   odsSetOrRemove(tp, "style:text-line-through-style", cs.strike ? "solid" : undefined, ODS.style);
   odsSetOrRemove(tp, "fo:font-size", cs.fontSize ? `${cs.fontSize}pt` : undefined);
   if (cs.fontFamily) tp.removeAttribute("style:font-name"); // fo:font-family must win over a cloned font-name

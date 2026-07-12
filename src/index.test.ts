@@ -4,6 +4,7 @@ import {
   a1ToOdf,
   applyResult,
   createSheetEditor,
+  getCell,
   odfToA1,
   readWorkbook,
   recalc,
@@ -1120,5 +1121,39 @@ describe("formula engine coverage", () => {
     expect(s.maxRow).toBe(1024); // expanded rows are capped
     expect(s.odsRowRuns?.length).toBe(1); // the un-expanded remainder is kept verbatim
     expect(s.odsRowRuns?.[0]).toMatchObject({ from: 1025, to: 3000 });
+  });
+});
+
+describe("underline flavours", () => {
+  it("keeps the xlsx double-underline flavour through a re-style", () => {
+    const styles = `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><u val="double"/></font></fonts><cellXfs count="1"><xf fontId="0" applyFont="1"/></cellXfs></styleSheet>`;
+    const sheetXml = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" s="0" t="inlineStr"><is><t>x</t></is></c></row></sheetData></worksheet>`;
+    const bytes = zipSync({
+      "[Content_Types].xml": strToU8("<Types/>"),
+      "_rels/.rels": strToU8("<Relationships/>"),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(sheetXml),
+      "xl/styles.xml": strToU8(styles),
+    });
+    const wb = readWorkbook(bytes);
+    expect(getCell(wb.sheets[0]!, 1, 1)?.cellStyle?.underlineStyle).toBe("double");
+    setXlsxCellStyle(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, { bold: true }); // re-style
+    const s2 = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(getCell(s2, 1, 1)?.cellStyle?.bold).toBe(true);
+    expect(getCell(s2, 1, 1)?.cellStyle?.underlineStyle).toBe("double"); // flavour survived
+  });
+
+  it("keeps an ODF dotted underline through a re-style", () => {
+    const content = `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:automatic-styles><style:style style:name="ce1" style:family="table-cell"><style:text-properties style:text-underline-style="dotted"/></style:style></office:automatic-styles><office:body><office:spreadsheet><table:table table:name="S"><table:table-row><table:table-cell table:style-name="ce1" office:value-type="string" office:string-value="x"><text:p>x</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`;
+    const bytes = zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }],
+      "content.xml": strToU8(content),
+    } as Record<string, Uint8Array | [Uint8Array, { level: 0 }]>);
+    const wb = readWorkbook(bytes);
+    expect(getCell(wb.sheets[0]!, 1, 1)?.cellStyle?.underlineStyle).toBe("dotted");
+    setOdsCellStyle(wb, wb.sheets[0]!, getCell(wb.sheets[0]!, 1, 1)!, { bold: true }); // re-style
+    const out = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]);
+    expect(out).toContain('style:text-underline-style="dotted"'); // not degraded to solid
   });
 });

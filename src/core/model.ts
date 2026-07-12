@@ -11,6 +11,9 @@ export interface CellStyle {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  /** Underline flavour as a CSS text-decoration-style (double/dotted/dashed/wavy); absent =
+      plain solid. Preserved from the file so re-styling a cell keeps its flavour. */
+  underlineStyle?: string;
   strike?: boolean;
   /** Font size in points (only when it differs from the workbook default). */
   fontSize?: number;
@@ -350,6 +353,8 @@ export function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
     bold: change.bold ?? cur.bold,
     italic: change.italic ?? cur.italic,
     underline: change.underline ?? cur.underline,
+    // Keep the file's underline flavour unless the underline is explicitly toggled off.
+    underlineStyle: change.underline === false ? undefined : cur.underlineStyle,
     strike: change.strike ?? cur.strike,
     fontSize: change.fontSize ?? cur.fontSize,
     fontFamily: change.fontFamily ?? cur.fontFamily,

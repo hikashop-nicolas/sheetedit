@@ -62,7 +62,21 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       if (tp.getAttribute("fo:font-weight") === "bold") s.bold = true;
       if (tp.getAttribute("fo:font-style") === "italic") s.italic = true;
       const us = tp.getAttribute("style:text-underline-style");
-      if (us && us !== "none") s.underline = true;
+      if (us && us !== "none") {
+        s.underline = true;
+        // ODF underline style/type -> CSS text-decoration-style (double via text-underline-type).
+        const flavour =
+          tp.getAttribute("style:text-underline-type") === "double"
+            ? "double"
+            : us === "dotted"
+              ? "dotted"
+              : /dash/.test(us)
+                ? "dashed"
+                : us === "wave"
+                  ? "wavy"
+                  : undefined;
+        if (flavour) s.underlineStyle = flavour;
+      }
       const ls = tp.getAttribute("style:text-line-through-style");
       if (ls && ls !== "none") s.strike = true;
       const fs = parseFloat(tp.getAttribute("fo:font-size") ?? "");

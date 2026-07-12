@@ -1359,8 +1359,10 @@ export function createSheetEditor(
         }
         if (cs.bold) input.style.fontWeight = "700";
         if (cs.italic) input.style.fontStyle = "italic";
-        if (cs.underline || cs.strike)
+        if (cs.underline || cs.strike) {
           input.style.textDecoration = `${cs.underline ? "underline" : ""} ${cs.strike ? "line-through" : ""}`.trim();
+          if (cs.underline && cs.underlineStyle) input.style.textDecorationStyle = cs.underlineStyle;
+        }
         if (cs.fontSize) input.style.fontSize = `${cs.fontSize}pt`;
         if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
         if (cs.color) input.style.color = cs.color;

@@ -119,6 +119,8 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
     bold: !!firstByLocal(f, "b"),
     italic: !!firstByLocal(f, "i"),
     underline: !!firstByLocal(f, "u"),
+    // <u val="double"/> etc.; xlsx has no dotted/dashed, so only double is a distinct flavour.
+    underlineStyle: firstByLocal(f, "u") && /double/i.test(firstByLocal(f, "u")!.getAttribute("val") || "single") ? "double" : undefined,
     strike: !!firstByLocal(f, "strike"),
     size: Number(firstByLocal(f, "sz")?.getAttribute("val")) || undefined,
     name: firstByLocal(f, "name")?.getAttribute("val") || undefined,
@@ -149,6 +151,7 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
         if (font.bold) st.bold = true;
         if (font.italic) st.italic = true;
         if (font.underline) st.underline = true;
+        if (font.underlineStyle) st.underlineStyle = font.underlineStyle;
         if (font.strike) st.strike = true;
         // Size/name only when they differ from the default font, so plain cells
         // keep an undefined cellStyle and the grid's own defaults.
