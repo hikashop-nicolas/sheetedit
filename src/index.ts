@@ -13,3 +13,4 @@ export * from "./adapters/ods";
 export * from "./core/recalc";
 export * from "./core/workbook";
 export * from "./core/editor";
+export { setLocale, localeCode } from "./core/i18n";

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
   a1ToOdf,
+  createSheetEditor,
   odfToA1,
   readWorkbook,
   recalc,
@@ -976,5 +977,29 @@ describe("error surface", () => {
     // styles.xml is already the invalid "<<STYLES-MARKER>>" in the base fixture.
     const wb = readWorkbook(makeXlsx());
     expect(wb.sheets[0]!.cells.get("1:1")?.value).toBe("2");
+  });
+});
+
+describe("editor API", () => {
+  it("exposes markClean, isDirty and programmatic cell access", () => {
+    // jsdom has no ResizeObserver (the toolbar's relayout uses it); stub it for the mount.
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const ed = createSheetEditor(container, makeXlsx());
+    expect(ed.isDirty()).toBe(false);
+    expect(ed.getCellValue("A1")).toBe("2"); // makeXlsx A1 = 2
+    ed.setCellValue("A1", "9");
+    expect(ed.getCellValue("A1")).toBe("9");
+    expect(ed.isDirty()).toBe(true);
+    ed.markClean();
+    expect(ed.isDirty()).toBe(false);
+    expect(ed.getCellValue("Z99")).toBe(""); // empty/out of range
+    ed.destroy();
+    container.remove();
   });
 });

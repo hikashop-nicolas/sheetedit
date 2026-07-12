@@ -7,7 +7,7 @@ import { buildToolbar } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, Phonetic, Sheet, StyleChange, Workbook } from "./model";
-import { cellDisplay, colToLetters, ensureCell, getCell, key } from "./model";
+import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
@@ -33,6 +33,12 @@ export interface SheetEditor {
   /** The serialized text for text-backed workbooks (csv/tsv); null otherwise. */
   getText(): string | null;
   isDirty(): boolean;
+  /** Reset the dirty flag after the host has persisted getBytes()/getText(). */
+  markClean(): void;
+  /** Read a cell's value by A1 reference on the active sheet ("" if empty or out of range). */
+  getCellValue(ref: string): string;
+  /** Set a cell's value by A1 reference on the active sheet (recalculates and marks dirty). */
+  setCellValue(ref: string, value: string): void;
   destroy(): void;
 }
 
@@ -191,6 +197,9 @@ export function createSheetEditor(
       getBytes: () => Promise.resolve(original.slice()),
       getText: () => null,
       isDirty: () => false,
+      markClean: () => undefined,
+      getCellValue: () => "",
+      setCellValue: () => undefined,
       destroy() {
         errWrap.remove();
       },
@@ -1787,6 +1796,18 @@ export function createSheetEditor(
   return {
     isDirty() {
       return dirty;
+    },
+    markClean() {
+      dirty = false;
+    },
+    getCellValue(ref: string) {
+      const p = parseA1Ref(ref);
+      const sheet = wb.sheets[active];
+      return p && sheet ? (getCell(sheet, p.row, p.col)?.value ?? "") : "";
+    },
+    setCellValue(ref: string, value: string) {
+      const p = parseA1Ref(ref);
+      if (p) commitValue(p.row, p.col, String(value));
     },
     getText() {
       // No recalc needed: the model is recalculated after every edit, and CSV
