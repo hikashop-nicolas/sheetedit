@@ -6,7 +6,7 @@ import { setupFindBar } from "./ui/findbar";
 import { buildToolbar } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
-import type { Cell, Phonetic, Sheet, StyleChange, Workbook } from "./model";
+import type { Cell, CellStyle, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
@@ -89,6 +89,14 @@ export function injectStyles(): void {
     }
     .sheetedit-table td.has-ruby .sheetedit-ruby rt { font-size:0.6em; line-height:1; user-select:none; }
     .sheetedit-table td.has-ruby:focus-within .sheetedit-ruby { display:none; }
+    /* Wrap: a wrapping display overlay; the single-line input's text is hidden until focus. */
+    .sheetedit-table td.has-wrap { position:relative; }
+    .sheetedit-table td.has-wrap:not(:focus-within) input { color:transparent !important; }
+    .sheetedit-table td.has-wrap .sheetedit-cellwrap {
+      position:absolute; inset:0; padding:3px 8px; white-space:pre-wrap; word-break:break-word;
+      overflow:hidden; pointer-events:none; line-height:1.3; color:#1a1a1a;
+    }
+    .sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -1136,7 +1144,9 @@ export function createSheetEditor(
     recordCells([{ r, c }], () => setCellInput(sheet, r, c, raw));
     recalc(wb);
     mark();
-    refreshDisplays(sheet);
+    // A wrap cell's new text may change its row height (and its overlay); re-render to remeasure.
+    if (getCell(sheet, r, c)?.cellStyle?.wrap) renderGrid();
+    else refreshDisplays(sheet);
   };
 
   // Sigma / function insertion: with a selected row or column run and no edit in
@@ -1271,13 +1281,43 @@ export function createSheetEditor(
   let coveredSet = new Set<string>();
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
 
-  // Effective row height / column width: a hidden line collapses to zero, otherwise the
-  // file's custom size or the default. These drive the virtual size index and the DOM.
-  const effRowH = (sheet: Sheet, r: number): number => (sheet.hiddenRows?.has(r) ? 0 : (sheet.rowHeights?.get(r) ?? ROW_H));
+  // Wrap: computed extra height (px) so a wrapped cell's text fits, measured against the
+  // column width. Keyed by row for the active sheet; recomputed on render / resize / edit.
+  const wrapH = new Map<number, number>();
+  let measureEl: HTMLElement | null = null;
+  const measureWrap = (text: string, widthPx: number, cs: CellStyle | undefined): number => {
+    if (!measureEl) {
+      measureEl = document.createElement("div");
+      measureEl.style.cssText =
+        "position:absolute;visibility:hidden;left:-9999px;top:0;white-space:pre-wrap;word-break:break-word;padding:3px 8px;box-sizing:border-box;line-height:1.3;font:inherit;";
+      gridScroll.appendChild(measureEl);
+    }
+    measureEl.style.width = `${widthPx}px`;
+    measureEl.style.fontWeight = cs?.bold ? "700" : "";
+    measureEl.style.fontStyle = cs?.italic ? "italic" : "";
+    measureEl.style.fontSize = cs?.fontSize ? `${cs.fontSize}pt` : "";
+    measureEl.style.fontFamily = cs?.fontFamily ?? "";
+    measureEl.textContent = text || " ";
+    return measureEl.offsetHeight;
+  };
+  const computeWrapHeights = (sheet: Sheet): void => {
+    wrapH.clear();
+    for (const cell of sheet.cells.values()) {
+      if (!cell.cellStyle?.wrap || cell.value === "") continue;
+      if (sheet.hiddenRows?.has(cell.row) || sheet.hiddenCols?.has(cell.col)) continue;
+      const h = measureWrap(cellDisplay(cell) ?? cell.value, effColW(sheet, cell.col), cell.cellStyle) + 2; // gridline buffer
+      if (h > ROW_H) wrapH.set(cell.row, Math.max(wrapH.get(cell.row) ?? 0, h));
+    }
+  };
+
+  // Effective row height / column width: a hidden line collapses to zero; otherwise the
+  // file's custom size, a wrap-grown height, or the default. Drive the size index and the DOM.
+  const effRowH = (sheet: Sheet, r: number): number =>
+    sheet.hiddenRows?.has(r) ? 0 : Math.max(sheet.rowHeights?.get(r) ?? ROW_H, wrapH.get(r) ?? 0);
   const effColW = (sheet: Sheet, c: number): number => (sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? COL_W));
 
   const rebuildSizeIndexes = (sheet: Sheet) => {
-    heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? [])])].sort((a, b) => a - b);
+    heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? []), ...wrapH.keys()])].sort((a, b) => a - b);
     heightPrefix = [0];
     for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (effRowH(sheet, r) - ROW_H));
     widthCols = [...new Set([...(sheet.colWidths?.keys() ?? []), ...(sheet.hiddenCols ?? [])])].sort((a, b) => a - b);
@@ -1460,6 +1500,22 @@ export function createSheetEditor(
       if (cell?.phonetic?.length) {
         td.classList.add("has-ruby");
         td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
+      } else if (cell?.cellStyle?.wrap && cell.value !== "") {
+        // Wrap: the single-line input can't wrap, so show a wrapping display overlay (hidden
+        // while editing). The row was grown to fit by computeWrapHeights.
+        td.classList.add("has-wrap");
+        const ov = document.createElement("div");
+        ov.className = "sheetedit-cellwrap";
+        ov.setAttribute("aria-hidden", "true");
+        ov.textContent = cellDisplay(cell);
+        const cs = cell.cellStyle;
+        if (cs.align) ov.style.textAlign = cs.align;
+        if (cs.color) ov.style.color = cs.color;
+        if (cs.bold) ov.style.fontWeight = "700";
+        if (cs.italic) ov.style.fontStyle = "italic";
+        if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+        if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
+        td.appendChild(ov);
       }
       inputs.set(ki, input);
       return td;
@@ -1764,6 +1820,7 @@ export function createSheetEditor(
     totalCols = Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols;
     renderedRows = totalRows;
     renderedCols = totalCols;
+    computeWrapHeights(sheet); // measure wrap cells so rows grow to fit
     rebuildSizeIndexes(sheet);
 
     // Merged ranges: the top-left cell spans; covered cells are not rendered.
