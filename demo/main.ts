@@ -8,13 +8,10 @@ const editorEl = document.getElementById("editor") as HTMLElement;
 let editor: SheetEditor | null = null;
 let filename = "edited.xlsx";
 
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files?.[0];
-  if (!file) return;
-  filename = file.name;
+function loadBytes(bytes: Uint8Array, name: string): void {
+  filename = name;
   editor?.destroy();
   editorEl.innerHTML = "";
-  const bytes = new Uint8Array(await file.arrayBuffer());
   try {
     editor = createSheetEditor(editorEl, bytes, {
       onChange: () => {
@@ -27,7 +24,21 @@ fileInput.addEventListener("change", async () => {
   } catch (e) {
     statusEl.textContent = "could not open: " + (e as Error).message;
   }
+}
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  loadBytes(new Uint8Array(await file.arrayBuffer()), file.name);
 });
+
+// ?src=<url> loads a spreadsheet on startup (handy for quick tests).
+const src = new URLSearchParams(location.search).get("src");
+if (src) {
+  fetch(src)
+    .then(async (r) => loadBytes(new Uint8Array(await r.arrayBuffer()), src.split("/").pop() ?? "remote.xlsx"))
+    .catch((e) => (statusEl.textContent = "could not fetch: " + (e as Error).message));
+}
 
 saveBtn.addEventListener("click", async () => {
   if (!editor) return;
