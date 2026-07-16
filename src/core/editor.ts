@@ -1630,8 +1630,10 @@ export function createSheetEditor(
   const renderWindowInner = (force: boolean, yAt?: number, xAt?: number): void => {
     const sheet = wb.sheets[active]!;
     const tableEl = tableElRef!;
-    const y = yAt ?? gridScroll.scrollTop;
-    const x = Math.max(0, (xAt ?? gridScroll.scrollLeft) - rnW()); // grid area starts after the row-number column
+    const keepTop = gridScroll.scrollTop;
+    const keepLeft = gridScroll.scrollLeft;
+    const y = yAt ?? keepTop;
+    const x = Math.max(0, (xAt ?? keepLeft) - rnW()); // grid area starts after the row-number column
     let r1 = Math.max(1, lineAt(y, totalRows, yOfRow) - OVERSCAN);
     let r2 = Math.min(totalRows, lineAt(y + viewportH(), totalRows, yOfRow) + OVERSCAN);
     let c1 = Math.max(1, lineAt(x, totalCols, xOfCol) - OVERSCAN_COLS);
@@ -1742,8 +1744,9 @@ export function createSheetEditor(
     head.appendChild(document.createElement("th")); // right spacer
     tableEl.appendChild(head);
 
-    // Frozen rows stick just below the header; measure the header height once for the offset.
-    const fz = { fr, fc, headerH: head.offsetHeight || 0 };
+    // Frozen rows stick just below the header; measure the header height only when
+    // needed (the read forces a layout on the still-empty table).
+    const fz = { fr, fc, headerH: fr > 0 ? head.offsetHeight || 0 : 0 };
 
     const cellCols = fc + (c2 - ec1 + 1) + 3; // rownum + frozen cols + spacer + window + spacer
     for (let r = 1; r <= fr; r++) if (!sheet.hiddenRows?.has(r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
@@ -1761,6 +1764,11 @@ export function createSheetEditor(
     winR2 = r2;
     winC1 = c1;
     winC2 = c2;
+
+    // Any layout forced while the table was empty clamps the scroll position to 0;
+    // the spacers are back, so put it back too.
+    if (gridScroll.scrollTop !== keepTop) gridScroll.scrollTop = keepTop;
+    if (gridScroll.scrollLeft !== keepLeft) gridScroll.scrollLeft = keepLeft;
 
     if (pin) {
       const inp = inputs.get(key(pin.r, pin.c));
