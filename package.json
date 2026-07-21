@@ -28,7 +28,8 @@
   },
   "dependencies": {
     "fast-formula-parser": "^1.0.19",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "localml": "github:hikashop-nicolas/localml"
   },
   "devDependencies": {
     "cypress": "^15.17.0",

@@ -16,11 +16,16 @@ export interface FormulaBar {
   setHint(msg: string | null): void;
 }
 
+const SPARKLE = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5l1.1 2.9L12 6.5 9.1 7.6 8 10.5 6.9 7.6 4 6.5l2.9-1.1z"/><path d="M12.5 11l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></svg>`;
+
 export function createFormulaBar(opts: {
   onInput(value: string): void;
   onEnter(value: string): void;
   onEscape(): void;
   onFn(fn: string): void;
+  /** When provided, an on-device "help me write a formula" button is shown; it calls this
+      with its own element so the caller can anchor a popover under it. */
+  onAssist?(anchor: HTMLElement): void;
 }): FormulaBar {
   const el = document.createElement("div");
   el.className = "sheetedit-fxbar";
@@ -96,6 +101,17 @@ export function createFormulaBar(opts: {
   const fxwrap = document.createElement("span");
   fxwrap.className = "sheetedit-fxbtns";
   fxwrap.append(sum, more, menu);
+  if (opts.onAssist) {
+    const assist = document.createElement("button");
+    assist.type = "button";
+    assist.className = "sheetedit-btn sheetedit-fxassist";
+    assist.innerHTML = SPARKLE;
+    assist.title = t("fxAssist");
+    assist.setAttribute("aria-label", t("fxAssist"));
+    assist.addEventListener("mousedown", (e) => e.preventDefault());
+    assist.addEventListener("click", () => opts.onAssist!(assist));
+    fxwrap.append(assist);
+  }
   el.append(ref, fxwrap, input);
 
   return {

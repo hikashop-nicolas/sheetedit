@@ -2,6 +2,7 @@ import { t } from "./i18n";
 import { hasTimeFmt, isDateFmt, isTimeOnlyFmt, serialToEditText } from "./dates";
 import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
+import { setupFormulaAssist } from "./ui/formula-assist";
 import { setupFindBar } from "./ui/findbar";
 import { buildToolbar } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
@@ -165,6 +166,19 @@ export function injectStyles(): void {
     .sheetedit-fxinput { flex:1; min-width:60px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:4px 8px; }
     .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:var(--sheetedit-accent, #4f8ef7); }
     .sheetedit-fxmenu[hidden], .sheetedit-tb-groupmenu[hidden] { display:none; }
+    .sheetedit-fxassist { display:inline-flex; align-items:center; justify-content:center; }
+    .sheetedit-fxa-pop { position:absolute; z-index:40; width:min(380px,92%); box-sizing:border-box; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e7eaf0); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:12px; display:flex; flex-direction:column; gap:8px; font:13px/1.4 system-ui,sans-serif; }
+    .sheetedit-fxa-pop[hidden] { display:none; }
+    .sheetedit-fxa-title { font-weight:600; font-size:14px; }
+    .sheetedit-fxa-desc { width:100%; box-sizing:border-box; resize:vertical; padding:7px; border:1px solid var(--sheetedit-btn, #3a4047); border-radius:6px; background:var(--sheetedit-chrome2, #23262c); color:var(--sheetedit-text, #e7eaf0); font:inherit; }
+    .sheetedit-fxa-progress { color:var(--sheetedit-muted, #aab2bf); font-size:12px; min-height:15px; }
+    .sheetedit-fxa-rlabel { display:flex; flex-direction:column; gap:4px; color:var(--sheetedit-muted, #aab2bf); font-size:12px; }
+    .sheetedit-fxa-result { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--sheetedit-btn, #3a4047); border-radius:6px; background:var(--sheetedit-border, #1c1f24); color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; }
+    .sheetedit-fxa-actions { display:flex; gap:8px; justify-content:flex-end; }
+    .sheetedit-fxa-btn { padding:6px 14px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:7px; background:var(--sheetedit-chrome2, #23262c); color:var(--sheetedit-text, #e7eaf0); font:inherit; cursor:pointer; }
+    .sheetedit-fxa-btn:hover:not(:disabled) { border-color:var(--sheetedit-accent, #6e7bff); }
+    .sheetedit-fxa-btn.is-primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    .sheetedit-fxa-btn:disabled { opacity:.45; cursor:default; }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
@@ -280,7 +294,10 @@ export function createSheetEditor(
       if (ip) ip.value = displayValue(wb.sheets[active]!, activeCell.r, activeCell.c);
     },
     onFn: (fn) => applyFn(fn),
+    onAssist: (anchor) => formulaAssist?.open(anchor),
   });
+  // Wired up once commitValue/context helpers below exist (the button only fires on click).
+  let formulaAssist: { open(anchor: HTMLElement): void } | null = null;
   fxbar.input.addEventListener("pointerdown", () => {
     barGrab = true;
   });
@@ -1151,6 +1168,29 @@ export function createSheetEditor(
     if (getCell(sheet, r, c)?.cellStyle?.wrap) renderGrid();
     else refreshDisplays(sheet);
   };
+
+  // On-device formula assistant: the fx-bar sparkle opens a popover that turns a plain-language
+  // request into a formula (via localml) and, on Insert, writes it into the active cell.
+  const assistTarget = () => activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: 1 });
+  formulaAssist = setupFormulaAssist({
+    wrap,
+    getContext: () => {
+      const sheet = wb.sheets[active]!;
+      const headers: { col: string; name: string }[] = [];
+      for (let c = 1; c <= Math.min(sheet.maxCol, 26); c++) {
+        const v = getCell(sheet, 1, c)?.value;
+        if (v != null && String(v).trim()) headers.push({ col: colToLetters(c), name: String(v).slice(0, 24) });
+      }
+      const tgt = assistTarget();
+      return { cell: `${colToLetters(tgt.c)}${tgt.r}`, headers };
+    },
+    onAccept: (formula) => {
+      const tgt = assistTarget();
+      commitValue(tgt.r, tgt.c, formula);
+      renderGrid();
+      fxbar.setValue(formula);
+    },
+  });
 
   // Sigma / function insertion: with a selected row or column run and no edit in
   // progress, write =FN(range) into the cell after the run; otherwise switch to
