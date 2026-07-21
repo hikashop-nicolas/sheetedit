@@ -105,6 +105,16 @@ describe("Power Query integration (fixture workbook)", () => {
     expect(readWorkbookQueries(wb2.files)!.mashup.sectionM).toBe(q.mashup.sectionM);
   });
 
+  it("sniffs a REAL Excel workbook (UTF-16 DataMashup item) and reads its queries", async () => {
+    const { readFileSync } = await import("node:fs");
+    const real = new Uint8Array(readFileSync(new URL("../../../test/fixtures/msft-simple-query.xlsx", import.meta.url)));
+    const wb = readWorkbook(real);
+    expect(wb.kind).toBe("xlsx");
+    expect(workbookHasQueries(wb.files)).toBe(true);
+    const q = readWorkbookQueries(wb.files);
+    expect(q?.mashup.sectionM).toContain("shared Query1");
+  });
+
   it("shrink: a smaller result clears stale rows and shrinks the ref", async () => {
     const wb = readWorkbook(fixtureBytes());
     const tables = listWorkbookTables(wb);

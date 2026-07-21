@@ -24,10 +24,18 @@ export interface WorkbookTable {
 
 type MTable = Extract<MValue, { kind: "table" }>;
 
-/** Cheap sniff: does this workbook embed Power Query definitions (a DataMashup item)? */
+/** Cheap sniff: does this workbook embed Power Query definitions (a DataMashup item)?
+    Real Excel writes the item as UTF-16 LE (BOM FF FE); synthetic/other producers use
+    UTF-8 - decode accordingly (mirrors mlang/qdeff's decodeOoxmlText, duplicated here so
+    the base bundle needs no mlang import). */
 export function workbookHasQueries(files: Record<string, Uint8Array>): boolean {
   for (const [path, data] of Object.entries(files)) {
-    if (/^customXml\/item\d+\.xml$/i.test(path) && strFromU8(data).includes("DataMashup")) return true;
+    if (!/^customXml\/item\d+\.xml$/i.test(path)) continue;
+    const xml =
+      data.length >= 2 && data[0] === 0xff && data[1] === 0xfe
+        ? new TextDecoder("utf-16le").decode(data.subarray(2))
+        : strFromU8(data);
+    if (xml.includes("DataMashup")) return true;
   }
   return false;
 }
