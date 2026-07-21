@@ -194,6 +194,7 @@ export function injectStyles(): void {
     .sheetedit-qp-status { color:var(--sheetedit-muted, #aab2bf); font-size:12px; min-height:14px; }
     .sheetedit-qp-m { margin:0; max-height:180px; overflow:auto; padding:7px 9px; border-radius:6px; background:var(--sheetedit-border, #1c1f24); color:var(--sheetedit-text, #e7eaf0); font:12px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
     .sheetedit-qp-note { color:var(--sheetedit-muted, #aab2bf); font-size:11px; }
+    .sheetedit-qp-attach { display:inline-block; margin:4px 0; font-size:11px; color:var(--sheetedit-accent, #6cf); cursor:pointer; }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }

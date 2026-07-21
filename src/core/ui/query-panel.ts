@@ -32,7 +32,23 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
   const note = document.createElement("div");
   note.className = "sheetedit-qp-note";
   note.textContent = t("queriesNote");
-  pop.append(title, body, note);
+  // Files the user attaches for File.Contents("name") to read, keyed by filename.
+  const attachedFiles: Record<string, Uint8Array> = {};
+  const attach = document.createElement("label");
+  attach.className = "sheetedit-qp-attach";
+  attach.textContent = t("queryAttach");
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.multiple = true;
+  fileInput.hidden = true;
+  fileInput.addEventListener("change", async () => {
+    for (const f of Array.from(fileInput.files ?? [])) attachedFiles[f.name] = new Uint8Array(await f.arrayBuffer());
+    const names = Object.keys(attachedFiles);
+    attach.textContent = names.length ? t("queryAttached", { names: names.join(", ") }) : t("queryAttach");
+    fileInput.value = "";
+  });
+  attach.appendChild(fileInput);
+  pop.append(title, body, attach, note);
   wrap.appendChild(pop);
 
   let anchor: HTMLElement | null = null;
@@ -92,10 +108,10 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
       refreshBtn.disabled = true;
       status.textContent = t("queryRunning");
       try {
-        const { evaluateSection } = await import("mlang");
+        const { evaluateSection, asyncConnector } = await import("mlang");
         // Host: every workbook table, exposed the way Excel.CurrentWorkbook does.
         const tables = listWorkbookTables(wb);
-        const host = {
+        const host: Record<string, MValue> = {
           "Excel.CurrentWorkbook": {
             kind: "function" as const,
             name: "Excel.CurrentWorkbook",
@@ -106,9 +122,24 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
               rows: tables.map((tb) => [{ kind: "text", value: tb.displayName } as MValue, tableValue(wb, tb) as MValue]),
             }),
           } as MValue,
+          // Browser connectors: fetch a URL (CORS-permitting) and read attached files. Both
+          // return an mlang binary that composes with Csv/Json/Xml/Excel.Workbook.
+          "Web.Contents": asyncConnector("Web.Contents", async (args) => {
+            const url = (args[0] as { value: string }).value;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new (await import("mlang")).MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
+            return { kind: "binary", bytes: new Uint8Array(await resp.arrayBuffer()) } as MValue;
+          }) as MValue,
+          "File.Contents": asyncConnector("File.Contents", async (args) => {
+            const path = (args[0] as { value: string }).value;
+            const key = path.split(/[\\/]/).pop() ?? path;
+            const file = attachedFiles[key] ?? attachedFiles[path];
+            if (!file) throw new (await import("mlang")).MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
+            return { kind: "binary", bytes: file } as MValue;
+          }) as MValue,
         };
         const section = await evaluateSection(sectionM, host);
-        const result = section.run(name);
+        const result = await section.run(name);
         if (result.kind !== "table") {
           status.textContent = t("queryNotTable", { kind: result.kind });
           return;

@@ -61,7 +61,7 @@ describe("Power Query integration (fixture workbook)", () => {
     };
     const section = await evaluateSection(q.mashup.sectionM, host);
     expect(section.names).toEqual(["Output"]);
-    const result = section.run("Output");
+    const result = await section.run("Output");
     if (result.kind !== "table") throw new Error("expected a table");
     expect(result.columns).toEqual(["Product", "Quantity", "Total"]);
     expect(result.rows.map((r) => r.map((v) => (v.kind === "text" ? v.value : v.kind === "number" ? v.value : null)))).toEqual([
@@ -109,12 +109,24 @@ describe("Power Query integration (fixture workbook)", () => {
     const { isMissingConnector, missingConnectorName } = await import("mlang");
     const section = await evaluateSection(`section Section1;\nshared Q = Web.Contents("https://x");`, {});
     try {
-      section.run("Q");
+      await section.run("Q");
       throw new Error("should have thrown");
     } catch (e) {
       expect(isMissingConnector(e)).toBe(true);
       expect(missingConnectorName(e as never)).toBe("Web.Contents");
     }
+  });
+
+  it("a host Web.Contents connector feeds a query (async resolve-by-replay)", async () => {
+    const { evaluateSection: evalSec, asyncConnector, toJS } = await import("mlang");
+    const host = {
+      "Web.Contents": asyncConnector("Web.Contents", async () => ({ kind: "binary" as const, bytes: new TextEncoder().encode("Name,Qty\nApples,10") })),
+    };
+    const m = `section Section1;\nshared Q = Table.PromoteHeaders(Csv.Document(Web.Contents("https://x/d.csv")));`;
+    const section = await evalSec(m, host);
+    const out = toJS(await section.run("Q")) as { columns: string[]; rows: unknown[][] };
+    expect(out.columns).toEqual(["Name", "Qty"]);
+    expect(out.rows).toEqual([["Apples", "10"]]);
   });
 
   it("sniffs a REAL Excel workbook (UTF-16 DataMashup item) and reads its queries", async () => {
