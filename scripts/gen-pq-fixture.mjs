@@ -167,10 +167,44 @@ export function buildWebPqXlsx() {
   });
 }
 
+// An OData.Feed variant: Output = OData.Feed("/odata-sales.json") expanded to a table.
+const ODATA_SECTION_M = `section Section1;
+
+shared Output = let
+    Source = OData.Feed("/odata-sales.json"),
+    Typed = Table.TransformColumnTypes(Source, {{"Quantity", type number}, {"Total", type number}}),
+    Sorted = Table.Sort(Typed, {{"Total", 1}})
+in
+    Sorted;
+`;
+
+export function buildODataPqXlsx() {
+  const mashup = buildDataMashup(ODATA_SECTION_M);
+  const itemXml =
+    '<?xml version="1.0" encoding="utf-8"?>' +
+    `<DataMashup xmlns="http://schemas.microsoft.com/DataMashup">${b64(mashup)}</DataMashup>`;
+  return zipSync({
+    "[Content_Types].xml": strToU8(CT),
+    "_rels/.rels": strToU8(ROOT_RELS),
+    "xl/workbook.xml": strToU8(WORKBOOK),
+    "xl/_rels/workbook.xml.rels": strToU8(WORKBOOK_RELS),
+    "xl/worksheets/sheet1.xml": strToU8(SHEET),
+    "xl/worksheets/_rels/sheet1.xml.rels": strToU8(SHEET_RELS),
+    "xl/tables/table1.xml": strToU8(tableXml(1, "Sales", "B2:D5", ["Product", "Qty", "Price"])),
+    "xl/tables/table2.xml": strToU8(tableXml(2, "Output", "F2:H3", ["Product", "Quantity", "Total"])),
+    "customXml/item1.xml": strToU8(itemXml),
+  });
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { writeFileSync } = await import("node:fs");
   writeFileSync(new URL("../demo/pq-sales.xlsx", import.meta.url), buildPqXlsx());
   writeFileSync(new URL("../demo/pq-web.xlsx", import.meta.url), buildWebPqXlsx());
   writeFileSync(new URL("../demo/web-sales.csv", import.meta.url), "Product,Quantity,Total\nCherries,20,100\nApples,10,25\n");
-  console.log("wrote demo/pq-sales.xlsx, demo/pq-web.xlsx, demo/web-sales.csv");
+  writeFileSync(new URL("../demo/pq-odata.xlsx", import.meta.url), buildODataPqXlsx());
+  writeFileSync(
+    new URL("../demo/odata-sales.json", import.meta.url),
+    JSON.stringify({ "@odata.context": "$metadata#Sales", value: [{ Product: "Cherries", Quantity: 20, Total: 100 }, { Product: "Apples", Quantity: 10, Total: 25 }] }, null, 2),
+  );
+  console.log("wrote demo/pq-sales.xlsx, demo/pq-web.xlsx, demo/web-sales.csv, demo/pq-odata.xlsx, demo/odata-sales.json");
 }

@@ -1,0 +1,15 @@
+{
+  "@odata.context": "$metadata#Sales",
+  "value": [
+    {
+      "Product": "Cherries",
+      "Quantity": 20,
+      "Total": 100
+    },
+    {
+      "Product": "Apples",
+      "Quantity": 10,
+      "Total": 25
+    }
+  ]
+}

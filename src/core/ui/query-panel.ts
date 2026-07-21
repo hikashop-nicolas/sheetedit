@@ -108,7 +108,9 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
       refreshBtn.disabled = true;
       status.textContent = t("queryRunning");
       try {
-        const { evaluateSection, asyncConnector } = await import("mlang");
+        const mlang = await import("mlang");
+        const { evaluateSection, asyncConnector, tableFromJson, MError } = mlang;
+        const urlOf = (args: MValue[]): string => (args[0] as { value: string }).value;
         // Host: every workbook table, exposed the way Excel.CurrentWorkbook does.
         const tables = listWorkbookTables(wb);
         const host: Record<string, MValue> = {
@@ -125,18 +127,50 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
           // Browser connectors: fetch a URL (CORS-permitting) and read attached files. Both
           // return an mlang binary that composes with Csv/Json/Xml/Excel.Workbook.
           "Web.Contents": asyncConnector("Web.Contents", async (args) => {
-            const url = (args[0] as { value: string }).value;
+            const url = urlOf(args);
             const resp = await fetch(url);
-            if (!resp.ok) throw new (await import("mlang")).MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
+            if (!resp.ok) throw new MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
             return { kind: "binary", bytes: new Uint8Array(await resp.arrayBuffer()) } as MValue;
           }) as MValue,
+          // Web.Page: fetch a page as HTML text, for Html.Table to consume.
+          "Web.Page": asyncConnector("Web.Page", async (args) => {
+            const url = urlOf(args);
+            const resp = await fetch(url);
+            if (!resp.ok) throw new MError("DataSource.Error", `Web.Page: ${resp.status} ${resp.statusText} for ${url}`);
+            return { kind: "text", value: await resp.text() } as MValue;
+          }) as MValue,
+          // OData.Feed: fetch the JSON feed and expand its `value` array to a table, following
+          // @odata.nextLink for server-side paging.
+          "OData.Feed": asyncConnector("OData.Feed", async (args) => {
+            const records: unknown[] = [];
+            let next: string | null = urlOf(args);
+            for (let page = 0; next && page < 100; page++) {
+              const resp: Response = await fetch(next, { headers: { Accept: "application/json" } });
+              if (!resp.ok) throw new MError("DataSource.Error", `OData.Feed: ${resp.status} ${resp.statusText} for ${next}`);
+              const body = (await resp.json()) as { value?: unknown[]; "@odata.nextLink"?: string };
+              records.push(...(Array.isArray(body.value) ? body.value : [body]));
+              next = body["@odata.nextLink"] ?? null;
+            }
+            return tableFromJson(records) as MValue;
+          }) as MValue,
           "File.Contents": asyncConnector("File.Contents", async (args) => {
-            const path = (args[0] as { value: string }).value;
+            const path = urlOf(args);
             const key = path.split(/[\\/]/).pop() ?? path;
             const file = attachedFiles[key] ?? attachedFiles[path];
-            if (!file) throw new (await import("mlang")).MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
+            if (!file) throw new MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
             return { kind: "binary", bytes: file } as MValue;
           }) as MValue,
+          // Folder.Files over the attached-file set: [Content, Name, Extension].
+          "Folder.Files": asyncConnector("Folder.Files", () =>
+            Promise.resolve({
+              kind: "table",
+              columns: ["Content", "Name", "Extension"],
+              rows: Object.entries(attachedFiles).map(([nm, bytes]) => [
+                { kind: "binary", bytes } as MValue,
+                { kind: "text", value: nm } as MValue,
+                { kind: "text", value: nm.includes(".") ? `.${nm.split(".").pop()}` : "" } as MValue,
+              ]),
+            } as MValue)) as MValue,
         };
         const section = await evaluateSection(sectionM, host);
         const result = await section.run(name);

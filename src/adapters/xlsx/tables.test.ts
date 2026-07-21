@@ -129,6 +129,30 @@ describe("Power Query integration (fixture workbook)", () => {
     expect(out.rows).toEqual([["Apples", "10"]]);
   });
 
+  it("a host OData.Feed connector expands the value array (with paging)", async () => {
+    const { evaluateSection: evalSec, asyncConnector, tableFromJson, toJS } = await import("mlang");
+    const pages: Record<string, { value: unknown[]; "@odata.nextLink"?: string }> = {
+      "svc/Products": { value: [{ ID: 1, Name: "Bread" }], "@odata.nextLink": "svc/Products?skip=1" },
+      "svc/Products?skip=1": { value: [{ ID: 2, Name: "Milk" }] },
+    };
+    const host = {
+      "OData.Feed": asyncConnector("OData.Feed", async (args) => {
+        const records: unknown[] = [];
+        let next: string | null = (args[0] as { value: string }).value;
+        while (next) {
+          const body = pages[next]!;
+          records.push(...body.value);
+          next = body["@odata.nextLink"] ?? null;
+        }
+        return tableFromJson(records);
+      }),
+    };
+    const section = await evalSec(`section Section1;\nshared Q = OData.Feed("svc/Products");`, host);
+    const out = toJS(await section.run("Q")) as { columns: string[]; rows: unknown[][] };
+    expect(out.columns).toEqual(["ID", "Name"]);
+    expect(out.rows).toEqual([[1, "Bread"], [2, "Milk"]]);
+  });
+
   it("sniffs a REAL Excel workbook (UTF-16 DataMashup item) and reads its queries", async () => {
     const { readFileSync } = await import("node:fs");
     // cwd-relative: this suite runs under jsdom, where import.meta.url is not file://.
