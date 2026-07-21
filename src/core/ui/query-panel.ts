@@ -17,6 +17,8 @@ export interface QueryPanelDeps {
   wb: Workbook;
   /** Apply a refreshed result to its destination table (undo/recalc/redraw are the host's). */
   apply(target: WorkbookTable, result: MTable): { rows: number };
+  /** Mark the workbook edited (so a save includes the rewritten query definitions). */
+  markEdited?(): void;
 }
 
 export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElement): void } {
@@ -92,17 +94,43 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
     label.textContent = name;
     const refreshBtn = btn(t("queryRefresh"), () => void refresh());
     const viewBtn = btn("M", () => {
-      pre.hidden = !pre.hidden;
+      editorBox.hidden = !editorBox.hidden;
     });
     viewBtn.title = t("queryViewM");
     head.append(label, refreshBtn, viewBtn);
     const status = document.createElement("div");
     status.className = "sheetedit-qp-status";
-    const pre = document.createElement("pre");
-    pre.className = "sheetedit-qp-m";
-    pre.textContent = sectionM;
-    pre.hidden = true;
-    el.append(head, status, pre);
+
+    // Editable M: the whole Section1.m (all queries). Saving rewrites the DataMashup blob.
+    const editorBox = document.createElement("div");
+    editorBox.className = "sheetedit-qp-medit";
+    editorBox.hidden = true;
+    const area = document.createElement("textarea");
+    area.className = "sheetedit-qp-m";
+    area.value = sectionM;
+    area.spellcheck = false;
+    const saveBtn = btn(t("querySaveM"), () => void saveM());
+    editorBox.append(area, saveBtn);
+    el.append(head, status, editorBox);
+
+    async function saveM(): Promise<void> {
+      saveBtn.disabled = true;
+      status.textContent = t("querySaving");
+      try {
+        const newM = area.value;
+        const { evaluateSection } = await import("mlang");
+        await evaluateSection(newM, {}); // parse-check: reject invalid M before writing
+        const { writeWorkbookSectionM } = await import("mlang/qdeff");
+        wb.files = writeWorkbookSectionM(wb.files, newM);
+        deps.markEdited?.();
+        status.textContent = t("querySaved");
+        await load(); // relist queries from the new section
+      } catch (e) {
+        status.textContent = t("querySaveError", { msg: (e as Error).message });
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
 
     async function refresh(): Promise<void> {
       refreshBtn.disabled = true;

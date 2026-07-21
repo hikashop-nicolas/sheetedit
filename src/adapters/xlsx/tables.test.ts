@@ -129,6 +129,22 @@ describe("Power Query integration (fixture workbook)", () => {
     expect(out.rows).toEqual([["Apples", "10"]]);
   });
 
+  it("edits Section1.m and the saved workbook carries the new query definition", async () => {
+    const { writeWorkbookSectionM, readWorkbookQueries } = await import("mlang/qdeff");
+    const wb = readWorkbook(fixtureBytes());
+    const original = readWorkbookQueries(wb.files)!;
+    const NEW = original.mashup.sectionM.replace("[Qty] > 5", "[Qty] > 100");
+    wb.files = writeWorkbookSectionM(wb.files, NEW);
+    // Persist and reopen: the edited M survives the save round trip.
+    const { writeWorkbookAsync } = await import("../../core/workbook");
+    const saved = await writeWorkbookAsync(wb);
+    const reopened = readWorkbook(saved);
+    const q = readWorkbookQueries(reopened.files)!;
+    expect(q.mashup.sectionM).toContain("[Qty] > 100");
+    expect(q.mashup.sectionM).not.toContain("[Qty] > 5");
+    expect(workbookHasQueries(reopened.files)).toBe(true);
+  });
+
   it("a host OData.Feed connector expands the value array (with paging)", async () => {
     const { evaluateSection: evalSec, asyncConnector, tableFromJson, toJS } = await import("mlang");
     const pages: Record<string, { value: unknown[]; "@odata.nextLink"?: string }> = {

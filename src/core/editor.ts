@@ -195,6 +195,9 @@ export function injectStyles(): void {
     .sheetedit-qp-m { margin:0; max-height:180px; overflow:auto; padding:7px 9px; border-radius:6px; background:var(--sheetedit-border, #1c1f24); color:var(--sheetedit-text, #e7eaf0); font:12px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
     .sheetedit-qp-note { color:var(--sheetedit-muted, #aab2bf); font-size:11px; }
     .sheetedit-qp-attach { display:inline-block; margin:4px 0; font-size:11px; color:var(--sheetedit-accent, #6cf); cursor:pointer; }
+    .sheetedit-qp-medit { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+    .sheetedit-qp-medit textarea.sheetedit-qp-m { width:100%; min-height:140px; box-sizing:border-box; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; white-space:pre; resize:vertical; }
+    .sheetedit-qp-medit button { align-self:flex-start; }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
@@ -966,6 +969,7 @@ export function createSheetEditor(
         renderGrid();
         return { rows: result.rows.length };
       },
+      markEdited: () => mark(),
     });
     const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
     const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
