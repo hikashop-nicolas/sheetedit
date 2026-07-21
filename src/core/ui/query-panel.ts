@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { highlightM } from "./m-highlight";
-import { listWorkbookTables, tableForQuery, tableValue, type WorkbookTable } from "../../adapters/xlsx/tables";
+import { listWorkbookTables, refreshOnLoadQueries, tableForQuery, tableValue, type WorkbookTable } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
 
@@ -16,13 +16,14 @@ type MTable = Extract<MValue, { kind: "table" }>;
 export interface QueryPanelDeps {
   wrap: HTMLElement; // positioned editor chrome (popover parent; toolbar clips)
   wb: Workbook;
-  /** Apply a refreshed result to its destination table (undo/recalc/redraw are the host's). */
-  apply(target: WorkbookTable, result: MTable): { rows: number };
+  /** Apply a refreshed result to its destination table (undo/recalc/redraw are the host's).
+      `silent` (on-open auto-refresh) means don't mark the workbook edited or add an undo step. */
+  apply(target: WorkbookTable, result: MTable, opts?: { silent?: boolean }): { rows: number };
   /** Mark the workbook edited (so a save includes the rewritten query definitions). */
   markEdited?(): void;
 }
 
-export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElement): void } {
+export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElement): void; runOnLoad(): Promise<void> } {
   const { wrap, wb } = deps;
   const pop = document.createElement("div");
   pop.className = "sheetedit-qp-pop";
@@ -155,83 +156,10 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
       refreshBtn.disabled = true;
       status.textContent = t("queryRunning");
       try {
-        const mlang = await import("mlang");
-        const { evaluateSection, asyncConnector, tableFromJson, MError } = mlang;
-        const urlOf = (args: MValue[]): string => (args[0] as { value: string }).value;
-        // Host: every workbook table, exposed the way Excel.CurrentWorkbook does.
-        const tables = listWorkbookTables(wb);
-        const host: Record<string, MValue> = {
-          "Excel.CurrentWorkbook": {
-            kind: "function" as const,
-            name: "Excel.CurrentWorkbook",
-            params: [],
-            call: (): MValue => ({
-              kind: "table",
-              columns: ["Name", "Content"],
-              rows: tables.map((tb) => [{ kind: "text", value: tb.displayName } as MValue, tableValue(wb, tb) as MValue]),
-            }),
-          } as MValue,
-          // Browser connectors: fetch a URL (CORS-permitting) and read attached files. Both
-          // return an mlang binary that composes with Csv/Json/Xml/Excel.Workbook.
-          "Web.Contents": asyncConnector("Web.Contents", async (args) => {
-            const url = urlOf(args);
-            const resp = await fetch(url);
-            if (!resp.ok) throw new MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
-            return { kind: "binary", bytes: new Uint8Array(await resp.arrayBuffer()) } as MValue;
-          }) as MValue,
-          // Web.Page: fetch a page as HTML text, for Html.Table to consume.
-          "Web.Page": asyncConnector("Web.Page", async (args) => {
-            const url = urlOf(args);
-            const resp = await fetch(url);
-            if (!resp.ok) throw new MError("DataSource.Error", `Web.Page: ${resp.status} ${resp.statusText} for ${url}`);
-            return { kind: "text", value: await resp.text() } as MValue;
-          }) as MValue,
-          // OData.Feed: fetch the JSON feed and expand its `value` array to a table, following
-          // @odata.nextLink for server-side paging.
-          "OData.Feed": asyncConnector("OData.Feed", async (args) => {
-            const records: unknown[] = [];
-            let next: string | null = urlOf(args);
-            for (let page = 0; next && page < 100; page++) {
-              const resp: Response = await fetch(next, { headers: { Accept: "application/json" } });
-              if (!resp.ok) throw new MError("DataSource.Error", `OData.Feed: ${resp.status} ${resp.statusText} for ${next}`);
-              const body = (await resp.json()) as { value?: unknown[]; "@odata.nextLink"?: string };
-              records.push(...(Array.isArray(body.value) ? body.value : [body]));
-              next = body["@odata.nextLink"] ?? null;
-            }
-            return tableFromJson(records) as MValue;
-          }) as MValue,
-          "File.Contents": asyncConnector("File.Contents", async (args) => {
-            const path = urlOf(args);
-            const key = path.split(/[\\/]/).pop() ?? path;
-            const file = attachedFiles[key] ?? attachedFiles[path];
-            if (!file) throw new MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
-            return { kind: "binary", bytes: file } as MValue;
-          }) as MValue,
-          // Folder.Files over the attached-file set: [Content, Name, Extension].
-          "Folder.Files": asyncConnector("Folder.Files", () =>
-            Promise.resolve({
-              kind: "table",
-              columns: ["Content", "Name", "Extension"],
-              rows: Object.entries(attachedFiles).map(([nm, bytes]) => [
-                { kind: "binary", bytes } as MValue,
-                { kind: "text", value: nm } as MValue,
-                { kind: "text", value: nm.includes(".") ? `.${nm.split(".").pop()}` : "" } as MValue,
-              ]),
-            } as MValue)) as MValue,
-        };
-        const section = await evaluateSection(sectionM, host);
-        const result = await section.run(name);
-        if (result.kind !== "table") {
-          status.textContent = t("queryNotTable", { kind: result.kind });
-          return;
-        }
-        const target = tableForQuery(tables, name);
-        if (!target) {
-          status.textContent = t("queryNoTarget", { name });
-          return;
-        }
-        const { rows } = deps.apply(target, result);
-        status.textContent = t("queryRefreshed", { rows });
+        const st = await executeQuery(sectionM, name, false);
+        if (st.kind === "ok") status.textContent = t("queryRefreshed", { rows: st.rows });
+        else if (st.kind === "notTable") status.textContent = t("queryNotTable", { kind: st.detail });
+        else status.textContent = t("queryNoTarget", { name });
       } catch (e) {
         const { isMissingConnector, missingConnectorName } = await import("mlang");
         if (isMissingConnector(e)) status.textContent = t("queryExternal", { connector: missingConnectorName(e) });
@@ -241,6 +169,101 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
       }
     }
     return el;
+  }
+
+  /** Build the host bindings: the workbook tables plus the browser connectors (fetch a URL,
+      read attached files). Identical for manual and on-open refresh. */
+  async function buildHost(): Promise<Record<string, MValue>> {
+    const { asyncConnector, tableFromJson, MError } = await import("mlang");
+    const urlOf = (args: MValue[]): string => (args[0] as { value: string }).value;
+    const tables = listWorkbookTables(wb);
+    return {
+      "Excel.CurrentWorkbook": {
+        kind: "function" as const,
+        name: "Excel.CurrentWorkbook",
+        params: [],
+        call: (): MValue => ({
+          kind: "table",
+          columns: ["Name", "Content"],
+          rows: tables.map((tb) => [{ kind: "text", value: tb.displayName } as MValue, tableValue(wb, tb) as MValue]),
+        }),
+      } as MValue,
+      "Web.Contents": asyncConnector("Web.Contents", async (args) => {
+        const url = urlOf(args);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
+        return { kind: "binary", bytes: new Uint8Array(await resp.arrayBuffer()) } as MValue;
+      }) as MValue,
+      "Web.Page": asyncConnector("Web.Page", async (args) => {
+        const url = urlOf(args);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new MError("DataSource.Error", `Web.Page: ${resp.status} ${resp.statusText} for ${url}`);
+        return { kind: "text", value: await resp.text() } as MValue;
+      }) as MValue,
+      "OData.Feed": asyncConnector("OData.Feed", async (args) => {
+        const records: unknown[] = [];
+        let next: string | null = urlOf(args);
+        for (let page = 0; next && page < 100; page++) {
+          const resp: Response = await fetch(next, { headers: { Accept: "application/json" } });
+          if (!resp.ok) throw new MError("DataSource.Error", `OData.Feed: ${resp.status} ${resp.statusText} for ${next}`);
+          const body = (await resp.json()) as { value?: unknown[]; "@odata.nextLink"?: string };
+          records.push(...(Array.isArray(body.value) ? body.value : [body]));
+          next = body["@odata.nextLink"] ?? null;
+        }
+        return tableFromJson(records) as MValue;
+      }) as MValue,
+      "File.Contents": asyncConnector("File.Contents", async (args) => {
+        const path = urlOf(args);
+        const key = path.split(/[\\/]/).pop() ?? path;
+        const file = attachedFiles[key] ?? attachedFiles[path];
+        if (!file) throw new MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
+        return { kind: "binary", bytes: file } as MValue;
+      }) as MValue,
+      "Folder.Files": asyncConnector("Folder.Files", () =>
+        Promise.resolve({
+          kind: "table",
+          columns: ["Content", "Name", "Extension"],
+          rows: Object.entries(attachedFiles).map(([nm, bytes]) => [
+            { kind: "binary", bytes } as MValue,
+            { kind: "text", value: nm } as MValue,
+            { kind: "text", value: nm.includes(".") ? `.${nm.split(".").pop()}` : "" } as MValue,
+          ]),
+        } as MValue)) as MValue,
+    };
+  }
+
+  type ExecStatus = { kind: "ok"; rows: number } | { kind: "notTable"; detail: string } | { kind: "noTarget" };
+
+  /** Evaluate one query and write its result to the destination table. `silent` (on-open
+      auto-refresh) skips the dirty mark and undo entry. Throws on connector/eval errors. */
+  async function executeQuery(sectionM: string, name: string, silent: boolean): Promise<ExecStatus> {
+    const { evaluateSection } = await import("mlang");
+    const host = await buildHost();
+    const section = await evaluateSection(sectionM, host);
+    const result = await section.run(name);
+    if (result.kind !== "table") return { kind: "notTable", detail: result.kind };
+    const target = tableForQuery(listWorkbookTables(wb), name);
+    if (!target) return { kind: "noTarget" };
+    const { rows } = deps.apply(target, result, { silent });
+    return { kind: "ok", rows };
+  }
+
+  /** Honor "Refresh data when opening the file": run each flagged query (full connectors,
+      exactly as a manual refresh) and write results in. A query that can't complete (e.g.
+      File.Contents with nothing attached yet) is left as-is. */
+  async function runOnLoad(): Promise<void> {
+    const names = refreshOnLoadQueries(wb.files);
+    if (names.length === 0) return;
+    const { readWorkbookQueries } = await import("mlang/qdeff");
+    const found = readWorkbookQueries(wb.files);
+    if (!found) return;
+    for (const name of names) {
+      try {
+        await executeQuery(found.mashup.sectionM, name, true);
+      } catch {
+        /* leave this query's table as saved; the user can refresh it manually */
+      }
+    }
   }
 
   document.addEventListener("mousedown", (e) => {
@@ -265,6 +288,7 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
       position();
       void load().then(position);
     },
+    runOnLoad,
   };
 }
 

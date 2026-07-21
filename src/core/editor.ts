@@ -993,17 +993,20 @@ export function createSheetEditor(
     const panel = setupQueryPanel({
       wrap,
       wb,
-      apply: (target, result) => {
+      apply: (target, result, opts) => {
         const run = () => applyQueryResult(wb, target, result);
-        if (target.sheetIndex === active) recordCells(touchedPositions(target, result), run);
+        // On-open auto-refresh is silent: no undo step and no dirty mark (it wasn't a user edit).
+        if (!opts?.silent && target.sheetIndex === active) recordCells(touchedPositions(target, result), run);
         else run();
         recalc(wb);
-        mark();
+        if (!opts?.silent) mark();
         renderGrid();
         return { rows: result.rows.length };
       },
       markEdited: () => mark(),
     });
+    // "Refresh data when opening the file": auto-refresh the flagged queries now.
+    void panel.runOnLoad();
     const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
     const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
     toolbar.append(qBtn);

@@ -9,7 +9,7 @@ import type { MValue } from "mlang";
 import { buildPqXlsx } from "../../../scripts/gen-pq-fixture.mjs";
 import { getCell } from "../../core/model";
 import { readWorkbook } from "../../core/workbook";
-import { applyQueryResult, listWorkbookTables, tableForQuery, tableValue, touchedPositions, workbookHasQueries } from "./tables";
+import { applyQueryResult, listWorkbookTables, refreshOnLoadQueries, tableForQuery, tableValue, touchedPositions, workbookHasQueries } from "./tables";
 
 const fixtureBytes = (): Uint8Array => buildPqXlsx() as Uint8Array;
 
@@ -127,6 +127,16 @@ describe("Power Query integration (fixture workbook)", () => {
     const out = toJS(await section.run("Q")) as { columns: string[]; rows: unknown[][] };
     expect(out.columns).toEqual(["Name", "Qty"]);
     expect(out.rows).toEqual([["Apples", "10"]]);
+  });
+
+  it("reads refresh-on-open query names from connections.xml", () => {
+    const xml =
+      '<connections><connection id="1" name="Query - Output" refreshOnLoad="1"/>' +
+      '<connection id="2" name="Query - Other"/>' +
+      '<connection id="3" name="Query - Auto2" refreshOnLoad="true"/></connections>';
+    const files = { "xl/connections.xml": new TextEncoder().encode(xml) };
+    expect(refreshOnLoadQueries(files)).toEqual(["Output", "Auto2"]);
+    expect(refreshOnLoadQueries({})).toEqual([]);
   });
 
   it("edits Section1.m and the saved workbook carries the new query definition", async () => {

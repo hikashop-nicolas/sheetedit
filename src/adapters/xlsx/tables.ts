@@ -40,6 +40,24 @@ export function workbookHasQueries(files: Record<string, Uint8Array>): boolean {
   return false;
 }
 
+/** Query names whose connection is flagged "Refresh data when opening the file"
+    (refreshOnLoad in xl/connections.xml). Excel names such connections "Query - <Name>". */
+export function refreshOnLoadQueries(files: Record<string, Uint8Array>): string[] {
+  const data = files["xl/connections.xml"];
+  if (!data) return [];
+  const xml = strFromU8(data);
+  const out: string[] = [];
+  const re = /<connection\b[^>]*>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const tag = m[0];
+    if (!/\brefreshOnLoad="(?:1|true)"/i.test(tag)) continue;
+    const name = /\bname="([^"]*)"/.exec(tag)?.[1];
+    if (name) out.push(name.replace(/^Query\s*-\s*/, ""));
+  }
+  return out;
+}
+
 function parseRef(ref: string): { r1: number; c1: number; r2: number; c2: number } | null {
   const [a, b] = ref.split(":");
   const p1 = parseA1Ref(a ?? "");

@@ -4,7 +4,7 @@
 // and imported by tables.test.ts, so the fixture and the test share one builder.
 // Synthetic-but-per-spec (MS-QDEFF framing); a real Excel-authored file validates alongside
 // when available.
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 
 export const SECTION_M = `section Section1;
 
@@ -196,9 +196,26 @@ export function buildODataPqXlsx() {
   });
 }
 
+// Same as pq-sales, but with a connection flagged "Refresh data when opening the file", so
+// the Output table auto-populates on open without touching the panel.
+const CONNECTIONS =
+  '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+  '<connections xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+  '<connection id="1" name="Query - Output" type="5" refreshedVersion="6" background="1" refreshOnLoad="1">' +
+  '<dbPr connection="Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=Output" command="SELECT * FROM [Output]"/>' +
+  "</connection></connections>";
+
+export function buildAutoRefreshPqXlsx() {
+  const base = buildPqXlsx();
+  const entries = unzipSync(base);
+  entries["xl/connections.xml"] = strToU8(CONNECTIONS);
+  return zipSync(entries);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { writeFileSync } = await import("node:fs");
   writeFileSync(new URL("../demo/pq-sales.xlsx", import.meta.url), buildPqXlsx());
+  writeFileSync(new URL("../demo/pq-autorefresh.xlsx", import.meta.url), buildAutoRefreshPqXlsx());
   writeFileSync(new URL("../demo/pq-web.xlsx", import.meta.url), buildWebPqXlsx());
   writeFileSync(new URL("../demo/web-sales.csv", import.meta.url), "Product,Quantity,Total\nCherries,20,100\nApples,10,25\n");
   writeFileSync(new URL("../demo/pq-odata.xlsx", import.meta.url), buildODataPqXlsx());
