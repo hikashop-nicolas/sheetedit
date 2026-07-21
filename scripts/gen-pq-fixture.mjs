@@ -137,8 +137,40 @@ export function buildPqXlsx() {
   });
 }
 
+// A variant whose Output query fetches a CSV over the web instead of reading Sales, to
+// exercise the browser Web.Contents connector. Output columns match web-sales.csv.
+const WEB_SECTION_M = `section Section1;
+
+shared Output = let
+    Source = Table.PromoteHeaders(Csv.Document(Web.Contents("/web-sales.csv"))),
+    Typed = Table.TransformColumnTypes(Source, {{"Quantity", type number}, {"Total", type number}}),
+    Sorted = Table.Sort(Typed, {{"Total", 1}})
+in
+    Sorted;
+`;
+
+export function buildWebPqXlsx() {
+  const mashup = buildDataMashup(WEB_SECTION_M);
+  const itemXml =
+    '<?xml version="1.0" encoding="utf-8"?>' +
+    `<DataMashup xmlns="http://schemas.microsoft.com/DataMashup">${b64(mashup)}</DataMashup>`;
+  return zipSync({
+    "[Content_Types].xml": strToU8(CT),
+    "_rels/.rels": strToU8(ROOT_RELS),
+    "xl/workbook.xml": strToU8(WORKBOOK),
+    "xl/_rels/workbook.xml.rels": strToU8(WORKBOOK_RELS),
+    "xl/worksheets/sheet1.xml": strToU8(SHEET),
+    "xl/worksheets/_rels/sheet1.xml.rels": strToU8(SHEET_RELS),
+    "xl/tables/table1.xml": strToU8(tableXml(1, "Sales", "B2:D5", ["Product", "Qty", "Price"])),
+    "xl/tables/table2.xml": strToU8(tableXml(2, "Output", "F2:H3", ["Product", "Quantity", "Total"])),
+    "customXml/item1.xml": strToU8(itemXml),
+  });
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { writeFileSync } = await import("node:fs");
   writeFileSync(new URL("../demo/pq-sales.xlsx", import.meta.url), buildPqXlsx());
-  console.log("wrote demo/pq-sales.xlsx");
+  writeFileSync(new URL("../demo/pq-web.xlsx", import.meta.url), buildWebPqXlsx());
+  writeFileSync(new URL("../demo/web-sales.csv", import.meta.url), "Product,Quantity,Total\nCherries,20,100\nApples,10,25\n");
+  console.log("wrote demo/pq-sales.xlsx, demo/pq-web.xlsx, demo/web-sales.csv");
 }
