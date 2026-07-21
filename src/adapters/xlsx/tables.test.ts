@@ -105,6 +105,18 @@ describe("Power Query integration (fixture workbook)", () => {
     expect(readWorkbookQueries(wb2.files)!.mashup.sectionM).toBe(q.mashup.sectionM);
   });
 
+  it("an external-source query raises a typed missing-connector error", async () => {
+    const { isMissingConnector, missingConnectorName } = await import("mlang");
+    const section = await evaluateSection(`section Section1;\nshared Q = Web.Contents("https://x");`, {});
+    try {
+      section.run("Q");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(isMissingConnector(e)).toBe(true);
+      expect(missingConnectorName(e as never)).toBe("Web.Contents");
+    }
+  });
+
   it("sniffs a REAL Excel workbook (UTF-16 DataMashup item) and reads its queries", async () => {
     const { readFileSync } = await import("node:fs");
     // cwd-relative: this suite runs under jsdom, where import.meta.url is not file://.

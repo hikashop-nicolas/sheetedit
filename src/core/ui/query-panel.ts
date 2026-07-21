@@ -121,7 +121,9 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
         const { rows } = deps.apply(target, result);
         status.textContent = t("queryRefreshed", { rows });
       } catch (e) {
-        status.textContent = t("queryError", { msg: (e as Error).message });
+        const { isMissingConnector, missingConnectorName } = await import("mlang");
+        if (isMissingConnector(e)) status.textContent = t("queryExternal", { connector: missingConnectorName(e) });
+        else status.textContent = t("queryError", { msg: (e as Error).message });
       } finally {
         refreshBtn.disabled = false;
       }
