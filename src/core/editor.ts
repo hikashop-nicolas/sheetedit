@@ -3,8 +3,10 @@ import { hasTimeFmt, isDateFmt, isTimeOnlyFmt, serialToEditText } from "./dates"
 import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
 import { setupFormulaAssist } from "./ui/formula-assist";
+import { setupQueryPanel } from "./ui/query-panel";
+import { applyQueryResult, touchedPositions, workbookHasQueries } from "../adapters/xlsx/tables";
 import { setupFindBar } from "./ui/findbar";
-import { buildToolbar } from "./ui/toolbar";
+import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, Phonetic, Sheet, StyleChange, Workbook } from "./model";
@@ -179,6 +181,19 @@ export function injectStyles(): void {
     .sheetedit-fxa-btn:hover:not(:disabled) { border-color:var(--sheetedit-accent, #6e7bff); }
     .sheetedit-fxa-btn.is-primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
     .sheetedit-fxa-btn:disabled { opacity:.45; cursor:default; }
+    .sheetedit-qp-pop { position:absolute; z-index:40; width:min(460px,94%); box-sizing:border-box; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e7eaf0); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:12px; display:flex; flex-direction:column; gap:8px; font:13px/1.4 system-ui,sans-serif; max-height:70vh; }
+    .sheetedit-qp-pop[hidden] { display:none; }
+    .sheetedit-qp-title { font-weight:600; font-size:14px; }
+    .sheetedit-qp-body { display:flex; flex-direction:column; gap:8px; overflow:auto; min-height:0; }
+    .sheetedit-qp-row { border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:5px; }
+    .sheetedit-qp-rowhead { display:flex; align-items:center; gap:8px; }
+    .sheetedit-qp-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+    .sheetedit-qp-btn { padding:4px 11px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px; background:var(--sheetedit-chrome2, #23262c); color:var(--sheetedit-text, #e7eaf0); font:inherit; cursor:pointer; }
+    .sheetedit-qp-btn:hover:not(:disabled) { border-color:var(--sheetedit-accent, #6e7bff); }
+    .sheetedit-qp-btn:disabled { opacity:.45; cursor:default; }
+    .sheetedit-qp-status { color:var(--sheetedit-muted, #aab2bf); font-size:12px; min-height:14px; }
+    .sheetedit-qp-m { margin:0; max-height:180px; overflow:auto; padding:7px 9px; border-radius:6px; background:var(--sheetedit-border, #1c1f24); color:var(--sheetedit-text, #e7eaf0); font:12px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
+    .sheetedit-qp-note { color:var(--sheetedit-muted, #aab2bf); font-size:11px; }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
@@ -933,6 +948,28 @@ export function createSheetEditor(
     toggleMerge,
     editFurigana: openFuriganaPopover,
   });
+
+  // Power Query panel: only when the workbook carries a DataMashup payload. Refresh writes
+  // the result through the model (undo-recorded when the target sheet is active) and the
+  // table part's @ref is resized by applyQueryResult.
+  if (wb.kind === "xlsx" && workbookHasQueries(wb.files)) {
+    const panel = setupQueryPanel({
+      wrap,
+      wb,
+      apply: (target, result) => {
+        const run = () => applyQueryResult(wb, target, result);
+        if (target.sheetIndex === active) recordCells(touchedPositions(target, result), run);
+        else run();
+        recalc(wb);
+        mark();
+        renderGrid();
+        return { rows: result.rows.length };
+      },
+    });
+    const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
+    const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
+    toolbar.append(qBtn);
+  }
 
   const mark = () => {
     if (!dirty) {
