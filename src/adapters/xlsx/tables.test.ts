@@ -107,7 +107,8 @@ describe("Power Query integration (fixture workbook)", () => {
 
   it("sniffs a REAL Excel workbook (UTF-16 DataMashup item) and reads its queries", async () => {
     const { readFileSync } = await import("node:fs");
-    const real = new Uint8Array(readFileSync(new URL("../../../test/fixtures/msft-simple-query.xlsx", import.meta.url)));
+    // cwd-relative: this suite runs under jsdom, where import.meta.url is not file://.
+    const real = new Uint8Array(readFileSync("test/fixtures/msft-simple-query.xlsx"));
     const wb = readWorkbook(real);
     expect(wb.kind).toBe("xlsx");
     expect(workbookHasQueries(wb.files)).toBe(true);
