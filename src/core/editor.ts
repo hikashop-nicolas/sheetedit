@@ -196,8 +196,23 @@ export function injectStyles(): void {
     .sheetedit-qp-note { color:var(--sheetedit-muted, #aab2bf); font-size:11px; }
     .sheetedit-qp-attach { display:inline-block; margin:4px 0; font-size:11px; color:var(--sheetedit-accent, #6cf); cursor:pointer; }
     .sheetedit-qp-medit { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
-    .sheetedit-qp-medit textarea.sheetedit-qp-m { width:100%; min-height:140px; box-sizing:border-box; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; white-space:pre; resize:vertical; }
     .sheetedit-qp-medit button { align-self:flex-start; }
+    .sheetedit-qp-mwrap { position:relative; height:170px; border:1px solid #3a3f4b; border-radius:4px; overflow:hidden; background:#fff; }
+    .sheetedit-qp-mhl, .sheetedit-qp-medit textarea.sheetedit-qp-m {
+      position:absolute; inset:0; margin:0; box-sizing:border-box; padding:6px; border:0;
+      font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; line-height:1.5;
+      white-space:pre; overflow:auto; tab-size:4; -moz-tab-size:4;
+    }
+    .sheetedit-qp-mhl { color:#24292e; pointer-events:none; z-index:0; }
+    .sheetedit-qp-mhl code { font:inherit; white-space:inherit; }
+    .sheetedit-qp-medit textarea.sheetedit-qp-m { z-index:1; background:transparent; color:transparent; caret-color:#111; resize:none; outline:none; }
+    .sheetedit-qp-mhl .mtok-kw { color:#0000c8; font-weight:600; }
+    .sheetedit-qp-mhl .mtok-fn { color:#795e26; }
+    .sheetedit-qp-mhl .mtok-str { color:#a31515; }
+    .sheetedit-qp-mhl .mtok-num { color:#098658; }
+    .sheetedit-qp-mhl .mtok-com { color:#2e8b57; font-style:italic; }
+    .sheetedit-qp-mhl .mtok-op { color:#555; }
+    .sheetedit-qp-mhl .mtok-id { color:#001080; }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }

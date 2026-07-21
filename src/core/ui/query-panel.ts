@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { highlightM } from "./m-highlight";
 import { listWorkbookTables, tableForQuery, tableValue, type WorkbookTable } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
@@ -102,15 +103,33 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
     status.className = "sheetedit-qp-status";
 
     // Editable M: the whole Section1.m (all queries). Saving rewrites the DataMashup blob.
+    // A transparent textarea sits over a syntax-highlighted layer that mirrors its content.
     const editorBox = document.createElement("div");
     editorBox.className = "sheetedit-qp-medit";
     editorBox.hidden = true;
+    const mwrap = document.createElement("div");
+    mwrap.className = "sheetedit-qp-mwrap";
+    const highlight = document.createElement("pre");
+    highlight.className = "sheetedit-qp-mhl";
+    highlight.setAttribute("aria-hidden", "true");
+    const code = document.createElement("code");
+    highlight.appendChild(code);
     const area = document.createElement("textarea");
     area.className = "sheetedit-qp-m";
     area.value = sectionM;
     area.spellcheck = false;
+    const paint = (): void => {
+      code.innerHTML = highlightM(area.value);
+    };
+    area.addEventListener("input", paint);
+    area.addEventListener("scroll", () => {
+      highlight.scrollTop = area.scrollTop;
+      highlight.scrollLeft = area.scrollLeft;
+    });
+    paint();
+    mwrap.append(highlight, area);
     const saveBtn = btn(t("querySaveM"), () => void saveM());
-    editorBox.append(area, saveBtn);
+    editorBox.append(mwrap, saveBtn);
     el.append(head, status, editorBox);
 
     async function saveM(): Promise<void> {
