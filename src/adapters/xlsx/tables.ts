@@ -132,12 +132,21 @@ export function tableValue(wb: Workbook, tbl: WorkbookTable): MTable {
   return { kind: "table", columns, rows };
 }
 
+const p2 = (n: number): string => String(n).padStart(2, "0");
+const hms = (secs: number): string => `${p2(Math.floor(secs / 3600))}:${p2(Math.floor((secs % 3600) / 60))}:${p2(Math.floor(secs % 60))}`;
+
+// Refreshed values become cell text. Temporal values are written in ISO form (unambiguous
+// and sortable) rather than Excel serials, since this is a display-oriented table editor.
 const rawFor = (v: MValue): string => {
   switch (v.kind) {
     case "null": return "";
     case "number": return String(v.value);
     case "text": return v.value;
     case "logical": return v.value ? "TRUE" : "FALSE";
+    case "date": return `${String(v.y).padStart(4, "0")}-${p2(v.m)}-${p2(v.d)}`;
+    case "time": return hms(v.secs);
+    case "datetime": return `${String(v.y).padStart(4, "0")}-${p2(v.m)}-${p2(v.d)} ${hms(v.secs)}`;
+    case "duration": return `${Math.trunc(v.secs / 86400)}.${hms(((v.secs % 86400) + 86400) % 86400)}`;
     default: return "";
   }
 };
