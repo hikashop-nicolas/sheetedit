@@ -197,22 +197,40 @@ export function injectStyles(): void {
     .sheetedit-qp-attach { display:inline-block; margin:4px 0; font-size:11px; color:var(--sheetedit-accent, #6cf); cursor:pointer; }
     .sheetedit-qp-medit { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
     .sheetedit-qp-medit button { align-self:flex-start; }
-    .sheetedit-qp-mwrap { position:relative; height:170px; border:1px solid #3a3f4b; border-radius:4px; overflow:hidden; background:#fff; }
+    /* Token/field colours follow the app's light/dark theme. Light is the default; the two
+       blocks below flip to a dark palette on prefers-color-scheme:dark or [data-theme=dark]
+       (mirroring how the host drives its own theme). Both bg and tokens move together so the
+       field is always readable, standalone or embedded. */
+    .sheetedit-qp-mwrap {
+      --se-code-bg:#ffffff; --se-code-border:#c9ccd4; --se-code-fg:#24292e; --se-code-caret:#111;
+      --se-kw:#0000c8; --se-fn:#795e26; --se-str:#a31515; --se-num:#098658; --se-com:#2e8b57; --se-op:#555; --se-id:#001080;
+      position:relative; height:170px; border:1px solid var(--se-code-border); border-radius:4px; overflow:hidden; background:var(--se-code-bg);
+    }
     .sheetedit-qp-mhl, .sheetedit-qp-medit textarea.sheetedit-qp-m {
       position:absolute; inset:0; margin:0; box-sizing:border-box; padding:6px; border:0;
       font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; line-height:1.5;
       white-space:pre; overflow:auto; tab-size:4; -moz-tab-size:4;
     }
-    .sheetedit-qp-mhl { color:#24292e; pointer-events:none; z-index:0; }
+    .sheetedit-qp-mhl { color:var(--se-code-fg); pointer-events:none; z-index:0; }
     .sheetedit-qp-mhl code { font:inherit; white-space:inherit; }
-    .sheetedit-qp-medit textarea.sheetedit-qp-m { z-index:1; background:transparent; color:transparent; caret-color:#111; resize:none; outline:none; }
-    .sheetedit-qp-mhl .mtok-kw { color:#0000c8; font-weight:600; }
-    .sheetedit-qp-mhl .mtok-fn { color:#795e26; }
-    .sheetedit-qp-mhl .mtok-str { color:#a31515; }
-    .sheetedit-qp-mhl .mtok-num { color:#098658; }
-    .sheetedit-qp-mhl .mtok-com { color:#2e8b57; font-style:italic; }
-    .sheetedit-qp-mhl .mtok-op { color:#555; }
-    .sheetedit-qp-mhl .mtok-id { color:#001080; }
+    .sheetedit-qp-medit textarea.sheetedit-qp-m { z-index:1; background:transparent; color:transparent; caret-color:var(--se-code-caret); resize:none; outline:none; }
+    .sheetedit-qp-mhl .mtok-kw { color:var(--se-kw); font-weight:600; }
+    .sheetedit-qp-mhl .mtok-fn { color:var(--se-fn); }
+    .sheetedit-qp-mhl .mtok-str { color:var(--se-str); }
+    .sheetedit-qp-mhl .mtok-num { color:var(--se-num); }
+    .sheetedit-qp-mhl .mtok-com { color:var(--se-com); font-style:italic; }
+    .sheetedit-qp-mhl .mtok-op { color:var(--se-op); }
+    .sheetedit-qp-mhl .mtok-id { color:var(--se-id); }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .sheetedit-qp-mwrap {
+        --se-code-bg:#1e2228; --se-code-border:#3a3f4b; --se-code-fg:#d6dae0; --se-code-caret:#e6e6e6;
+        --se-kw:#7aa2ff; --se-fn:#d7ba7d; --se-str:#ce9178; --se-num:#b5cea8; --se-com:#7fb37f; --se-op:#b0b6c0; --se-id:#9cdcfe;
+      }
+    }
+    :root[data-theme="dark"] .sheetedit-qp-mwrap {
+      --se-code-bg:#1e2228; --se-code-border:#3a3f4b; --se-code-fg:#d6dae0; --se-code-caret:#e6e6e6;
+      --se-kw:#7aa2ff; --se-fn:#d7ba7d; --se-str:#ce9178; --se-num:#b5cea8; --se-com:#7fb37f; --se-op:#b0b6c0; --se-id:#9cdcfe;
+    }
     .sheetedit-fmtmenu { flex-direction:column; align-items:stretch; gap:2px; }
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
