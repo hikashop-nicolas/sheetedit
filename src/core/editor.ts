@@ -19,7 +19,7 @@ import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { setupChartLayer } from "./ui/chart-overlay";
-import type { ChartModel } from "./chart-model";
+import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
@@ -1550,20 +1550,38 @@ export function createSheetEditor(
   /** Row-number column width: grows with the digit count of the last row. */
   const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8);
 
-  // Chart overlay: a floating Chart.js layer glued to the cells (xlsx/ods only). Lazy-loads
-  // Chart.js on the first chart. selectedChart drives the (Phase 3) edit handles.
-  let selectedChart: ChartModel | null = null;
-  const chartLayer = (wb.kind === "xlsx" || wb.kind === "ods")
+  // Chart overlay + create/edit UI: a floating Chart.js layer glued to the cells (xlsx/ods only),
+  // Chart.js lazy-loaded on the first chart.
+  const chartsOn = wb.kind === "xlsx" || wb.kind === "ods";
+  const getSelRect = (): { r1: number; c1: number; r2: number; c2: number } =>
+    sel ?? (activeCell ? { r1: activeCell.r, c1: activeCell.c, r2: activeCell.r, c2: activeCell.c } : { r1: 1, c1: 1, r2: 1, c2: 1 });
+  const chartLayer = chartsOn
     ? setupChartLayer({
         wrap,
         gridScroll,
         getSheet: () => wb.sheets[active],
         getWorkbook: () => wb,
-        geom: () => ({ xOfCol, yOfRow, rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
-        onSelect: (c) => { selectedChart = c; },
+        geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+        onSelect: (c) => { if (c) chartUi.showEdit(c); else chartUi.hideEdit(); },
+        onEdit: () => { mark(); },
       })
-    : { refresh: () => undefined, update: () => undefined, teardown: () => undefined };
-  void selectedChart;
+    : { refresh: () => undefined, update: () => undefined, select: () => undefined, boxRect: () => null, teardown: () => undefined };
+  const chartUi = chartsOn
+    ? setupChartUi({
+        wrap,
+        gridScroll,
+        getWorkbook: () => wb,
+        activeSheetName: () => wb.sheets[active]?.name ?? "Sheet1",
+        onCreate: (m) => { (wb.sheets[active].charts ??= []).push(m); mark(); chartLayer.refresh(); },
+        onDelete: (m) => { const cs = wb.sheets[active]?.charts; const i = cs?.indexOf(m) ?? -1; if (cs && i >= 0) cs.splice(i, 1); mark(); chartLayer.refresh(); },
+        onChange: () => { mark(); chartLayer.refresh(); },
+        boxRect: (id) => chartLayer.boxRect(id),
+      })
+    : { openInsert: () => undefined, showEdit: () => undefined, hideEdit: () => undefined, teardown: () => undefined };
+  if (chartsOn) {
+    const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
+    toolbar.append(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
+  }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
   // the left (a frozen column), or both (the frozen corner). z-index stacks it under the
@@ -2424,6 +2442,7 @@ export function createSheetEditor(
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
       chartLayer.teardown();
+      chartUi.teardown();
       closeLineMenu();
       borderPop?.remove();
       borderPop = null;

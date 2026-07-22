@@ -170,7 +170,7 @@ phase, same honesty as the Power Query load-to note.
   to the grid, scroll-synced, live data from cells. Model in core/chart-model.ts, Sheet.charts.
   Browser-verified: grouped column chart renders, scrolls with cells, and updates on a cell edit.
 - (DONE) Phase 2: ods chart reader (adapters/ods/chart-read.ts) - embedded object -> same model -> same overlay; browser-verified
-- (pending) Phase 3: create / edit UI
+- (DONE) Phase 3: create/edit UI - insert dialog (type/range/options/live preview), select + edit toolbar (change type, delete), move/resize handles; chart-build.ts + chart-insert.ts. Browser-verified.
 - (pending) Phase 4: xlsx writer
 - (pending) Phase 5: ods writer
 - (pending) Phase 6: polish

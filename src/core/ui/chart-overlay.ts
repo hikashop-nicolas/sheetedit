@@ -7,7 +7,7 @@ import { CHART_PALETTE, type ChartModel, type ChartRef } from "../chart-model";
 // charts scroll with the cells and clip under the frozen header. Chart.js is lazy-imported the
 // first time a chart is drawn, so it never weighs on chart-free workbooks.
 
-export interface ChartGeom { xOfCol: (c: number) => number; yOfRow: (r: number) => number; rnW: number; headerH: number }
+export interface ChartGeom { xOfCol: (c: number) => number; yOfRow: (r: number) => number; colAt: (px: number) => number; rowAt: (px: number) => number; rnW: number; headerH: number }
 
 export interface ChartLayerDeps {
   wrap: HTMLElement;
@@ -16,16 +16,21 @@ export interface ChartLayerDeps {
   getWorkbook: () => Workbook;
   geom: () => ChartGeom;
   onSelect?: (chart: ChartModel | null) => void;
+  /** After a move/resize: the model's anchor was updated and dirty set; the host marks + persists. */
+  onEdit?: (chart: ChartModel) => void;
 }
 
-type ChartCtor = new (ctx: CanvasRenderingContext2D, cfg: unknown) => { update(): void; destroy(): void; data: unknown; options: unknown };
+export type ChartCtor = new (ctx: CanvasRenderingContext2D, cfg: unknown) => { update(): void; destroy(): void; data: unknown; options: unknown };
 let ChartJs: ChartCtor | null = null;
 let loading: Promise<void> | null = null;
-async function ensureChartJs(): Promise<void> {
-  if (ChartJs) return;
+/** Lazy-load Chart.js; resolves to the Chart constructor (shared by the overlay and previews). */
+export async function loadChartJs(): Promise<ChartCtor> {
+  if (ChartJs) return ChartJs;
   loading ??= import("chart.js/auto").then((m) => { ChartJs = (m.default ?? (m as { Chart: ChartCtor }).Chart) as ChartCtor; });
   await loading;
+  return ChartJs!;
 }
+const ensureChartJs = async (): Promise<void> => { await loadChartJs(); };
 
 /** Resolve a data ref to values from the live sheet, falling back to the cached points. */
 function resolveRange(wb: Workbook, ref: string): { row: number; col: number; sheet: Sheet }[] | null {
@@ -59,7 +64,10 @@ const nameOf = (wb: Workbook, name: ChartSeriesName): string | undefined => {
 };
 type ChartSeriesName = string | ChartRef | undefined;
 
-/** Build a Chart.js config from the model + live data. */
+/** Build a Chart.js config from the model + live data (shared by the overlay and the preview). */
+export function chartConfig(model: ChartModel, wb: Workbook): unknown {
+  return toConfig(model, wb);
+}
 function toConfig(model: ChartModel, wb: Workbook): unknown {
   const type = model.kind === "column" || model.kind === "bar" ? "bar" : model.kind === "area" ? "line" : model.kind;
   const cats = labels(wb, model.categories);
@@ -96,7 +104,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   };
 }
 
-export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update(): void; teardown(): void } {
+export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update(): void; select(id: string | null): void; boxRect(id: string): DOMRect | null; teardown(): void } {
   const { wrap, gridScroll } = deps;
   const layer = document.createElement("div");
   layer.className = "sheetedit-chartlayer";
@@ -105,7 +113,26 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
   layer.appendChild(inner);
   wrap.appendChild(layer);
 
-  const instances = new Map<string, { box: HTMLElement; canvas: HTMLCanvasElement; chart: InstanceType<ChartCtor> | null }>();
+  const instances = new Map<string, { box: HTMLElement; canvas: HTMLCanvasElement; chart: InstanceType<ChartCtor> | null; kind?: string }>();
+  let selectedId: string | null = null;
+
+  const setSelected = (id: string | null): void => {
+    selectedId = id;
+    for (const [k, inst] of instances) inst.box.classList.toggle("sel", k === id);
+    deps.onSelect?.(id ? (deps.getSheet()?.charts ?? []).find((c) => c.id === id) ?? null : null);
+  };
+
+  // Commit a dragged/resized pixel rect (content coords) back to the model's cell anchor.
+  const rectToAnchor = (model: ChartModel, x: number, y: number, w: number, h: number): void => {
+    const g = deps.geom();
+    const set = (px: number, at: (p: number) => number, of: (i: number) => number): [number, number] => { const i = Math.max(1, at(px)); return [i, Math.max(0, px - of(i))]; };
+    const [fc, fco] = set(x, g.colAt, g.xOfCol);
+    const [fr, fro] = set(y, g.rowAt, g.yOfRow);
+    const [tc, tco] = set(x + w, g.colAt, g.xOfCol);
+    const [tr, tro] = set(y + h, g.rowAt, g.yOfRow);
+    model.anchor = { fromCol: fc, fromRow: fr, fromColOff: fco, fromRowOff: fro, toCol: tc, toRow: tr, toColOff: tco, toRowOff: tro };
+    model.dirty = true;
+  };
 
   const positionLayer = (): void => {
     const g = deps.geom();
@@ -131,6 +158,37 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
     box.style.height = `${Math.max(40, y2 - y)}px`;
   };
 
+  // Drag the box to move, or its corner handle to resize; commit to the anchor on release.
+  function attachDrag(box: HTMLElement, handle: HTMLElement, model: ChartModel): void {
+    const start = (e: MouseEvent, mode: "move" | "resize"): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelected(model.id);
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const x0 = parseFloat(box.style.left) || 0;
+      const y0 = parseFloat(box.style.top) || 0;
+      const w0 = box.offsetWidth;
+      const h0 = box.offsetHeight;
+      const onMove = (ev: MouseEvent): void => {
+        const dx = ev.clientX - sx;
+        const dy = ev.clientY - sy;
+        if (mode === "move") { box.style.left = `${Math.max(0, x0 + dx)}px`; box.style.top = `${Math.max(0, y0 + dy)}px`; }
+        else { box.style.width = `${Math.max(80, w0 + dx)}px`; box.style.height = `${Math.max(60, h0 + dy)}px`; }
+      };
+      const onUp = (): void => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        rectToAnchor(model, parseFloat(box.style.left) || 0, parseFloat(box.style.top) || 0, box.offsetWidth, box.offsetHeight);
+        deps.onEdit?.(model);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    box.addEventListener("mousedown", (e) => { if (e.target !== handle) start(e, "move"); });
+    handle.addEventListener("mousedown", (e) => start(e, "resize"));
+  }
+
   let drawSeq = 0;
   const refresh = (): void => {
     const sheet = deps.getSheet();
@@ -151,15 +209,21 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
           box.className = "sheetedit-chartbox";
           const canvas = document.createElement("canvas");
           box.appendChild(canvas);
-          box.addEventListener("mousedown", (e) => { e.stopPropagation(); deps.onSelect?.(model); });
+          const handle = document.createElement("div");
+          handle.className = "sheetedit-chart-resize";
+          box.appendChild(handle);
+          attachDrag(box, handle, model);
           inner.appendChild(box);
           inst = { box, canvas, chart: null };
           instances.set(model.id, inst);
         }
         positionBox(inst.box, model);
         const cfg = toConfig(model, wb);
+        // Chart.js can't change its type via update(); recreate when the kind changed.
+        if (inst.chart && inst.kind !== model.kind) { inst.chart.destroy(); inst.chart = null; }
         if (inst.chart) { const c = inst.chart as { data: unknown; options: unknown; update(): void }; const nc = cfg as { data: unknown; options: unknown }; c.data = nc.data; c.options = nc.options; c.update(); }
         else inst.chart = new ChartJs(inst.canvas.getContext("2d")!, cfg);
+        inst.kind = model.kind;
       }
     });
   };
@@ -178,10 +242,17 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
 
   gridScroll.addEventListener("scroll", syncScroll, { passive: true });
   window.addEventListener("resize", refresh);
+  // Click on empty grid deselects.
+  gridScroll.addEventListener("mousedown", () => { if (selectedId) setSelected(null); });
+
+  /** Screen rect of a chart's box (for anchoring an external edit toolbar). */
+  const boxRect = (id: string): DOMRect | null => instances.get(id)?.box.getBoundingClientRect() ?? null;
 
   return {
     refresh,
     update,
+    select: setSelected,
+    boxRect,
     teardown(): void {
       gridScroll.removeEventListener("scroll", syncScroll);
       window.removeEventListener("resize", refresh);
