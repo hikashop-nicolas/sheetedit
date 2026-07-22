@@ -70,6 +70,6 @@ with its sibling elements intact:
 - (DONE) 1. Sheet management UI - add/rename/delete/reorder tabs, xlsx + ods (sheet-ops.ts)
 - (DONE) 2. Hyperlinks - read external+internal, render blue link + open button, click opens/navigates
 - (DONE) 3. Data validation dropdowns - list type: caret picker (inline + range values) + invalid-value outline
-- (pending) 4. Shift secondary ranges on structural edits
+- (DONE) 4. Shift CF/DV/hyperlink/autofilter ranges (sqref/ref) + model validations on insert/delete
 - (pending) 5. Conditional formatting rendering
 - (pending) 6. Comments display

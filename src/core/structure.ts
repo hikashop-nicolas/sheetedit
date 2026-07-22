@@ -1,5 +1,5 @@
 import type { Cell, Sheet, Workbook } from "./model";
-import { colToLetters, key, lettersToCol, MAX_COL, MAX_ROW } from "./model";
+import { colToLetters, key, lettersToCol, parseA1Ref, MAX_COL, MAX_ROW } from "./model";
 
 // ---------------------------------------------------------------------------
 // Row / column insertion and deletion with reference rewriting.
@@ -39,6 +39,52 @@ export function mapSpan(a: number, b: number, op: LineOp): { a: number; b: numbe
   const na = a < op.at ? a : a >= end ? a - op.count : op.at;
   const nb = b < op.at ? b : b >= end ? b - op.count : op.at - 1;
   return nb < na ? null : { a: na, b: nb };
+}
+
+type Rect = { r1: number; c1: number; r2: number; c2: number };
+
+/** Shift a rectangle by a line op: lines past the edit move; a range straddling an insertion
+    grows; a range fully inside a deletion collapses (null). A resulting single cell is kept
+    (unlike merges, secondary ranges may legitimately cover one cell). */
+export function shiftRect(m: Rect, op: LineOp): Rect | null {
+  const growRow = op.axis === "row" && op.kind === "insert" && m.r1 < op.at && m.r2 >= op.at;
+  const growCol = op.axis === "col" && op.kind === "insert" && m.c1 < op.at && m.c2 >= op.at;
+  const rs = op.axis === "row" ? (growRow ? { a: m.r1, b: m.r2 + op.count } : mapSpan(m.r1, m.r2, op)) : { a: m.r1, b: m.r2 };
+  const cs = op.axis === "col" ? (growCol ? { a: m.c1, b: m.c2 + op.count } : mapSpan(m.c1, m.c2, op)) : { a: m.c1, b: m.c2 };
+  if (!rs || !cs) return null;
+  return { r1: rs.a, c1: cs.a, r2: rs.b, c2: cs.b };
+}
+
+const rectToA1 = (m: Rect): string =>
+  m.r1 === m.r2 && m.c1 === m.c2 ? `${colToLetters(m.c1)}${m.r1}` : `${colToLetters(m.c1)}${m.r1}:${colToLetters(m.c2)}${m.r2}`;
+
+function parseRangeA1(range: string): Rect | null {
+  const [a, b] = range.split(":");
+  const p1 = parseA1Ref(a ?? "");
+  const p2 = b ? parseA1Ref(b) : p1;
+  if (!p1 || !p2) return null;
+  return { r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
+}
+
+/** Shift every range in a space-separated sqref/ref string; drops collapsed ranges. Ranges that
+    do not parse as plain A1 (e.g. a cross-sheet ref) are left untouched. */
+export function shiftSqref(sqref: string, op: LineOp): string {
+  const out: string[] = [];
+  for (const range of sqref.split(/\s+/).filter(Boolean)) {
+    const rect = parseRangeA1(range);
+    if (!rect) { out.push(range); continue; }
+    const s = shiftRect(rect, op);
+    if (s) out.push(rectToA1(s));
+  }
+  return out.join(" ");
+}
+
+function shiftSqrefAttr(el: Element, attr: string, op: LineOp): void {
+  const cur = el.getAttribute(attr);
+  if (!cur) return;
+  const next = shiftSqref(cur, op);
+  if (next) el.setAttribute(attr, next);
+  else el.parentNode?.removeChild(el);
 }
 
 // --- formula rewriting -------------------------------------------------------
@@ -269,6 +315,15 @@ function shiftXlsxXml(sheet: Sheet, op: LineOp): void {
       if (!colsEl.children.length) colsEl.parentNode?.removeChild(colsEl);
     }
   }
+  // Secondary ranges that live in the sheet XML but are otherwise untouched: conditional
+  // formatting, data validations, hyperlinks and the autofilter. Shift their sqref/ref so they
+  // track the edit instead of going stale.
+  for (const el of Array.from(doc.getElementsByTagName("conditionalFormatting"))) shiftSqrefAttr(el, "sqref", op);
+  for (const el of Array.from(doc.getElementsByTagName("dataValidation"))) shiftSqrefAttr(el, "sqref", op);
+  for (const el of Array.from(doc.getElementsByTagName("hyperlink"))) shiftSqrefAttr(el, "ref", op);
+  const af = doc.getElementsByTagName("autoFilter")[0] as Element | undefined;
+  if (af) shiftSqrefAttr(af, "ref", op);
+
   // Refresh <dimension> from the model extents (recomputed by the caller).
   const dim = doc.getElementsByTagName("dimension")[0] as Element | undefined;
   if (dim) dim.setAttribute("ref", `A1:${colToLetters(Math.max(1, sheet.maxCol))}${Math.max(1, sheet.maxRow)}`);
@@ -467,6 +522,14 @@ export function applyLineOp(wb: Workbook, sheetIdx: number, op: LineOp, rewriteR
       remapped.push({ r1: rs.a, c1: cs.a, r2: rs.b, c2: cs.b });
     }
     sheet.merges = remapped;
+  }
+
+  // Data-validation ranges (model, used for rendering the dropdowns) follow the edit too; the
+  // xlsx sqref in the sheet XML is shifted separately in shiftXlsxXml.
+  if (sheet.validations?.length) {
+    sheet.validations = sheet.validations
+      .map((v) => ({ ...v, ranges: v.ranges.map((g) => shiftRect(g, op)).filter((g): g is Rect => g != null) }))
+      .filter((v) => v.ranges.length > 0);
   }
 
   // Row heights / column widths follow their lines.
