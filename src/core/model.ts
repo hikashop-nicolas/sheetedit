@@ -61,6 +61,10 @@ export interface Cell {
   el?: Element;
   /** ods: the original <table:table-cell> element (cloned verbatim if untouched). */
   odfFormula?: string;
+  /** Hyperlink on this cell (xlsx <hyperlinks>): an external URL, or an internal
+      "Sheet!A1" / defined-name target. Rendered as a clickable link; preserved via the
+      untouched sheet XML (sheetedit reads and follows it, it does not rewrite it). */
+  link?: { href: string; internal?: boolean; tip?: string };
   /** xlsx @s style index / ods @table:style-name, preserved across edits. */
   style?: string;
   /** Resolved visual formatting (fonts/fills/borders/alignment) for the grid. */

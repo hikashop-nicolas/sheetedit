@@ -102,6 +102,11 @@ export function injectStyles(): void {
       overflow:hidden; pointer-events:none; line-height:1.3; color:#1a1a1a;
     }
     .sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
+    /* Hyperlink cells: link-coloured underlined text and a small open button top-right. */
+    .sheetedit-table td.has-link { position:relative; }
+    .sheetedit-table td.has-link input:not(:focus) { color:#2563eb; text-decoration:underline; }
+    .sheetedit-linkbtn { position:absolute; top:1px; right:1px; z-index:3; display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; padding:0; border:0; border-radius:3px; background:transparent; color:#2563eb; cursor:pointer; opacity:.8; }
+    .sheetedit-linkbtn:hover { opacity:1; background:rgba(37,99,235,0.14); }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -1600,6 +1605,20 @@ export function createSheetEditor(
       }
       // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
       applyCellVisualStyle(td, input, cell);
+      // Hyperlink affordance: style the text as a link and add a small open button.
+      if (cell?.link) {
+        td.classList.add("has-link");
+        const lb = document.createElement("button");
+        lb.type = "button";
+        lb.className = "sheetedit-linkbtn";
+        lb.tabIndex = -1;
+        lb.title = cell.link.tip || cell.link.href;
+        lb.setAttribute("aria-label", t("linkOpen"));
+        lb.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
+        lb.addEventListener("mousedown", (e) => e.preventDefault());
+        lb.addEventListener("click", (e) => { e.stopPropagation(); openLink(cell.link!); });
+        td.appendChild(lb);
+      }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
       input.addEventListener("mousedown", (e) => {
@@ -1946,6 +1965,26 @@ export function createSheetEditor(
       }
     }
     paintSel();
+  };
+
+  /** Follow a cell hyperlink: open an external URL in a new tab, or jump to an internal
+      "Sheet!A1" / defined-name target. */
+  const openLink = (link: { href: string; internal?: boolean }): void => {
+    if (!link.internal) {
+      window.open(link.href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    let loc = link.href;
+    if (wb.definedNames?.has(loc)) loc = wb.definedNames.get(loc)!;
+    const m = /^(?:'([^']+)'|([^!]+))!(.+)$/.exec(loc);
+    const sheetName = m ? (m[1] ?? m[2]) : undefined;
+    const ref = (m ? m[3] : loc).replace(/\$/g, "").split(":")[0];
+    if (sheetName) {
+      const idx = wb.sheets.findIndex((s) => s.name === sheetName);
+      if (idx >= 0) switchSheet(idx);
+    }
+    const p = parseA1Ref(ref);
+    if (p) focusCell(p.row, p.col);
   };
 
   /** Focus a cell, scrolling it into the rendered window first if needed. */

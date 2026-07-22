@@ -1,5 +1,5 @@
 import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
-import { firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
+import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
@@ -295,10 +295,51 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         if (merges.length) sheet.merges = merges;
       }
       if (sheetData) readSheetData(sheet, sheetData, shared, styles);
+      readHyperlinks(sheet, doc, files, path);
     }
     wb.sheets.push(sheet);
   }
   return wb;
+}
+
+/** Read the worksheet's <hyperlinks> and attach a link to each cell in every referenced range.
+    External targets resolve through the sheet's rels; internal ones use the location attribute. */
+function readHyperlinks(sheet: Sheet, doc: Document, files: Record<string, Uint8Array>, path: string): void {
+  const links = doc.getElementsByTagName("hyperlink");
+  if (!links.length) return;
+  const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const relsPath = path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  const relsDoc = files[relsPath] ? parseXmlOpt(files[relsPath]) : undefined;
+  const url = new Map<string, string>();
+  if (relsDoc)
+    for (const r of Array.from(relsDoc.getElementsByTagName("Relationship"))) {
+      const id = r.getAttribute("Id");
+      const tgt = r.getAttribute("Target");
+      if (id && tgt) url.set(id, tgt);
+    }
+  for (const h of Array.from(links)) {
+    const ref = h.getAttribute("ref");
+    if (!ref) continue;
+    const rid = h.getAttribute("r:id") ?? h.getAttributeNS(REL, "id");
+    const location = h.getAttribute("location");
+    const tip = h.getAttribute("tooltip") ?? undefined;
+    let href: string | undefined;
+    let internal = false;
+    if (rid && url.has(rid)) {
+      href = url.get(rid)!;
+      if (location) href += `#${location}`;
+    } else if (location) {
+      href = location;
+      internal = true;
+    }
+    if (!href) continue;
+    const [a, b] = ref.split(":");
+    const p1 = parseA1Ref(a ?? "");
+    const p2 = b ? parseA1Ref(b) : p1;
+    if (!p1 || !p2) continue;
+    for (let r = p1.row; r <= p2.row; r++)
+      for (let c = p1.col; c <= p2.col; c++) ensureCell(sheet, r, c).link = { href, internal, tip };
+  }
 }
 
 export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichString[], styles: XlsxStyles): void {
