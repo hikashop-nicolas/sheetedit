@@ -27,6 +27,7 @@
     "prepare": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "chart.js": "^4.5.1",
     "fast-formula-parser": "^1.0.19",
     "fflate": "^0.8.2",
     "localml": "github:hikashop-nicolas/localml",

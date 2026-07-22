@@ -1,6 +1,7 @@
 import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
 import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
 import { parseDxfs, readCondFormats } from "./condformat";
+import { readCharts } from "./chart-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
@@ -301,6 +302,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readDataValidations(sheet, doc);
       readCondFormats(sheet, doc, dxfs, theme);
       readComments(sheet, files, path);
+      readCharts(sheet, files, path);
     }
     wb.sheets.push(sheet);
   }

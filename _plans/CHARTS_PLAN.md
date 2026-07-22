@@ -163,3 +163,14 @@ phase, same honesty as the Power Query load-to note.
   deep formatting are out of v1.
 - **Edited charts lose un-modeled features** (write policy above) - preserved only while untouched.
 - **Bundle size**: Chart.js is lazy-loaded so it never weighs on non-chart workbooks.
+
+## Progress
+
+- (DONE) Phase 0/1: xlsx chart reader (chart-read.ts) + Chart.js overlay (chart-overlay.ts) glued
+  to the grid, scroll-synced, live data from cells. Model in core/chart-model.ts, Sheet.charts.
+  Browser-verified: grouped column chart renders, scrolls with cells, and updates on a cell edit.
+- (pending) Phase 2: ods chart reader
+- (pending) Phase 3: create / edit UI
+- (pending) Phase 4: xlsx writer
+- (pending) Phase 5: ods writer
+- (pending) Phase 6: polish

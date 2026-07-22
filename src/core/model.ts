@@ -145,6 +145,8 @@ export interface Sheet {
   validations?: DataValidation[];
   /** Conditional-formatting blocks (rules + the ranges they cover). */
   condFormats?: CondFormat[];
+  /** Charts anchored on this sheet (rendered as an overlay; created/edited ones are written back). */
+  charts?: import("./chart-model").ChartModel[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };

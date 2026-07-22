@@ -18,6 +18,8 @@ import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
+import { setupChartLayer } from "./ui/chart-overlay";
+import type { ChartModel } from "./chart-model";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
@@ -127,6 +129,11 @@ export function injectStyles(): void {
     .sheetedit-comitem + .sheetedit-comitem { margin-top:7px; padding-top:7px; border-top:1px solid var(--sheetedit-border, #1c1f24); }
     .sheetedit-comauthor { font-weight:600; margin-bottom:2px; }
     .sheetedit-comtext { white-space:pre-wrap; color:var(--sheetedit-muted, #cfd3da); }
+    /* Chart overlay: a layer over the data area, its content translated by the scroll offset. */
+    .sheetedit-chartlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+    .sheetedit-chartlayer-inner { position:absolute; top:0; left:0; }
+    .sheetedit-chartbox { position:absolute; pointer-events:auto; background:#fff; border:1px solid #d0d0d6; border-radius:3px; box-shadow:0 1px 5px rgba(0,0,0,.15); padding:5px; box-sizing:border-box; }
+    .sheetedit-chartbox.sel { border-color:var(--sheetedit-accent, #6e7bff); box-shadow:0 0 0 2px var(--sheetedit-accent, #6e7bff); }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -1315,6 +1322,7 @@ export function createSheetEditor(
     // re-render. Otherwise just refresh displays.
     if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c) || sheet.condFormats?.length) renderGrid();
     else refreshDisplays(sheet);
+    if (sheet.charts?.length) chartLayer.update(); // live-update any chart reading this cell
   };
 
   // On-device formula assistant: the fx-bar sparkle opens a popover that turns a plain-language
@@ -1541,6 +1549,21 @@ export function createSheetEditor(
   const viewportW = (): number => gridScroll.clientWidth || 1200;
   /** Row-number column width: grows with the digit count of the last row. */
   const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8);
+
+  // Chart overlay: a floating Chart.js layer glued to the cells (xlsx/ods only). Lazy-loads
+  // Chart.js on the first chart. selectedChart drives the (Phase 3) edit handles.
+  let selectedChart: ChartModel | null = null;
+  const chartLayer = (wb.kind === "xlsx" || wb.kind === "ods")
+    ? setupChartLayer({
+        wrap,
+        gridScroll,
+        getSheet: () => wb.sheets[active],
+        getWorkbook: () => wb,
+        geom: () => ({ xOfCol, yOfRow, rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+        onSelect: (c) => { selectedChart = c; },
+      })
+    : { refresh: () => undefined, update: () => undefined, teardown: () => undefined };
+  void selectedChart;
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
   // the left (a frozen column), or both (the frozen corner). z-index stacks it under the
@@ -2223,6 +2246,7 @@ export function createSheetEditor(
     renderWindow(true, keepTop, keepLeft); // build the window for the kept position first
     gridScroll.scrollTop = keepTop; // now the spacers exist, so the browser keeps it
     gridScroll.scrollLeft = keepLeft;
+    chartLayer.refresh();
   };
 
   const switchSheet = (i: number): void => {
@@ -2399,6 +2423,7 @@ export function createSheetEditor(
       document.removeEventListener("paste", onDocPaste);
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
+      chartLayer.teardown();
       closeLineMenu();
       borderPop?.remove();
       borderPop = null;
