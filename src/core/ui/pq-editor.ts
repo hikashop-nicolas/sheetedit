@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { buildPqHost } from "./pq-host";
-import { TRANSFORMS, type TransformSpec, type TfField } from "./pq-transforms";
+import { TRANSFORMS, strLit, type TransformSpec, type TfField } from "./pq-transforms";
+import { listWorkbookTables } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
 
@@ -79,6 +80,11 @@ function injectStyles(): void {
     .se-pqe-center { flex:1; min-width:0; display:flex; flex-direction:column; }
     .se-pqe-pane-h { padding:7px 12px; font-weight:600; color:var(--sheetedit-muted, #aab2bf);
       font-size:12px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-pane-h-row { display:flex; align-items:center; justify-content:space-between; }
+    .se-pqe-newq { font:inherit; font-size:15px; line-height:1; width:22px; height:22px; padding:0; cursor:pointer;
+      background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6);
+      border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
+    .se-pqe-newq:hover { background:var(--sheetedit-btn-hover, #454b54); }
     .se-pqe-item { display:flex; align-items:center; gap:6px; padding:7px 12px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,.12); }
     .se-pqe-item:hover { background:var(--sheetedit-btn, #3a3f47); }
     .se-pqe-item.sel { background:var(--sheetedit-accent, #6e7bff); color:#fff; }
@@ -194,8 +200,16 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   const queriesPane = document.createElement("div");
   queriesPane.className = "se-pqe-queries";
   const queriesHead = document.createElement("div");
-  queriesHead.className = "se-pqe-pane-h";
-  queriesHead.textContent = t("pqQueries");
+  queriesHead.className = "se-pqe-pane-h se-pqe-pane-h-row";
+  const queriesHeadLbl = document.createElement("span");
+  queriesHeadLbl.textContent = t("pqQueries");
+  const newQueryBtn = document.createElement("button");
+  newQueryBtn.className = "se-pqe-newq";
+  newQueryBtn.type = "button";
+  newQueryBtn.textContent = "+";
+  newQueryBtn.title = t("pqNewQuery");
+  newQueryBtn.addEventListener("click", () => void getData());
+  queriesHead.append(queriesHeadLbl, newQueryBtn);
   const queriesList = document.createElement("div");
   queriesPane.append(queriesHead, queriesList);
 
@@ -262,8 +276,14 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       const label = document.createElement("span");
       label.className = "se-pqe-item-name";
       label.textContent = name;
-      item.appendChild(label);
+      const del = document.createElement("button");
+      del.className = "se-pqe-item-x";
+      del.textContent = "×";
+      del.title = t("pqDeleteQuery");
+      del.addEventListener("click", (ev) => { ev.stopPropagation(); void deleteQuery(name); });
+      item.append(label, del);
       item.addEventListener("click", () => void selectQuery(name));
+      label.addEventListener("dblclick", (ev) => { ev.stopPropagation(); beginRenameQuery(item, label, name); });
       queriesList.appendChild(item);
     }
   }
@@ -497,15 +517,14 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     return { el: wrap, get: () => input.value };
   }
 
-  function openDialog(spec: TransformSpec, cols: string[]): Promise<Record<string, string | string[]> | null> {
+  function showFieldsDialog(dlgTitle: string, fields: TfField[], cols: string[]): Promise<Record<string, string | string[]> | null> {
     return new Promise((resolve) => {
       modal.textContent = "";
       const card = document.createElement("div");
       card.className = "se-pqe-card";
       const h = document.createElement("h3");
-      h.textContent = spec.label;
+      h.textContent = dlgTitle;
       card.appendChild(h);
-      const fields = spec.fields(cols);
       const getters = fields.map((f) => { const r = renderField(f, cols); card.appendChild(r.el); return { key: f.key, get: r.get }; });
       const actions = document.createElement("div");
       actions.className = "se-pqe-card-actions";
@@ -532,7 +551,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     // Transforms append to the query's final result; make sure it's the previewed step so the
     // column pickers reflect the insertion point.
     if (curStep !== curInTarget) await selectStep(curInTarget);
-    const values = await openDialog(spec, previewColumns);
+    const values = await showFieldsDialog(spec.label, spec.fields(previewColumns), previewColumns);
     if (!values) return;
     const prevRaw = steps.find((s) => s.name === curInTarget)?.rawName ?? curInTarget;
     const expr = spec.buildM(prevRaw, values);
@@ -548,6 +567,84 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     } catch (e) {
       foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
     }
+  }
+
+  // ---- Get Data / query management ----
+  const first = (v: string | string[] | undefined): string => (Array.isArray(v) ? (v[0] ?? "") : (v ?? ""));
+  function uniqueQueryName(): string {
+    for (let i = 1; ; i++) if (!queryNames.includes(`Query${i}`)) return `Query${i}`;
+  }
+  function buildSource(src: string, v: Record<string, string | string[]>): string {
+    if (src === "table") return `let\n    Source = Excel.CurrentWorkbook(){[Name=${strLit(first(v.table))}]}[Content]\nin\n    Source`;
+    if (src === "web") {
+      const url = strLit(first(v.url));
+      if (first(v.format) === "json") return `let\n    Source = Json.Document(Web.Contents(${url}))\nin\n    Source`;
+      return `let\n    Source = Csv.Document(Web.Contents(${url}), [Delimiter=",", QuoteStyle=QuoteStyle.Csv]),\n    #"Promoted Headers" = Table.PromoteHeaders(Source)\nin\n    #"Promoted Headers"`;
+    }
+    return `let\n    Source = #table({"Column1"}, {})\nin\n    Source`;
+  }
+  async function getData(): Promise<void> {
+    const tables = listWorkbookTables(wb).map((tb) => tb.displayName);
+    const opts = [{ value: "table", label: t("pqFromTable") }, { value: "web", label: t("pqFromWeb") }, { value: "blank", label: t("pqBlank") }];
+    const pick = await showFieldsDialog(t("pqGetData"), [{ key: "source", label: t("pqSource"), type: "select", options: opts }], []);
+    if (!pick) return;
+    const src = first(pick.source);
+    const suggested = uniqueQueryName();
+    const nameField: TfField = { key: "name", label: t("pqQueryName"), type: "text", default: suggested };
+    let fields: TfField[];
+    if (src === "table") fields = [nameField, { key: "table", label: t("pqSourceTable"), type: "select", options: tables.map((n) => ({ value: n, label: n })) }];
+    else if (src === "web") fields = [nameField, { key: "url", label: t("pqSourceUrl"), type: "text", placeholder: "https://…" }, { key: "format", label: t("pqWebFormat"), type: "select", options: [{ value: "csv", label: "CSV" }, { value: "json", label: "JSON" }] }];
+    else fields = [nameField];
+    const v = await showFieldsDialog(t("pqGetData"), fields, []);
+    if (!v) return;
+    const qname = first(v.name).trim() || suggested;
+    try {
+      const { addMember } = await import("mlang/steps");
+      draft = await addMember(draft, qname, buildSource(src, v), { shared: true });
+      await renderQueries();
+      await selectQuery(qname);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+  async function deleteQuery(name: string): Promise<void> {
+    try {
+      const { removeMember } = await import("mlang/steps");
+      draft = await removeMember(draft, name);
+      if (curQuery === name) { curQuery = null; curStep = null; steps = []; preview.textContent = ""; foot.textContent = ""; setRibbonEnabled(false); }
+      await renderQueries();
+      if (curQuery === null && queryNames[0]) await selectQuery(queryNames[0]);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+  function beginRenameQuery(item: HTMLElement, label: HTMLElement, oldName: string): void {
+    const input = document.createElement("input");
+    input.className = "se-pqe-name-in";
+    input.value = oldName;
+    item.replaceChild(input, label);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (commit: boolean): Promise<void> => {
+      if (done) return; done = true;
+      const newName = input.value.trim();
+      if (commit && newName && newName !== oldName) {
+        try {
+          const { renameMember } = await import("mlang/steps");
+          draft = await renameMember(draft, oldName, newName);
+          if (curQuery === oldName) curQuery = newName;
+        } catch (e) {
+          foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+        }
+      }
+      await renderQueries();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); void finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); void finish(false); }
+    });
+    input.addEventListener("blur", () => void finish(true));
   }
 
   fxArea.addEventListener("keydown", (ev) => {
