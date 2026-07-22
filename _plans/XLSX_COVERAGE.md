@@ -28,29 +28,26 @@ with its sibling elements intact:
 
 - Charts, images, shapes, drawings
 - Pivot tables and caches (not refreshed)
-- Conditional formatting (not applied to the displayed cells)
-- Data validation / dropdowns (rules kept, no dropdown UI)
-- Hyperlinks (not shown or clickable)
-- Comments, notes, threaded comments
 - Sparklines, form controls, slicers
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
   settings, autofilter state, outline grouping, themes
 
+Now rendered (were inert): hyperlinks (click), data-validation dropdowns, conditional
+formatting (dxf / colour scales / data bars), comments and notes. See Progress below.
+
 ## Gaps / not handled
 
-- No sheet management UI: cannot add, rename, delete, reorder, hide, or colour sheets from the
-  grid. A sheet is only created programmatically when Power Query loads to a new destination.
 - No dynamic-array / spill computation; only legacy array formulas are preserved (not re-spilled).
-- No editing of the preserved-only features above.
-- Secondary ranges are not shifted on insert/delete: formula refs and merges are rewritten, but
-  conditional-formatting, data-validation and hyperlink ranges are not, so they can go stale.
+- No editing of the preserved-only features above (charts, pivots, sparklines, protection); the
+  now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
+- Conditional formatting: icon sets, arbitrary expression rules and time-period rules round-trip
+  but are not rendered; cellIs operands are numeric literals (cell-ref/formula operands skipped).
 - No rich text within one cell: a multi-format string renders as plain text with a single style.
 - Recalc is a subset: unsupported functions or circular refs yield an error value (cached value
   shown as fallback); exotic custom number-format codes may render slightly differently (SSF).
 
 ## Correctness caveats
 
-- CF/DV/hyperlink range staleness after structural edits.
 - Editing a shared-string cell rewrites it as an inline string (its sharedStrings entry can
   become unreferenced).
 - Power Query load-to-new-sheet writes plain cells, not a live refreshable ListObject, and is
