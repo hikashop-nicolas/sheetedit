@@ -85,6 +85,22 @@ other native sources can only be refreshed in Excel and are reported as such. Po
 `.xlsx`-only (OpenDocument has no equivalent payload). The editor is fully responsive: on
 narrow screens the ribbon goes icon-only and the side panels become drawers.
 
+## Charts
+
+sheetedit renders the charts already in a workbook (xlsx DrawingML and ods embedded chart
+objects) as live [Chart.js](https://www.chartjs.org/) canvases floating over the grid, anchored
+to their cells and updated as you edit the underlying data. You can also **create** charts: the
+Insert-chart button opens a dialog (type, data range, options, live preview), and a selected
+chart can be moved, resized, retyped or deleted. Created and edited charts are **saved back** to
+both formats (DrawingML for xlsx, an embedded chart object for ods) so Excel and LibreOffice open
+and re-edit them natively; charts you only view round-trip untouched. Chart.js is loaded lazily,
+only when a workbook has (or gains) a chart.
+
+Covered types: column, bar, line, area, pie, doughnut, scatter, bubble and radar. Not covered
+(rendered approximately or skipped): surface, stock, waterfall and other types with no Chart.js
+equivalent, plus deep formatting (trendlines, per-point styling). Chart rendering is an
+approximation, not pixel-identical to Excel/LibreOffice.
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the

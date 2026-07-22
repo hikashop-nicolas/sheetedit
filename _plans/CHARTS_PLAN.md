@@ -173,4 +173,6 @@ phase, same honesty as the Power Query load-to note.
 - (DONE) Phase 3: create/edit UI - insert dialog (type/range/options/live preview), select + edit toolbar (change type, delete), move/resize handles; chart-build.ts + chart-insert.ts. Browser-verified.
 - (DONE) Phase 4: xlsx writer (adapters/xlsx/chart-write.ts) - DrawingML chart part + anchor/drawing/rels/content-type registration for created charts; rewrite part + anchor for edited ones. Round-trip unit-tested through the reader; NOT real-Excel-verified.
 - (DONE) Phase 5: ods writer (adapters/ods/chart-write.ts) - embedded Object N/ (chart:chart + internal data table) + manifest + draw:frame in content.xml. Round-trip unit-tested; anchor absolute-approximate (default-width sheets).
-- (pending) Phase 6: polish
+- (DONE) Phase 6 (core): Cypress e2e (cypress/e2e/charts.cy.ts, fixture chart.xlsx) - renders an
+  existing chart + creates one via the insert dialog. Deferred polish: combo/stacked-secondary
+  axes, data labels, per-point colours/theme, touch drag on mobile (move/resize is mouse-only).
