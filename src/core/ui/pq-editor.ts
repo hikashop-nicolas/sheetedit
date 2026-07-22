@@ -22,6 +22,9 @@ export interface QueryEditorDeps {
   attachedFiles: Record<string, Uint8Array>;
   /** Persist an edited Section1.m into the workbook (rewrites the DataMashup blob) and mark dirty. */
   save(newSectionM: string): void;
+  /** Load a query result into the workbook (existing destination table, or a new sheet) and
+      refresh the grid. Returns where it landed. Absent hosts hide the Load button. */
+  loadQuery?(name: string, result: MTable): { sheetName: string; rows: number };
   /** Called after a successful Save & Close, so the host can relist/refresh. */
   onSaved?(): void;
 }
@@ -153,13 +156,18 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   title.textContent = t("pqEditorTitle");
   const spacer = document.createElement("span");
   spacer.className = "se-pqe-spacer";
+  const loadBtn = document.createElement("button");
+  loadBtn.className = "se-pqe-btn";
+  loadBtn.textContent = t("pqLoad");
+  loadBtn.title = t("pqLoadTitle");
+  loadBtn.hidden = !deps.loadQuery;
   const saveBtn = document.createElement("button");
   saveBtn.className = "se-pqe-btn primary";
   saveBtn.textContent = t("pqSaveClose");
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "se-pqe-btn";
   cancelBtn.textContent = t("pqCancel");
-  bar.append(title, spacer, cancelBtn, saveBtn);
+  bar.append(title, spacer, loadBtn, cancelBtn, saveBtn);
 
   // Transform ribbon: each button appends a step to the query's final result.
   const ribbon = document.createElement("div");
@@ -652,6 +660,31 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); void commitFormula(); }
   });
   fxArea.addEventListener("blur", () => void commitFormula());
+
+  // Load the current query's FULL result (uncapped) into the workbook, and persist its M so a
+  // later refresh reproduces the same data.
+  async function loadCurrent(): Promise<void> {
+    if (!curQuery || !deps.loadQuery) return;
+    loadBtn.disabled = true;
+    foot.textContent = t("pqPreviewing");
+    try {
+      const { evaluateSection, isMissingConnector, missingConnectorName } = await import("mlang");
+      let result: MValue;
+      try {
+        result = await evaluateSection(draft, await buildPqHost({ wb, attachedFiles })).then((s) => s.run(curQuery!));
+      } catch (e) {
+        foot.innerHTML = `<span class="err">${escapeHtml(isMissingConnector(e) ? t("pqPreviewExternal", { connector: missingConnectorName(e) }) : (e as Error).message)}</span>`;
+        return;
+      }
+      if (result.kind !== "table") { foot.innerHTML = `<span class="err">${escapeHtml(t("pqLoadNotTable", { kind: result.kind }))}</span>`; return; }
+      deps.save(draft);
+      const { sheetName, rows } = deps.loadQuery(curQuery, result as MTable);
+      foot.textContent = t("pqLoaded", { rows, sheet: sheetName });
+    } finally {
+      loadBtn.disabled = false;
+    }
+  }
+  loadBtn.addEventListener("click", () => void loadCurrent());
 
   cancelBtn.addEventListener("click", close);
   saveBtn.addEventListener("click", () => {

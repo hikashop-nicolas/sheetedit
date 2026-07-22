@@ -5,7 +5,7 @@ import { createFormulaBar } from "./ui/formulabar";
 import { setupFormulaAssist } from "./ui/formula-assist";
 import { setupQueryPanel } from "./ui/query-panel";
 import { setupQueryEditor } from "./ui/pq-editor";
-import { applyQueryResult, touchedPositions, workbookHasQueries } from "../adapters/xlsx/tables";
+import { applyQueryResult, loadResultToNewSheet, listWorkbookTables, tableForQuery, touchedPositions, workbookHasQueries } from "../adapters/xlsx/tables";
 import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
@@ -1025,6 +1025,18 @@ export function createSheetEditor(
           wb.files = writeWorkbookSectionM(wb.files, newM);
           mark();
         });
+      },
+      loadQuery: (name, result) => {
+        // Load into the query's existing destination table if there is one, otherwise onto a
+        // fresh sheet. Either way recalc, refresh the tabs and jump to where it landed.
+        const existing = tableForQuery(listWorkbookTables(wb), name);
+        const sheetIdx = existing ? existing.sheetIndex : loadResultToNewSheet(wb, name, result).sheetIndex;
+        if (existing) applyQueryResult(wb, existing, result);
+        recalc(wb);
+        mark();
+        if (sheetIdx === active) { renderTabs(); renderGrid(); }
+        else switchSheet(sheetIdx);
+        return { sheetName: wb.sheets[sheetIdx]?.name ?? name, rows: result.rows.length };
       },
     });
     const EDIT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2.5l2.5 2.5M8.5 5L11 2.5 13.5 5 5 13.5H2.5V11z"/></svg>`;

@@ -2,6 +2,7 @@ import { strFromU8 } from "fflate";
 import type { MValue } from "mlang";
 import { colToLetters, getCell, parseA1Ref, parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
 import { setCellInput } from "../../core/workbook";
+import { createWorksheet, uniqueSheetName } from "./sheet-create";
 
 // Excel table (ListObject) helpers for the Power Query integration: list the workbook's
 // tables, expose one as an mlang table value (Excel.CurrentWorkbook), and write a query
@@ -219,4 +220,16 @@ export function applyQueryResult(wb: Workbook, tbl: WorkbookTable, result: MTabl
   tbl.r2 = ext.r2;
   tbl.c2 = ext.c2;
   return { rows: result.rows.length };
+}
+
+/** Load a query result onto a brand-new sheet (header row + data), for a query with no existing
+    destination table. Returns the new sheet's index. Values are written as plain cells (not a
+    live ListObject); a merchant can save and reopen the workbook to see the data. */
+export function loadResultToNewSheet(wb: Workbook, queryName: string, result: MTable): { sheetIndex: number; rows: number } {
+  const sheet = createWorksheet(wb, uniqueSheetName(wb, queryName));
+  result.columns.forEach((name, c) => setCellInput(sheet, 1, c + 1, name));
+  result.rows.forEach((row, r) => {
+    result.columns.forEach((_, c) => setCellInput(sheet, r + 2, c + 1, rawFor(row[c] ?? { kind: "null" })));
+  });
+  return { sheetIndex: wb.sheets.length - 1, rows: result.rows.length };
 }
