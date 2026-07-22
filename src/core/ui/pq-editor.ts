@@ -1,5 +1,6 @@
 import { t } from "../i18n";
 import { buildPqHost } from "./pq-host";
+import { TRANSFORMS, type TransformSpec, type TfField } from "./pq-transforms";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
 
@@ -45,6 +46,27 @@ function injectStyles(): void {
     .se-pqe-btn:hover:not(:disabled) { background:var(--sheetedit-btn-hover, #454b54); }
     .se-pqe-btn:disabled { opacity:.5; cursor:default; }
     .se-pqe-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    .se-pqe-ribbon { display:flex; flex-wrap:wrap; align-items:center; gap:3px; padding:5px 10px;
+      background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-rbtn { font:inherit; font-size:12px; background:transparent; color:var(--sheetedit-text, #e6e6e6);
+      border:1px solid transparent; border-radius:5px; padding:4px 9px; cursor:pointer; white-space:nowrap; }
+    .se-pqe-rbtn:hover:not(:disabled) { background:var(--sheetedit-btn, #3a3f47); border-color:var(--sheetedit-btn-border, #4a4f57); }
+    .se-pqe-rbtn:disabled { opacity:.4; cursor:default; }
+    .se-pqe-rsep { width:1px; align-self:stretch; background:var(--sheetedit-border, #1c1f24); margin:2px 4px; }
+    .se-pqe-rgroup { color:var(--sheetedit-muted, #aab2bf); font-size:10px; text-transform:uppercase; letter-spacing:.05em; padding:0 4px 0 2px; }
+    .se-pqe-modal { position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); }
+    .se-pqe-modal[hidden] { display:none; }
+    .se-pqe-card { width:min(420px,92%); max-height:80%; overflow:auto; background:var(--sheetedit-chrome, #2b2f36);
+      border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.5); padding:16px; }
+    .se-pqe-card h3 { margin:0 0 12px; font-size:15px; }
+    .se-pqe-field { display:flex; flex-direction:column; gap:4px; margin-bottom:11px; }
+    .se-pqe-field > span { color:var(--sheetedit-muted, #aab2bf); font-size:12px; }
+    .se-pqe-field input, .se-pqe-field select { font:inherit; background:var(--sheetedit-border, #1c1f24);
+      border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); padding:5px 8px; }
+    .se-pqe-checks { display:flex; flex-direction:column; gap:3px; max-height:180px; overflow:auto;
+      border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; padding:6px 8px; background:var(--sheetedit-border, #1c1f24); }
+    .se-pqe-checks label { display:flex; align-items:center; gap:7px; font-size:13px; }
+    .se-pqe-card-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
     .se-pqe-fx { display:flex; align-items:stretch; gap:6px; padding:6px 12px;
       background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .se-pqe-fx-lbl { align-self:center; color:var(--sheetedit-muted, #aab2bf); font:12px ui-monospace,monospace; }
@@ -133,6 +155,28 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   cancelBtn.textContent = t("pqCancel");
   bar.append(title, spacer, cancelBtn, saveBtn);
 
+  // Transform ribbon: each button appends a step to the query's final result.
+  const ribbon = document.createElement("div");
+  ribbon.className = "se-pqe-ribbon";
+  const ribbonButtons: HTMLButtonElement[] = [];
+  {
+    let lastGroup = "";
+    for (const spec of TRANSFORMS) {
+      if (spec.group !== lastGroup) {
+        if (lastGroup) { const sep = document.createElement("span"); sep.className = "se-pqe-rsep"; ribbon.appendChild(sep); }
+        const g = document.createElement("span"); g.className = "se-pqe-rgroup"; g.textContent = spec.group; ribbon.appendChild(g);
+        lastGroup = spec.group;
+      }
+      const b = document.createElement("button");
+      b.className = "se-pqe-rbtn";
+      b.type = "button";
+      b.textContent = spec.label;
+      b.addEventListener("click", () => void applyTransform(spec));
+      ribbonButtons.push(b);
+      ribbon.appendChild(b);
+    }
+  }
+
   // Formula bar
   const fx = document.createElement("div");
   fx.className = "se-pqe-fx";
@@ -172,7 +216,13 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   settingsPane.append(settingsHead, stepsList);
 
   main.append(queriesPane, center, settingsPane);
-  overlay.append(bar, fx, main);
+
+  // Transform dialog (a modal within the overlay).
+  const modal = document.createElement("div");
+  modal.className = "se-pqe-modal";
+  modal.hidden = true;
+
+  overlay.append(bar, ribbon, fx, main, modal);
   wrap.appendChild(overlay);
 
   // ---- state ----
@@ -180,8 +230,12 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   let queryNames: string[] = [];
   let curQuery: string | null = null;
   let curStep: string | null = null;
+  let curInTarget: string | null = null; // the query's returned (final) step
   let steps: { name: string; rawName: string; expression: string }[] = [];
+  let previewColumns: string[] = []; // columns of the last table preview (for transform pickers)
   let previewToken = 0;
+
+  const setRibbonEnabled = (on: boolean): void => { for (const b of ribbonButtons) b.disabled = !on; };
 
   function close(): void {
     overlay.hidden = true;
@@ -220,13 +274,16 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     try {
       const parsed = await parseMemberSteps(draft, name);
       steps = parsed.steps;
+      curInTarget = parsed.inTarget;
       // Select the returned step (the `in` target) by default, like Excel.
       curStep = parsed.steps.find((s) => s.name === parsed.inTarget)?.name ?? parsed.steps[parsed.steps.length - 1]?.name ?? null;
     } catch (e) {
       steps = [];
       curStep = null;
+      curInTarget = null;
       foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
     }
+    setRibbonEnabled(steps.length > 0);
     await renderQueries();
     renderSteps();
     if (curStep) await selectStep(curStep);
@@ -288,6 +345,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
 
   function renderPreview(result: MValue): void {
     preview.textContent = "";
+    previewColumns = result.kind === "table" ? result.columns : [];
     if (result.kind !== "table") {
       const box = document.createElement("div");
       box.className = "se-pqe-scalar";
@@ -354,6 +412,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       draft = await removeStep(draft, curQuery, name);
       const parsed = await parseMemberSteps(draft, curQuery);
       steps = parsed.steps;
+      curInTarget = parsed.inTarget;
       curStep = parsed.steps.find((s) => s.name === parsed.inTarget)?.name ?? parsed.steps[parsed.steps.length - 1]?.name ?? null;
       renderSteps();
       if (curStep) await selectStep(curStep);
@@ -392,6 +451,105 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     input.addEventListener("blur", () => void finish(true));
   }
 
+  function uniqueStepName(base: string): string {
+    if (!steps.some((s) => s.name === base)) return base;
+    for (let i = 1; ; i++) if (!steps.some((s) => s.name === `${base} ${i}`)) return `${base} ${i}`;
+  }
+
+  /** Render one dialog field and return a getter for its collected value. */
+  function renderField(f: TfField, cols: string[]): { el: HTMLElement; get(): string | string[] } {
+    const wrap = document.createElement("label");
+    wrap.className = "se-pqe-field";
+    const span = document.createElement("span");
+    span.textContent = f.label;
+    wrap.appendChild(span);
+    if (f.type === "columns" && f.multi) {
+      const box = document.createElement("div");
+      box.className = "se-pqe-checks";
+      const boxes: HTMLInputElement[] = [];
+      for (const c of cols) {
+        const l = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = c;
+        boxes.push(cb);
+        const txt = document.createElement("span");
+        txt.textContent = c;
+        l.append(cb, txt);
+        box.appendChild(l);
+      }
+      wrap.appendChild(box);
+      return { el: wrap, get: () => boxes.filter((b) => b.checked).map((b) => b.value) };
+    }
+    if (f.type === "columns" || f.type === "select") {
+      const sel = document.createElement("select");
+      const opts = f.type === "columns" ? cols.map((c) => ({ value: c, label: c })) : (f.options ?? []);
+      for (const o of opts) { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; sel.appendChild(op); }
+      if (f.default) sel.value = f.default;
+      wrap.appendChild(sel);
+      return { el: wrap, get: () => sel.value };
+    }
+    const input = document.createElement("input");
+    input.type = f.type === "number" ? "number" : "text";
+    if (f.placeholder) input.placeholder = f.placeholder;
+    if (f.default) input.value = f.default;
+    wrap.appendChild(input);
+    return { el: wrap, get: () => input.value };
+  }
+
+  function openDialog(spec: TransformSpec, cols: string[]): Promise<Record<string, string | string[]> | null> {
+    return new Promise((resolve) => {
+      modal.textContent = "";
+      const card = document.createElement("div");
+      card.className = "se-pqe-card";
+      const h = document.createElement("h3");
+      h.textContent = spec.label;
+      card.appendChild(h);
+      const fields = spec.fields(cols);
+      const getters = fields.map((f) => { const r = renderField(f, cols); card.appendChild(r.el); return { key: f.key, get: r.get }; });
+      const actions = document.createElement("div");
+      actions.className = "se-pqe-card-actions";
+      const cancel = document.createElement("button");
+      cancel.className = "se-pqe-btn";
+      cancel.textContent = t("pqCancel");
+      const ok = document.createElement("button");
+      ok.className = "se-pqe-btn primary";
+      ok.textContent = t("pqApply");
+      actions.append(cancel, ok);
+      card.appendChild(actions);
+      modal.appendChild(card);
+      modal.hidden = false;
+      const done = (v: Record<string, string | string[]> | null): void => { modal.hidden = true; modal.textContent = ""; resolve(v); };
+      cancel.addEventListener("click", () => done(null));
+      modal.addEventListener("click", (e) => { if (e.target === modal) done(null); });
+      ok.addEventListener("click", () => { const v: Record<string, string | string[]> = {}; for (const g of getters) v[g.key] = g.get(); done(v); });
+      (card.querySelector("input, select") as HTMLElement | null)?.focus();
+    });
+  }
+
+  async function applyTransform(spec: TransformSpec): Promise<void> {
+    if (!curQuery || !curInTarget) return;
+    // Transforms append to the query's final result; make sure it's the previewed step so the
+    // column pickers reflect the insertion point.
+    if (curStep !== curInTarget) await selectStep(curInTarget);
+    const values = await openDialog(spec, previewColumns);
+    if (!values) return;
+    const prevRaw = steps.find((s) => s.name === curInTarget)?.rawName ?? curInTarget;
+    const expr = spec.buildM(prevRaw, values);
+    const name = uniqueStepName(spec.stepName);
+    try {
+      const { appendStep, parseMemberSteps } = await import("mlang/steps");
+      draft = await appendStep(draft, curQuery, name, expr);
+      const parsed = await parseMemberSteps(draft, curQuery);
+      steps = parsed.steps;
+      curInTarget = parsed.inTarget;
+      renderSteps();
+      await selectStep(name);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+
   fxArea.addEventListener("keydown", (ev) => {
     // Enter commits, Shift+Enter inserts a newline (M can be multi-line).
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); void commitFormula(); }
@@ -417,6 +575,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       overlay.hidden = false;
       preview.textContent = "";
       foot.textContent = "";
+      setRibbonEnabled(false);
       void renderQueries().then(() => { if (queryNames[0]) return selectQuery(queryNames[0]); });
     },
   };
