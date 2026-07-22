@@ -17,6 +17,7 @@ import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
+import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
@@ -115,6 +116,10 @@ export function injectStyles(): void {
     .sheetedit-table td.has-dv:hover .sheetedit-dvbtn, .sheetedit-table td.has-dv:focus-within .sheetedit-dvbtn, .sheetedit-table td.has-dv.sheetedit-sel .sheetedit-dvbtn { visibility:visible; }
     .sheetedit-table td.sheetedit-dv-invalid { box-shadow: inset 0 0 0 2px #e0533d; }
     .sheetedit-dvmenu { min-width:120px; max-height:240px; overflow-y:auto; }
+    /* Conditional-formatting data bar: a proportional bar behind the cell text. */
+    .sheetedit-table td.has-cfbar { position:relative; }
+    .sheetedit-cfbar { position:absolute; left:1px; top:2px; bottom:2px; z-index:0; border-radius:1px; opacity:.85; pointer-events:none; }
+    .sheetedit-table td.has-cfbar input { position:relative; z-index:1; background:transparent; }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -380,6 +385,7 @@ export function createSheetEditor(
   container.appendChild(wrap);
 
   let active = 0;
+  let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
   let inputs = new Map<string, HTMLInputElement>();
   let tds = new Map<string, HTMLElement>();
   // Extra rows/columns the user added beyond the sheet's used extent (per active sheet).
@@ -1297,9 +1303,10 @@ export function createSheetEditor(
     recordCells([{ r, c }], () => setCellInput(sheet, r, c, raw));
     recalc(wb);
     mark();
-    // A wrap cell's new text may change its row height (and its overlay); a validated cell may
-    // gain/lose its invalid flag; either way re-render. Otherwise just refresh displays.
-    if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c)) renderGrid();
+    // A wrap cell's new text may change its row height; a validated cell may gain/lose its
+    // invalid flag; a conditional-format edit can recolour the whole range; any of these needs a
+    // re-render. Otherwise just refresh displays.
+    if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c) || sheet.condFormats?.length) renderGrid();
     else refreshDisplays(sheet);
   };
 
@@ -1646,6 +1653,23 @@ export function createSheetEditor(
         caret.addEventListener("mousedown", (e) => e.preventDefault());
         caret.addEventListener("click", (e) => { e.stopPropagation(); openDvMenu(td, r, c, dv); });
         td.appendChild(caret);
+      }
+      // Conditional formatting: override fill/text/bold from the matched rule's dxf, or render a
+      // colour-scale fill / data bar.
+      const cfv = condVisuals.get(key(r, c));
+      if (cfv) {
+        if (cfv.bg) td.style.background = cfv.bg;
+        if (cfv.color) input.style.color = cfv.color;
+        if (cfv.bold) input.style.fontWeight = "bold";
+        if (cfv.italic) input.style.fontStyle = "italic";
+        if (cfv.bar) {
+          td.classList.add("has-cfbar");
+          const bar = document.createElement("div");
+          bar.className = "sheetedit-cfbar";
+          bar.style.width = `${Math.round(cfv.bar.pct * 100)}%`;
+          bar.style.background = cfv.bar.color;
+          td.insertBefore(bar, td.firstChild);
+        }
       }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
@@ -2133,6 +2157,7 @@ export function createSheetEditor(
     totalCols = Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols;
     renderedRows = totalRows;
     renderedCols = totalCols;
+    condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet) : new Map();
     computeWrapHeights(sheet); // measure wrap cells so rows grow to fit
     rebuildSizeIndexes(sheet);
 

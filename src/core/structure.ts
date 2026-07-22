@@ -531,6 +531,12 @@ export function applyLineOp(wb: Workbook, sheetIdx: number, op: LineOp, rewriteR
       .map((v) => ({ ...v, ranges: v.ranges.map((g) => shiftRect(g, op)).filter((g): g is Rect => g != null) }))
       .filter((v) => v.ranges.length > 0);
   }
+  // Conditional-formatting ranges (model, used for rendering) follow the edit too.
+  if (sheet.condFormats?.length) {
+    sheet.condFormats = sheet.condFormats
+      .map((cf) => ({ ...cf, ranges: cf.ranges.map((g) => shiftRect(g, op)).filter((g): g is Rect => g != null) }))
+      .filter((cf) => cf.ranges.length > 0);
+  }
 
   // Row heights / column widths follow their lines.
   if (op.axis === "row") sheet.rowHeights = shiftNumMap(sheet.rowHeights, op);

@@ -1,5 +1,6 @@
 import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
 import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
+import { parseDxfs, readCondFormats } from "./condformat";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
@@ -215,6 +216,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const theme = readTheme(files["xl/theme/theme1.xml"]);
   wb.stylesDoc = files["xl/styles.xml"] ? parseXmlOpt(files["xl/styles.xml"]) : undefined;
   const styles = readXlsxStyles(wb.stylesDoc, theme);
+  const dxfs = parseDxfs(wb.stylesDoc, theme);
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
@@ -297,6 +299,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       if (sheetData) readSheetData(sheet, sheetData, shared, styles);
       readHyperlinks(sheet, doc, files, path);
       readDataValidations(sheet, doc);
+      readCondFormats(sheet, doc, dxfs, theme);
     }
     wb.sheets.push(sheet);
   }

@@ -39,6 +39,29 @@ export interface DataValidation {
   allowBlank?: boolean;
 }
 
+/** A differential format (dxf) a conditional-formatting rule applies when it matches. */
+export interface CfDxf { bg?: string; color?: string; bold?: boolean; italic?: boolean; }
+
+/** One conditional-formatting rule (a subset of the xlsx cfRule types). */
+export interface CfRule {
+  priority: number;
+  stopIfTrue?: boolean;
+  type: string; // cellIs, containsText, notContainsText, beginsWith, endsWith, top10, aboveAverage, duplicateValues, uniqueValues, colorScale, dataBar
+  operator?: string;
+  formulas?: string[];
+  text?: string;
+  dxf?: CfDxf;
+  rank?: number; // top10
+  percent?: boolean;
+  bottom?: boolean;
+  aboveAverage?: boolean; // aboveAverage direction
+  equalAverage?: boolean;
+  colorScale?: { cfvo: { type: string; val?: number }[]; colors: string[] };
+  dataBar?: { color: string; min: { type: string; val?: number }; max: { type: string; val?: number } };
+}
+
+export interface CondFormat { ranges: { r1: number; c1: number; r2: number; c2: number }[]; rules: CfRule[]; }
+
 /** A phonetic-guide (furigana) run: the reading shown above base[sb..eb). */
 export interface Phonetic {
   sb: number; // start base-char offset (inclusive)
@@ -117,6 +140,8 @@ export interface Sheet {
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
   /** List-type data validations (dropdowns), matched to cells by range at render time. */
   validations?: DataValidation[];
+  /** Conditional-formatting blocks (rules + the ranges they cover). */
+  condFormats?: CondFormat[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
