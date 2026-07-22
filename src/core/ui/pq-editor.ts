@@ -2,8 +2,18 @@ import { t } from "../i18n";
 import { buildPqHost } from "./pq-host";
 import { TRANSFORMS, strLit, nameList, quoteName, type TransformSpec, type TfField } from "./pq-transforms";
 import { listWorkbookTables } from "../../adapters/xlsx/tables";
+import { TRANSFORM_ICONS, APPEND_ICON, MERGE_ICON, LOAD_ICON, CANCEL_ICON, SAVE_ICON, NEWQUERY_ICON, svgIcon } from "./pq-icons";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
+
+/** Set a button's content to an SVG icon followed by a text label. */
+function iconLabel(btn: HTMLButtonElement, inner: string, label: string): void {
+  btn.textContent = "";
+  btn.appendChild(svgIcon(inner));
+  const span = document.createElement("span");
+  span.textContent = label;
+  btn.appendChild(span);
+}
 
 // Full-window Power Query editor: a queries pane, an Applied Steps pane, a live preview grid
 // and a formula bar. A query is a `let` expression; its steps are the let bindings and the `in`
@@ -44,16 +54,18 @@ function injectStyles(): void {
       background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .se-pqe-title { font-weight:600; }
     .se-pqe-spacer { flex:1; }
-    .se-pqe-btn { font:inherit; font-size:13px; background:var(--sheetedit-btn, #3a3f47);
+    .se-pqe-btn { font:inherit; font-size:13px; display:inline-flex; align-items:center; gap:6px; background:var(--sheetedit-btn, #3a3f47);
       color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
       border-radius:6px; padding:5px 12px; cursor:pointer; }
+    .se-pqe-btn svg { display:block; }
     .se-pqe-btn:hover:not(:disabled) { background:var(--sheetedit-btn-hover, #454b54); }
     .se-pqe-btn:disabled { opacity:.5; cursor:default; }
     .se-pqe-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
     .se-pqe-ribbon { display:flex; flex-wrap:wrap; align-items:center; gap:3px; padding:5px 10px;
       background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-rbtn { font:inherit; font-size:12px; background:transparent; color:var(--sheetedit-text, #e6e6e6);
+    .se-pqe-rbtn { font:inherit; font-size:12px; display:inline-flex; align-items:center; gap:6px; background:transparent; color:var(--sheetedit-text, #e6e6e6);
       border:1px solid transparent; border-radius:5px; padding:4px 9px; cursor:pointer; white-space:nowrap; }
+    .se-pqe-rbtn svg { display:block; flex:none; color:var(--sheetedit-accent, #6e7bff); }
     .se-pqe-rbtn:hover:not(:disabled) { background:var(--sheetedit-btn, #3a3f47); border-color:var(--sheetedit-btn-border, #4a4f57); }
     .se-pqe-rbtn:disabled { opacity:.4; cursor:default; }
     .se-pqe-rsep { width:1px; align-self:stretch; background:var(--sheetedit-border, #1c1f24); margin:2px 4px; }
@@ -84,9 +96,10 @@ function injectStyles(): void {
     .se-pqe-pane-h { padding:7px 12px; font-weight:600; color:var(--sheetedit-muted, #aab2bf);
       font-size:12px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .se-pqe-pane-h-row { display:flex; align-items:center; justify-content:space-between; }
-    .se-pqe-newq { font:inherit; font-size:15px; line-height:1; width:22px; height:22px; padding:0; cursor:pointer;
+    .se-pqe-newq { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; cursor:pointer;
       background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6);
       border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
+    .se-pqe-newq svg { display:block; }
     .se-pqe-newq:hover { background:var(--sheetedit-btn-hover, #454b54); }
     .se-pqe-item { display:flex; align-items:center; gap:6px; padding:7px 12px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,.12); }
     .se-pqe-item:hover { background:var(--sheetedit-btn, #3a3f47); }
@@ -163,15 +176,15 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   spacer.className = "se-pqe-spacer";
   const loadBtn = document.createElement("button");
   loadBtn.className = "se-pqe-btn";
-  loadBtn.textContent = t("pqLoad");
+  iconLabel(loadBtn, LOAD_ICON, t("pqLoad"));
   loadBtn.title = t("pqLoadTitle");
   loadBtn.hidden = !deps.loadQuery;
   const saveBtn = document.createElement("button");
   saveBtn.className = "se-pqe-btn primary";
-  saveBtn.textContent = t("pqSaveClose");
+  iconLabel(saveBtn, SAVE_ICON, t("pqSaveClose"));
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "se-pqe-btn";
-  cancelBtn.textContent = t("pqCancel");
+  iconLabel(cancelBtn, CANCEL_ICON, t("pqCancel"));
   bar.append(title, spacer, loadBtn, cancelBtn, saveBtn);
 
   // Transform ribbon: each button appends a step to the query's final result.
@@ -189,7 +202,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       const b = document.createElement("button");
       b.className = "se-pqe-rbtn";
       b.type = "button";
-      b.textContent = spec.label;
+      iconLabel(b, TRANSFORM_ICONS[spec.id] ?? "", spec.label);
       b.addEventListener("click", () => void applyTransform(spec));
       ribbonButtons.push(b);
       ribbon.appendChild(b);
@@ -197,11 +210,11 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     // Combine group: cross-query operations (handled specially, not plain Table.* on one input).
     const sep = document.createElement("span"); sep.className = "se-pqe-rsep"; ribbon.appendChild(sep);
     const cg = document.createElement("span"); cg.className = "se-pqe-rgroup"; cg.textContent = t("pqCombine"); ribbon.appendChild(cg);
-    for (const [label, fn] of [[t("pqAppend"), () => void appendQueries()], [t("pqMerge"), () => void mergeQueries()]] as const) {
+    for (const [icon, label, fn] of [[APPEND_ICON, t("pqAppend"), () => void appendQueries()], [MERGE_ICON, t("pqMerge"), () => void mergeQueries()]] as const) {
       const b = document.createElement("button");
       b.className = "se-pqe-rbtn";
       b.type = "button";
-      b.textContent = label;
+      iconLabel(b, icon, label);
       b.addEventListener("click", fn);
       ribbonButtons.push(b);
       ribbon.appendChild(b);
@@ -231,7 +244,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   const newQueryBtn = document.createElement("button");
   newQueryBtn.className = "se-pqe-newq";
   newQueryBtn.type = "button";
-  newQueryBtn.textContent = "+";
+  newQueryBtn.appendChild(svgIcon(NEWQUERY_ICON, 14));
   newQueryBtn.title = t("pqNewQuery");
   newQueryBtn.addEventListener("click", () => void getData());
   queriesHead.append(queriesHeadLbl, newQueryBtn);
