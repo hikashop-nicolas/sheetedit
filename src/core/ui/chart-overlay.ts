@@ -1,5 +1,6 @@
-import { cellDisplay, getCell, parseA1Ref, type Sheet, type Workbook } from "../model";
-import { CHART_PALETTE, type ChartModel, type ChartRef } from "../chart-model";
+import { type Sheet, type Workbook } from "../model";
+import { CHART_PALETTE, type ChartModel } from "../chart-model";
+import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 
 // The chart layer: floats a Chart.js canvas over the grid for every chart on the active sheet,
 // anchored to cells and kept glued while scrolling. The layer sits over the data area (below the
@@ -32,37 +33,9 @@ export async function loadChartJs(): Promise<ChartCtor> {
 }
 const ensureChartJs = async (): Promise<void> => { await loadChartJs(); };
 
-/** Resolve a data ref to values from the live sheet, falling back to the cached points. */
-function resolveRange(wb: Workbook, ref: string): { row: number; col: number; sheet: Sheet }[] | null {
-  const m = /^(?:'([^']+)'|([^!]+))!(.+)$/.exec(ref);
-  const sheetName = m ? (m[1] ?? m[2]) : undefined;
-  const body = (m ? m[3] : ref).replace(/\$/g, "");
-  const sheet = sheetName ? wb.sheets.find((s) => s.name === sheetName) : wb.sheets[0];
-  if (!sheet) return null;
-  const [a, b] = body.split(":");
-  const p1 = parseA1Ref(a ?? "");
-  const p2 = b ? parseA1Ref(b) : p1;
-  if (!p1 || !p2) return null;
-  const out: { row: number; col: number; sheet: Sheet }[] = [];
-  for (let r = Math.min(p1.row, p2.row); r <= Math.max(p1.row, p2.row); r++)
-    for (let c = Math.min(p1.col, p2.col); c <= Math.max(p1.col, p2.col); c++) out.push({ row: r, col: c, sheet });
-  return out;
-}
-const numbers = (wb: Workbook, ref: ChartRef | undefined): (number | null)[] => {
-  if (ref?.ref) { const cells = resolveRange(wb, ref.ref); if (cells) return cells.map(({ sheet, row, col }) => { const v = getCell(sheet, row, col)?.value ?? ""; const n = Number(v); return v !== "" && Number.isFinite(n) ? n : null; }); }
-  return (ref?.cache ?? []).map((v) => (typeof v === "number" ? v : v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null));
-};
-const labels = (wb: Workbook, ref: ChartRef | undefined): string[] => {
-  if (ref?.ref) { const cells = resolveRange(wb, ref.ref); if (cells) return cells.map(({ sheet, row, col }) => { const c = getCell(sheet, row, col); return c ? cellDisplay(c) : ""; }); }
-  return (ref?.cache ?? []).map((v) => (v == null ? "" : String(v)));
-};
-const nameOf = (wb: Workbook, name: ChartSeriesName): string | undefined => {
-  if (typeof name === "string") return name;
-  if (!name) return undefined;
-  const l = labels(wb, name);
-  return l[0] || undefined;
-};
-type ChartSeriesName = string | ChartRef | undefined;
+const numbers = resolveNumbers;
+const labels = resolveLabels;
+const nameOf = seriesName;
 
 /** Build a Chart.js config from the model + live data (shared by the overlay and the preview). */
 export function chartConfig(model: ChartModel, wb: Workbook): unknown {

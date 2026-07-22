@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import { strToU8, unzipSync, zipSync } from "fflate";
+import { readWorkbook, writeWorkbook } from "../../index";
+import { buildChart, defaultAnchor } from "../../core/chart-build";
+
+function dataXlsx(): Uint8Array {
+  const c = (ref: string, v: string | number, s = false) => (s ? `<c r="${ref}" t="inlineStr"><is><t>${v}</t></is></c>` : `<c r="${ref}"><v>${v}</v></c>`);
+  const sheet = strToU8(
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>` +
+      `<row r="1">${c("A1", "Qtr", true)}${c("B1", "North", true)}${c("C1", "South", true)}</row>` +
+      `<row r="2">${c("A2", "Q1", true)}${c("B2", 10)}${c("C2", 22)}</row>` +
+      `<row r="3">${c("A3", "Q2", true)}${c("B3", 30)}${c("C3", 14)}</row>` +
+      `</sheetData></worksheet>`,
+  );
+  return zipSync({
+    "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`),
+    "_rels/.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+    "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+    "xl/worksheets/sheet1.xml": sheet,
+    "xl/styles.xml": strToU8(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`),
+  });
+}
+
+describe("xlsx chart writer", () => {
+  it("a created chart survives write + re-read with its model intact", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 }; // A1:C3
+    const model = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "new1", defaultAnchor(rect));
+    model.title = "Quarterly";
+    model.legend = { show: true, pos: "bottom" };
+    (wb.sheets[0].charts ??= []).push(model);
+
+    const out = writeWorkbook(wb);
+    // The package gained a chart + drawing part.
+    const names = Object.keys(unzipSync(out));
+    expect(names.some((n) => /xl\/charts\/chart\d+\.xml/.test(n))).toBe(true);
+    expect(names.some((n) => /xl\/drawings\/drawing\d+\.xml/.test(n))).toBe(true);
+
+    const re = readWorkbook(out).sheets[0].charts!;
+    expect(re).toHaveLength(1);
+    expect(re[0].kind).toBe("column");
+    expect(re[0].title).toBe("Quarterly");
+    expect(re[0].legend).toEqual({ show: true, pos: "bottom" });
+    expect(re[0].categories?.ref).toBe("Sheet1!$A$2:$A$3");
+    expect(re[0].series).toHaveLength(2);
+    expect(re[0].series[0].values.ref).toBe("Sheet1!$B$2:$B$3");
+    // anchor round-trips (default anchor: to the right of the selection).
+    expect(re[0].anchor.fromCol).toBe(model.anchor.fromCol);
+    expect(re[0].anchor.toRow).toBe(model.anchor.toRow);
+  });
+
+  it("changing a chart's type and re-saving keeps a single chart of the new kind", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const model = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "new1", defaultAnchor(rect));
+    (wb.sheets[0].charts ??= []).push(model);
+    const wb2 = readWorkbook(writeWorkbook(wb));
+    // Edit: change type to line, re-save.
+    wb2.sheets[0].charts![0].kind = "line";
+    wb2.sheets[0].charts![0].dirty = true;
+    const re = readWorkbook(writeWorkbook(wb2)).sheets[0].charts!;
+    expect(re).toHaveLength(1);
+    expect(re[0].kind).toBe("line");
+  });
+});
