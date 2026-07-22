@@ -4,6 +4,7 @@ import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
 import { setupFormulaAssist } from "./ui/formula-assist";
 import { setupQueryPanel } from "./ui/query-panel";
+import { setupQueryEditor } from "./ui/pq-editor";
 import { applyQueryResult, touchedPositions, workbookHasQueries } from "../adapters/xlsx/tables";
 import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
@@ -990,9 +991,12 @@ export function createSheetEditor(
   // the result through the model (undo-recorded when the target sheet is active) and the
   // table part's @ref is resized by applyQueryResult.
   if (wb.kind === "xlsx" && workbookHasQueries(wb.files)) {
+    // Files attached for File.Contents, shared between the quick-refresh panel and the editor.
+    const pqFiles: Record<string, Uint8Array> = {};
     const panel = setupQueryPanel({
       wrap,
       wb,
+      attachedFiles: pqFiles,
       apply: (target, result, opts) => {
         const run = () => applyQueryResult(wb, target, result);
         // On-open auto-refresh is silent: no undo step and no dirty mark (it wasn't a user edit).
@@ -1010,6 +1014,27 @@ export function createSheetEditor(
     const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
     const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
     toolbar.append(qBtn);
+
+    // Full Power Query editor (Applied Steps + live preview). Reads/writes Section1.m via qdeff.
+    const editor = setupQueryEditor({
+      wrap,
+      wb,
+      attachedFiles: pqFiles,
+      save: (newM) => {
+        void import("mlang/qdeff").then(({ writeWorkbookSectionM }) => {
+          wb.files = writeWorkbookSectionM(wb.files, newM);
+          mark();
+        });
+      },
+    });
+    const EDIT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2.5l2.5 2.5M8.5 5L11 2.5 13.5 5 5 13.5H2.5V11z"/></svg>`;
+    const eBtn = tbIcon(EDIT_ICON, t("queryEdit"), () => {
+      void import("mlang/qdeff").then(({ readWorkbookQueries }) => {
+        const q = readWorkbookQueries(wb.files);
+        if (q) editor.open(q.mashup.sectionM);
+      });
+    });
+    toolbar.append(eBtn);
   }
 
   const mark = () => {

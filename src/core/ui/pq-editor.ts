@@ -1,0 +1,427 @@
+import { t } from "../i18n";
+import { buildPqHost } from "./pq-host";
+import type { Workbook } from "../model";
+import type { MValue } from "mlang";
+
+// Full-window Power Query editor: a queries pane, an Applied Steps pane, a live preview grid
+// and a formula bar. A query is a `let` expression; its steps are the let bindings and the `in`
+// clause names the returned one. Selecting a step evaluates the query up to that point through
+// the workbook-backed host connectors and shows the result (row-capped). All edits accumulate
+// in an in-memory draft of Section1.m; Save & Close writes it back via qdeff. mlang and the
+// step API are lazy-imported, so the base editor bundle never carries them.
+
+type MTable = Extract<MValue, { kind: "table" }>;
+
+const PREVIEW_ROWS = 1000; // Excel-style preview cap
+
+export interface QueryEditorDeps {
+  wrap: HTMLElement; // the editor chrome (overlay parent)
+  wb: Workbook;
+  attachedFiles: Record<string, Uint8Array>;
+  /** Persist an edited Section1.m into the workbook (rewrites the DataMashup blob) and mark dirty. */
+  save(newSectionM: string): void;
+  /** Called after a successful Save & Close, so the host can relist/refresh. */
+  onSaved?(): void;
+}
+
+const STYLE_ID = "sheetedit-pqe-style";
+
+function injectStyles(): void {
+  if (document.getElementById(STYLE_ID)) return;
+  const s = document.createElement("style");
+  s.id = STYLE_ID;
+  s.textContent = `
+    .se-pqe { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column;
+      background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6);
+      font:13px system-ui, sans-serif; }
+    .se-pqe[hidden] { display:none; }
+    .se-pqe-bar { display:flex; align-items:center; gap:10px; padding:8px 12px;
+      background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-title { font-weight:600; }
+    .se-pqe-spacer { flex:1; }
+    .se-pqe-btn { font:inherit; font-size:13px; background:var(--sheetedit-btn, #3a3f47);
+      color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
+      border-radius:6px; padding:5px 12px; cursor:pointer; }
+    .se-pqe-btn:hover:not(:disabled) { background:var(--sheetedit-btn-hover, #454b54); }
+    .se-pqe-btn:disabled { opacity:.5; cursor:default; }
+    .se-pqe-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    .se-pqe-fx { display:flex; align-items:stretch; gap:6px; padding:6px 12px;
+      background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-fx-lbl { align-self:center; color:var(--sheetedit-muted, #aab2bf); font:12px ui-monospace,monospace; }
+    .se-pqe-fx textarea { flex:1; min-height:26px; max-height:120px; resize:vertical;
+      background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047);
+      border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:5px 8px; }
+    .se-pqe-main { flex:1; min-height:0; display:flex; }
+    .se-pqe-queries { width:200px; flex:none; overflow:auto; border-right:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-settings { width:240px; flex:none; overflow:auto; border-left:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-center { flex:1; min-width:0; display:flex; flex-direction:column; }
+    .se-pqe-pane-h { padding:7px 12px; font-weight:600; color:var(--sheetedit-muted, #aab2bf);
+      font-size:12px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-item { display:flex; align-items:center; gap:6px; padding:7px 12px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,.12); }
+    .se-pqe-item:hover { background:var(--sheetedit-btn, #3a3f47); }
+    .se-pqe-item.sel { background:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    .se-pqe-item-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .se-pqe-item-x { opacity:0; border:0; background:none; color:inherit; cursor:pointer; font-size:15px; line-height:1; padding:0 2px; border-radius:4px; }
+    .se-pqe-item:hover .se-pqe-item-x { opacity:.7; }
+    .se-pqe-item-x:hover { opacity:1 !important; background:rgba(255,255,255,.15); }
+    .se-pqe-name-in { width:100%; box-sizing:border-box; font:inherit; background:var(--sheetedit-border, #1c1f24);
+      border:1px solid var(--sheetedit-accent, #6e7bff); border-radius:4px; color:inherit; padding:3px 6px; }
+    .se-pqe-preview { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
+    .se-pqe-ptable { border-collapse:collapse; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; color:#1a1a1a; }
+    .se-pqe-ptable th, .se-pqe-ptable td { border:1px solid #d4d4d8; padding:3px 9px; text-align:left; white-space:nowrap; }
+    .se-pqe-ptable th { position:sticky; top:0; background:#f1f1f4; color:#333; font-weight:600; z-index:1; }
+    .se-pqe-ptable th .ty { display:block; font-weight:400; font-size:10px; color:#888; }
+    .se-pqe-ptable td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .se-pqe-ptable td.null, .se-pqe-ptable td.obj { color:#8a8f98; }
+    .se-pqe-ptable td.err { color:#c0392b; }
+    .se-pqe-ptable tr:nth-child(even) td { background:#f6f6f8; }
+    .se-pqe-scalar { padding:16px; font:14px ui-monospace,monospace; color:var(--sheetedit-text, #e6e6e6); }
+    .se-pqe-foot { display:flex; align-items:center; gap:14px; padding:5px 12px; color:var(--sheetedit-muted, #aab2bf);
+      font-size:12px; background:var(--sheetedit-chrome2, #23262c); border-top:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-foot .err { color:#ff8a8a; }
+    .se-pqe-empty { padding:24px; color:var(--sheetedit-muted, #aab2bf); }
+  `;
+  document.head.appendChild(s);
+}
+
+const pad = (n: number, w = 2): string => String(Math.abs(n)).padStart(w, "0");
+function hms(secs: number): string {
+  const s = Math.floor(secs); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}
+/** Compact display of a preview cell (Excel shows nested table/list/record as objects). */
+function cellText(v: MValue): { text: string; cls: string } {
+  switch (v.kind) {
+    case "null": return { text: "null", cls: "null" };
+    case "logical": return { text: v.value ? "TRUE" : "FALSE", cls: "" };
+    case "number": return { text: v.big !== undefined ? v.big.toString() : String(v.value), cls: "num" };
+    case "text": return { text: v.value, cls: "" };
+    case "date": return { text: `${pad(v.y, 4)}-${pad(v.m)}-${pad(v.d)}`, cls: "" };
+    case "time": return { text: hms(v.secs), cls: "" };
+    case "datetime": return { text: `${pad(v.y, 4)}-${pad(v.m)}-${pad(v.d)} ${hms(v.secs)}`, cls: "" };
+    case "datetimezone": { const o = v.offset; const sg = o < 0 ? "-" : "+"; return { text: `${pad(v.y, 4)}-${pad(v.m)}-${pad(v.d)} ${hms(v.secs)} ${sg}${pad(Math.floor(Math.abs(o) / 60))}:${pad(Math.abs(o) % 60)}`, cls: "" }; }
+    case "duration": return { text: `${(v.secs / 86400).toFixed(6)}d`, cls: "num" };
+    case "binary": return { text: "[Binary]", cls: "obj" };
+    case "list": return { text: "[List]", cls: "obj" };
+    case "record": return { text: "[Record]", cls: "obj" };
+    case "table": return { text: "[Table]", cls: "obj" };
+    case "error": return { text: "Error", cls: "err" };
+    default: return { text: `[${v.kind}]`, cls: "obj" };
+  }
+}
+
+export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string): void } {
+  const { wrap, wb, attachedFiles } = deps;
+  injectStyles();
+
+  const overlay = document.createElement("div");
+  overlay.className = "se-pqe";
+  overlay.hidden = true;
+
+  // Title bar
+  const bar = document.createElement("div");
+  bar.className = "se-pqe-bar";
+  const title = document.createElement("span");
+  title.className = "se-pqe-title";
+  title.textContent = t("pqEditorTitle");
+  const spacer = document.createElement("span");
+  spacer.className = "se-pqe-spacer";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "se-pqe-btn primary";
+  saveBtn.textContent = t("pqSaveClose");
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "se-pqe-btn";
+  cancelBtn.textContent = t("pqCancel");
+  bar.append(title, spacer, cancelBtn, saveBtn);
+
+  // Formula bar
+  const fx = document.createElement("div");
+  fx.className = "se-pqe-fx";
+  const fxLbl = document.createElement("span");
+  fxLbl.className = "se-pqe-fx-lbl";
+  fxLbl.textContent = "=";
+  const fxArea = document.createElement("textarea");
+  fxArea.rows = 1;
+  fxArea.spellcheck = false;
+  fx.append(fxLbl, fxArea);
+
+  // Panes
+  const main = document.createElement("div");
+  main.className = "se-pqe-main";
+  const queriesPane = document.createElement("div");
+  queriesPane.className = "se-pqe-queries";
+  const queriesHead = document.createElement("div");
+  queriesHead.className = "se-pqe-pane-h";
+  queriesHead.textContent = t("pqQueries");
+  const queriesList = document.createElement("div");
+  queriesPane.append(queriesHead, queriesList);
+
+  const center = document.createElement("div");
+  center.className = "se-pqe-center";
+  const preview = document.createElement("div");
+  preview.className = "se-pqe-preview";
+  const foot = document.createElement("div");
+  foot.className = "se-pqe-foot";
+  center.append(preview, foot);
+
+  const settingsPane = document.createElement("div");
+  settingsPane.className = "se-pqe-settings";
+  const settingsHead = document.createElement("div");
+  settingsHead.className = "se-pqe-pane-h";
+  settingsHead.textContent = t("pqAppliedSteps");
+  const stepsList = document.createElement("div");
+  settingsPane.append(settingsHead, stepsList);
+
+  main.append(queriesPane, center, settingsPane);
+  overlay.append(bar, fx, main);
+  wrap.appendChild(overlay);
+
+  // ---- state ----
+  let draft = "";
+  let queryNames: string[] = [];
+  let curQuery: string | null = null;
+  let curStep: string | null = null;
+  let steps: { name: string; rawName: string; expression: string }[] = [];
+  let previewToken = 0;
+
+  function close(): void {
+    overlay.hidden = true;
+  }
+
+  async function renderQueries(): Promise<void> {
+    const { evaluateSection } = await import("mlang");
+    try {
+      queryNames = (await evaluateSection(draft, {})).names;
+    } catch {
+      queryNames = [];
+    }
+    queriesList.textContent = "";
+    if (queryNames.length === 0) {
+      const e = document.createElement("div");
+      e.className = "se-pqe-empty";
+      e.textContent = t("pqNoQueries");
+      queriesList.appendChild(e);
+      return;
+    }
+    for (const name of queryNames) {
+      const item = document.createElement("div");
+      item.className = "se-pqe-item" + (name === curQuery ? " sel" : "");
+      const label = document.createElement("span");
+      label.className = "se-pqe-item-name";
+      label.textContent = name;
+      item.appendChild(label);
+      item.addEventListener("click", () => void selectQuery(name));
+      queriesList.appendChild(item);
+    }
+  }
+
+  async function selectQuery(name: string): Promise<void> {
+    curQuery = name;
+    const { parseMemberSteps } = await import("mlang/steps");
+    try {
+      const parsed = await parseMemberSteps(draft, name);
+      steps = parsed.steps;
+      // Select the returned step (the `in` target) by default, like Excel.
+      curStep = parsed.steps.find((s) => s.name === parsed.inTarget)?.name ?? parsed.steps[parsed.steps.length - 1]?.name ?? null;
+    } catch (e) {
+      steps = [];
+      curStep = null;
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+    await renderQueries();
+    renderSteps();
+    if (curStep) await selectStep(curStep);
+  }
+
+  function renderSteps(): void {
+    stepsList.textContent = "";
+    for (const step of steps) {
+      const item = document.createElement("div");
+      item.className = "se-pqe-item" + (step.name === curStep ? " sel" : "");
+      const label = document.createElement("span");
+      label.className = "se-pqe-item-name";
+      label.textContent = step.name;
+      label.title = step.name;
+      const del = document.createElement("button");
+      del.className = "se-pqe-item-x";
+      del.textContent = "×";
+      del.title = t("pqStepDelete");
+      del.addEventListener("click", (ev) => { ev.stopPropagation(); void deleteStep(step.name); });
+      item.append(label, del);
+      item.addEventListener("click", () => void selectStep(step.name));
+      // Double-click the name to rename the step.
+      label.addEventListener("dblclick", (ev) => { ev.stopPropagation(); beginRename(item, label, step.name); });
+      stepsList.appendChild(item);
+    }
+  }
+
+  async function selectStep(name: string): Promise<void> {
+    curStep = name;
+    const step = steps.find((s) => s.name === name);
+    fxArea.value = step?.expression ?? "";
+    renderSteps();
+    await runPreview(name);
+  }
+
+  async function runPreview(uptoStep: string): Promise<void> {
+    if (!curQuery) return;
+    const token = ++previewToken;
+    foot.textContent = t("pqPreviewing");
+    preview.textContent = "";
+    try {
+      const { previewSection } = await import("mlang/steps");
+      const { evaluateSection, isMissingConnector, missingConnectorName } = await import("mlang");
+      const section = await previewSection(draft, curQuery, uptoStep);
+      const host = await buildPqHost({ wb, attachedFiles });
+      let result: MValue;
+      try {
+        result = await evaluateSection(section, host).then((s) => s.run(curQuery!));
+      } catch (e) {
+        if (isMissingConnector(e)) { if (token === previewToken) foot.innerHTML = `<span class="err">${escapeHtml(t("pqPreviewExternal", { connector: missingConnectorName(e) }))}</span>`; return; }
+        throw e;
+      }
+      if (token !== previewToken) return; // a newer preview superseded this one
+      renderPreview(result);
+    } catch (e) {
+      if (token === previewToken) foot.innerHTML = `<span class="err">${escapeHtml(t("pqPreviewError", { msg: (e as Error).message }))}</span>`;
+    }
+  }
+
+  function renderPreview(result: MValue): void {
+    preview.textContent = "";
+    if (result.kind !== "table") {
+      const box = document.createElement("div");
+      box.className = "se-pqe-scalar";
+      box.textContent = cellText(result).text;
+      preview.appendChild(box);
+      foot.textContent = t("pqPreviewValue", { kind: result.kind });
+      return;
+    }
+    const table = result as MTable;
+    const total = table.rows.length;
+    const shown = Math.min(total, PREVIEW_ROWS);
+    const tbl = document.createElement("table");
+    tbl.className = "se-pqe-ptable";
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (const col of table.columns) {
+      const th = document.createElement("th");
+      th.textContent = col;
+      const ty = table.types?.get(col);
+      if (ty) { const s = document.createElement("span"); s.className = "ty"; s.textContent = ty.ascription ?? ty.name; th.appendChild(s); }
+      htr.appendChild(th);
+    }
+    thead.appendChild(htr);
+    tbl.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (let r = 0; r < shown; r++) {
+      const tr = document.createElement("tr");
+      const row = table.rows[r];
+      for (let c = 0; c < table.columns.length; c++) {
+        const td = document.createElement("td");
+        const { text, cls } = cellText(row[c] ?? { kind: "null" });
+        if (cls) td.className = cls;
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    preview.appendChild(tbl);
+    foot.textContent = t("pqPreviewCols", { cols: table.columns.length }) + "  ·  " +
+      (total > shown ? t("pqPreviewCapped", { shown, total: PREVIEW_ROWS }) : t("pqPreviewRows", { rows: total }));
+  }
+
+  // ---- edits (mutate the draft, then re-parse/re-preview) ----
+  async function commitFormula(): Promise<void> {
+    if (!curQuery || !curStep) return;
+    const newExpr = fxArea.value.trim();
+    const step = steps.find((s) => s.name === curStep);
+    if (!step || newExpr === step.expression) return;
+    try {
+      const { replaceStepExpression, parseMemberSteps } = await import("mlang/steps");
+      draft = await replaceStepExpression(draft, curQuery, curStep, newExpr);
+      steps = (await parseMemberSteps(draft, curQuery)).steps;
+      await runPreview(curStep);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+
+  async function deleteStep(name: string): Promise<void> {
+    if (!curQuery) return;
+    try {
+      const { removeStep, parseMemberSteps } = await import("mlang/steps");
+      draft = await removeStep(draft, curQuery, name);
+      const parsed = await parseMemberSteps(draft, curQuery);
+      steps = parsed.steps;
+      curStep = parsed.steps.find((s) => s.name === parsed.inTarget)?.name ?? parsed.steps[parsed.steps.length - 1]?.name ?? null;
+      renderSteps();
+      if (curStep) await selectStep(curStep);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+
+  function beginRename(item: HTMLElement, label: HTMLElement, oldName: string): void {
+    const input = document.createElement("input");
+    input.className = "se-pqe-name-in";
+    input.value = oldName;
+    item.replaceChild(input, label);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (commit: boolean): Promise<void> => {
+      if (done) return; done = true;
+      const newName = input.value.trim();
+      if (commit && newName && newName !== oldName && curQuery) {
+        try {
+          const { renameStep, parseMemberSteps } = await import("mlang/steps");
+          draft = await renameStep(draft, curQuery, oldName, newName);
+          steps = (await parseMemberSteps(draft, curQuery)).steps;
+          if (curStep === oldName) curStep = newName;
+        } catch (e) {
+          foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+        }
+      }
+      renderSteps();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); void finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); void finish(false); }
+    });
+    input.addEventListener("blur", () => void finish(true));
+  }
+
+  fxArea.addEventListener("keydown", (ev) => {
+    // Enter commits, Shift+Enter inserts a newline (M can be multi-line).
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); void commitFormula(); }
+  });
+  fxArea.addEventListener("blur", () => void commitFormula());
+
+  cancelBtn.addEventListener("click", close);
+  saveBtn.addEventListener("click", () => {
+    deps.save(draft);
+    close();
+    deps.onSaved?.();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!overlay.hidden && e.key === "Escape" && document.activeElement === document.body) close();
+  });
+
+  return {
+    open(sectionM: string): void {
+      draft = sectionM;
+      curQuery = null;
+      curStep = null;
+      steps = [];
+      overlay.hidden = false;
+      preview.textContent = "";
+      foot.textContent = "";
+      void renderQueries().then(() => { if (queryNames[0]) return selectQuery(queryNames[0]); });
+    },
+  };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+}

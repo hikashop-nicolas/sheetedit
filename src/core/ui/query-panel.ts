@@ -1,6 +1,7 @@
-import { t, localeCode } from "../i18n";
+import { t } from "../i18n";
 import { highlightM } from "./m-highlight";
-import { listWorkbookTables, refreshOnLoadQueries, tableForQuery, tableValue, type WorkbookTable } from "../../adapters/xlsx/tables";
+import { buildPqHost } from "./pq-host";
+import { listWorkbookTables, refreshOnLoadQueries, tableForQuery, type WorkbookTable } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
 
@@ -16,6 +17,9 @@ type MTable = Extract<MValue, { kind: "table" }>;
 export interface QueryPanelDeps {
   wrap: HTMLElement; // positioned editor chrome (popover parent; toolbar clips)
   wb: Workbook;
+  /** Files attached for File.Contents/Folder.Files, keyed by filename. Shared with the editor
+      so files attached here are usable in query previews. */
+  attachedFiles: Record<string, Uint8Array>;
   /** Apply a refreshed result to its destination table (undo/recalc/redraw are the host's).
       `silent` (on-open auto-refresh) means don't mark the workbook edited or add an undo step. */
   apply(target: WorkbookTable, result: MTable, opts?: { silent?: boolean }): { rows: number };
@@ -24,7 +28,7 @@ export interface QueryPanelDeps {
 }
 
 export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElement): void; runOnLoad(): Promise<void> } {
-  const { wrap, wb } = deps;
+  const { wrap, wb, attachedFiles } = deps;
   const pop = document.createElement("div");
   pop.className = "sheetedit-qp-pop";
   pop.hidden = true;
@@ -36,8 +40,7 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
   const note = document.createElement("div");
   note.className = "sheetedit-qp-note";
   note.textContent = t("queriesNote");
-  // Files the user attaches for File.Contents("name") to read, keyed by filename.
-  const attachedFiles: Record<string, Uint8Array> = {};
+  // Files the user attaches for File.Contents("name") to read (shared with the editor).
   const attach = document.createElement("label");
   attach.className = "sheetedit-qp-attach";
   attach.textContent = t("queryAttach");
@@ -173,66 +176,7 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
 
   /** Build the host bindings: the workbook tables plus the browser connectors (fetch a URL,
       read attached files). Identical for manual and on-open refresh. */
-  async function buildHost(): Promise<Record<string, MValue>> {
-    const { asyncConnector, tableFromJson, MError } = await import("mlang");
-    const urlOf = (args: MValue[]): string => (args[0] as { value: string }).value;
-    const tables = listWorkbookTables(wb);
-    return {
-      // Culture.Current reflects the editor's active language (overrides mlang's default).
-      "Culture.Current": { kind: "text", value: localeCode() } as MValue,
-      "Excel.CurrentWorkbook": {
-        kind: "function" as const,
-        name: "Excel.CurrentWorkbook",
-        params: [],
-        call: (): MValue => ({
-          kind: "table",
-          columns: ["Name", "Content"],
-          rows: tables.map((tb) => [{ kind: "text", value: tb.displayName } as MValue, tableValue(wb, tb) as MValue]),
-        }),
-      } as MValue,
-      "Web.Contents": asyncConnector("Web.Contents", async (args) => {
-        const url = urlOf(args);
-        const resp = await fetch(url);
-        if (!resp.ok) throw new MError("DataSource.Error", `Web.Contents: ${resp.status} ${resp.statusText} for ${url}`);
-        return { kind: "binary", bytes: new Uint8Array(await resp.arrayBuffer()) } as MValue;
-      }) as MValue,
-      "Web.Page": asyncConnector("Web.Page", async (args) => {
-        const url = urlOf(args);
-        const resp = await fetch(url);
-        if (!resp.ok) throw new MError("DataSource.Error", `Web.Page: ${resp.status} ${resp.statusText} for ${url}`);
-        return { kind: "text", value: await resp.text() } as MValue;
-      }) as MValue,
-      "OData.Feed": asyncConnector("OData.Feed", async (args) => {
-        const records: unknown[] = [];
-        let next: string | null = urlOf(args);
-        for (let page = 0; next && page < 100; page++) {
-          const resp: Response = await fetch(next, { headers: { Accept: "application/json" } });
-          if (!resp.ok) throw new MError("DataSource.Error", `OData.Feed: ${resp.status} ${resp.statusText} for ${next}`);
-          const body = (await resp.json()) as { value?: unknown[]; "@odata.nextLink"?: string };
-          records.push(...(Array.isArray(body.value) ? body.value : [body]));
-          next = body["@odata.nextLink"] ?? null;
-        }
-        return tableFromJson(records) as MValue;
-      }) as MValue,
-      "File.Contents": asyncConnector("File.Contents", async (args) => {
-        const path = urlOf(args);
-        const key = path.split(/[\\/]/).pop() ?? path;
-        const file = attachedFiles[key] ?? attachedFiles[path];
-        if (!file) throw new MError("DataSource.Error", `File.Contents: no attached file named '${key}' (attach it in the panel).`);
-        return { kind: "binary", bytes: file } as MValue;
-      }) as MValue,
-      "Folder.Files": asyncConnector("Folder.Files", () =>
-        Promise.resolve({
-          kind: "table",
-          columns: ["Content", "Name", "Extension"],
-          rows: Object.entries(attachedFiles).map(([nm, bytes]) => [
-            { kind: "binary", bytes } as MValue,
-            { kind: "text", value: nm } as MValue,
-            { kind: "text", value: nm.includes(".") ? `.${nm.split(".").pop()}` : "" } as MValue,
-          ]),
-        } as MValue)) as MValue,
-    };
-  }
+  const buildHost = (): Promise<Record<string, MValue>> => buildPqHost({ wb, attachedFiles });
 
   type ExecStatus = { kind: "ok"; rows: number } | { kind: "notTable"; detail: string } | { kind: "noTarget" };
 
