@@ -42,4 +42,18 @@ describe("Power Query editor", () => {
     cy.contains(".se-pqe-bar button", "Cancel").click();
     cy.get(".sheetedit-tab").should("contain.text", "Query1");
   });
+
+  it("collapses the side panels into drawers on a narrow viewport", () => {
+    cy.viewport(414, 820);
+    openEditor();
+    // Ribbon labels are hidden (icon-only) and the pane toggles appear.
+    cy.get(".se-pqe-rbtn span").first().should("not.be.visible");
+    cy.get(".se-pqe-panetoggle").should("be.visible").and("have.length", 2);
+    // The Queries drawer opens on toggle and closes when the preview is tapped.
+    cy.get(".se-pqe").should("not.have.class", "show-queries");
+    cy.get(".se-pqe-panetoggle").first().click();
+    cy.get(".se-pqe").should("have.class", "show-queries");
+    cy.get(".se-pqe-center").click("center");
+    cy.get(".se-pqe").should("not.have.class", "show-queries");
+  });
 });

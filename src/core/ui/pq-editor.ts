@@ -2,17 +2,19 @@ import { t } from "../i18n";
 import { buildPqHost } from "./pq-host";
 import { TRANSFORMS, strLit, nameList, quoteName, type TransformSpec, type TfField } from "./pq-transforms";
 import { listWorkbookTables } from "../../adapters/xlsx/tables";
-import { TRANSFORM_ICONS, APPEND_ICON, MERGE_ICON, LOAD_ICON, CANCEL_ICON, SAVE_ICON, NEWQUERY_ICON, svgIcon } from "./pq-icons";
+import { TRANSFORM_ICONS, APPEND_ICON, MERGE_ICON, LOAD_ICON, CANCEL_ICON, SAVE_ICON, NEWQUERY_ICON, QUERIES_ICON, STEPS_ICON, svgIcon } from "./pq-icons";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
 
-/** Set a button's content to an SVG icon followed by a text label. */
+/** Set a button's content to an SVG icon followed by a text label. The label doubles as the
+    tooltip so the button stays meaningful when the label is hidden (icon-only on narrow screens). */
 function iconLabel(btn: HTMLButtonElement, inner: string, label: string): void {
   btn.textContent = "";
   btn.appendChild(svgIcon(inner));
   const span = document.createElement("span");
   span.textContent = label;
   btn.appendChild(span);
+  if (!btn.title) btn.title = label;
 }
 
 // Full-window Power Query editor: a queries pane, an Applied Steps pane, a live preview grid
@@ -94,9 +96,10 @@ function injectStyles(): void {
     .se-pqe-fx textarea { flex:1; min-height:26px; max-height:120px; resize:vertical;
       background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047);
       border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:5px 8px; }
-    .se-pqe-main { flex:1; min-height:0; display:flex; }
+    .se-pqe-main { flex:1; min-height:0; display:flex; position:relative; }
     .se-pqe-queries { width:200px; flex:none; overflow:auto; border-right:1px solid var(--sheetedit-border, #1c1f24); }
     .se-pqe-settings { width:240px; flex:none; overflow:auto; border-left:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-panetoggle { display:none; }
     .se-pqe-center { flex:1; min-width:0; display:flex; flex-direction:column; }
     .se-pqe-pane-h { padding:7px 12px; font-weight:600; color:var(--sheetedit-muted, #aab2bf);
       font-size:12px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
@@ -134,6 +137,32 @@ function injectStyles(): void {
       font-size:12px; background:var(--sheetedit-chrome2, #23262c); border-top:1px solid var(--sheetedit-border, #1c1f24); }
     .se-pqe-foot .err { color:#ff8a8a; }
     .se-pqe-empty { padding:24px; color:var(--sheetedit-muted, #aab2bf); }
+
+    /* Narrow screens: icon-only ribbon and action buttons; the side panels become drawers that
+       slide over the preview, toggled from the title bar (one open at a time). */
+    @media (max-width: 760px) {
+      .se-pqe-title { display:none; }
+      .se-pqe-bar { gap:6px; padding:7px 8px; }
+      .se-pqe-bar .se-pqe-btn span { display:none; }
+      .se-pqe-btn { padding:6px 8px; }
+      .se-pqe-panetoggle { display:inline-flex; }
+      .se-pqe-rbtn span { display:none; }
+      .se-pqe-rbtn { gap:0; padding:0 7px; justify-content:center; width:auto; }
+      .se-pqe-grp { padding:0 6px; }
+      .se-pqe-queries, .se-pqe-settings {
+        position:absolute; top:0; bottom:0; z-index:6; width:min(280px, 82%);
+        background:var(--sheetedit-chrome, #2b2f36); box-shadow:0 0 30px rgba(0,0,0,.45);
+        transition:transform .18s ease; will-change:transform;
+      }
+      .se-pqe-queries { left:0; border-right:1px solid var(--sheetedit-border, #1c1f24); transform:translateX(-102%); }
+      .se-pqe-settings { right:0; border-left:1px solid var(--sheetedit-border, #1c1f24); transform:translateX(102%); }
+      .se-pqe.show-queries .se-pqe-queries { transform:none; }
+      .se-pqe.show-steps .se-pqe-settings { transform:none; }
+      .se-pqe.show-queries .se-pqe-center::after, .se-pqe.show-steps .se-pqe-center::after {
+        content:""; position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.35);
+      }
+      .se-pqe-center { position:relative; }
+    }
   `;
   document.head.appendChild(s);
 }
@@ -179,10 +208,20 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   title.textContent = t("pqEditorTitle");
   const spacer = document.createElement("span");
   spacer.className = "se-pqe-spacer";
+  // Pane toggles: shown only on narrow screens, where the side panels become drawers.
+  const queriesToggle = document.createElement("button");
+  queriesToggle.className = "se-pqe-btn se-pqe-panetoggle";
+  queriesToggle.title = t("pqQueries");
+  queriesToggle.appendChild(svgIcon(QUERIES_ICON));
+  const stepsToggle = document.createElement("button");
+  stepsToggle.className = "se-pqe-btn se-pqe-panetoggle";
+  stepsToggle.title = t("pqAppliedSteps");
+  stepsToggle.appendChild(svgIcon(STEPS_ICON));
+
   const loadBtn = document.createElement("button");
   loadBtn.className = "se-pqe-btn";
-  iconLabel(loadBtn, LOAD_ICON, t("pqLoad"));
   loadBtn.title = t("pqLoadTitle");
+  iconLabel(loadBtn, LOAD_ICON, t("pqLoad"));
   loadBtn.hidden = !deps.loadQuery;
   const saveBtn = document.createElement("button");
   saveBtn.className = "se-pqe-btn primary";
@@ -190,7 +229,17 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "se-pqe-btn";
   iconLabel(cancelBtn, CANCEL_ICON, t("pqCancel"));
-  bar.append(title, spacer, loadBtn, cancelBtn, saveBtn);
+  bar.append(title, queriesToggle, stepsToggle, spacer, loadBtn, cancelBtn, saveBtn);
+
+  // Drawer toggling (narrow screens): one side panel open at a time; tapping the preview closes.
+  const closeDrawers = (): void => overlay.classList.remove("show-queries", "show-steps");
+  const toggleDrawer = (cls: "show-queries" | "show-steps"): void => {
+    const on = overlay.classList.contains(cls);
+    closeDrawers();
+    if (!on) overlay.classList.add(cls);
+  };
+  queriesToggle.addEventListener("click", () => toggleDrawer("show-queries"));
+  stepsToggle.addEventListener("click", () => toggleDrawer("show-steps"));
 
   // Transform ribbon: each button appends a step to the query's final result. Buttons are laid
   // out in Excel-style groups (a 3-row column of buttons with the group name underneath).
@@ -271,6 +320,8 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   const foot = document.createElement("div");
   foot.className = "se-pqe-foot";
   center.append(preview, foot);
+  // Tapping the preview dismisses an open drawer (narrow screens).
+  center.addEventListener("click", () => { if (overlay.classList.contains("show-queries") || overlay.classList.contains("show-steps")) overlay.classList.remove("show-queries", "show-steps"); });
 
   const settingsPane = document.createElement("div");
   settingsPane.className = "se-pqe-settings";
@@ -333,7 +384,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       del.title = t("pqDeleteQuery");
       del.addEventListener("click", (ev) => { ev.stopPropagation(); void deleteQuery(name); });
       item.append(label, del);
-      item.addEventListener("click", () => void selectQuery(name));
+      item.addEventListener("click", () => { closeDrawers(); void selectQuery(name); });
       label.addEventListener("dblclick", (ev) => { ev.stopPropagation(); beginRenameQuery(item, label, name); });
       queriesList.appendChild(item);
     }
@@ -375,7 +426,7 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       del.title = t("pqStepDelete");
       del.addEventListener("click", (ev) => { ev.stopPropagation(); void deleteStep(step.name); });
       item.append(label, del);
-      item.addEventListener("click", () => void selectStep(step.name));
+      item.addEventListener("click", () => { closeDrawers(); void selectStep(step.name); });
       // Double-click the name to rename the step.
       label.addEventListener("dblclick", (ev) => { ev.stopPropagation(); beginRename(item, label, step.name); });
       stepsList.appendChild(item);

@@ -33,6 +33,8 @@ export const LOAD_ICON = `<path d="M8 2.5v7.5M5 7l3 3 3-3M3 13.5h10"/>`;
 export const CANCEL_ICON = `<path d="M4 4l8 8M12 4l-8 8"/>`;
 export const SAVE_ICON = `<path d="M3.5 3h7l3 3v6.5a.9.9 0 0 1-.9.9H3.4a.9.9 0 0 1-.9-.9V3.9A.9.9 0 0 1 3.5 3z"/><path d="M5.5 3v3h4.5M5.5 13v-4h5v4"/>`;
 export const NEWQUERY_ICON = `<path d="M8 3.5v9M3.5 8h9"/>`;
+export const QUERIES_ICON = `<path d="M6 4h8M6 8h8M6 12h8M3 4h.01M3 8h.01M3 12h.01"/>`;
+export const STEPS_ICON = `<path d="M2.5 12.5h3.5V9h3.5V5.5h3.5V2.5"/>`;
 
 const FALLBACK = `<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>`;
 
