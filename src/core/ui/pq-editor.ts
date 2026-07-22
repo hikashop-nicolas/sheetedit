@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { buildPqHost } from "./pq-host";
-import { TRANSFORMS, strLit, type TransformSpec, type TfField } from "./pq-transforms";
+import { TRANSFORMS, strLit, nameList, quoteName, type TransformSpec, type TfField } from "./pq-transforms";
 import { listWorkbookTables } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
 import type { MValue } from "mlang";
@@ -186,6 +186,18 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
       b.type = "button";
       b.textContent = spec.label;
       b.addEventListener("click", () => void applyTransform(spec));
+      ribbonButtons.push(b);
+      ribbon.appendChild(b);
+    }
+    // Combine group: cross-query operations (handled specially, not plain Table.* on one input).
+    const sep = document.createElement("span"); sep.className = "se-pqe-rsep"; ribbon.appendChild(sep);
+    const cg = document.createElement("span"); cg.className = "se-pqe-rgroup"; cg.textContent = t("pqCombine"); ribbon.appendChild(cg);
+    for (const [label, fn] of [[t("pqAppend"), () => void appendQueries()], [t("pqMerge"), () => void mergeQueries()]] as const) {
+      const b = document.createElement("button");
+      b.className = "se-pqe-rbtn";
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", fn);
       ribbonButtons.push(b);
       ribbon.appendChild(b);
     }
@@ -554,6 +566,24 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     });
   }
 
+  const prevRawName = (): string => steps.find((s) => s.name === curInTarget)?.rawName ?? curInTarget ?? "Source";
+
+  /** Append an M expression as a new step of the current query and select it. */
+  async function appendStepAndSelect(baseName: string, expr: string): Promise<void> {
+    if (!curQuery) return;
+    try {
+      const { appendStep, parseMemberSteps } = await import("mlang/steps");
+      draft = await appendStep(draft, curQuery, uniqueStepName(baseName), expr);
+      const parsed = await parseMemberSteps(draft, curQuery);
+      steps = parsed.steps;
+      curInTarget = parsed.inTarget;
+      renderSteps();
+      await selectStep(parsed.steps[parsed.steps.length - 1].name);
+    } catch (e) {
+      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+    }
+  }
+
   async function applyTransform(spec: TransformSpec): Promise<void> {
     if (!curQuery || !curInTarget) return;
     // Transforms append to the query's final result; make sure it's the previewed step so the
@@ -561,19 +591,60 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     if (curStep !== curInTarget) await selectStep(curInTarget);
     const values = await showFieldsDialog(spec.label, spec.fields(previewColumns), previewColumns);
     if (!values) return;
-    const prevRaw = steps.find((s) => s.name === curInTarget)?.rawName ?? curInTarget;
-    const expr = spec.buildM(prevRaw, values);
-    const name = uniqueStepName(spec.stepName);
+    await appendStepAndSelect(spec.stepName, spec.buildM(prevRawName(), values));
+  }
+
+  /** The output columns of another query (for merge key/expand pickers). */
+  async function queryColumns(name: string): Promise<string[]> {
     try {
-      const { appendStep, parseMemberSteps } = await import("mlang/steps");
-      draft = await appendStep(draft, curQuery, name, expr);
-      const parsed = await parseMemberSteps(draft, curQuery);
-      steps = parsed.steps;
-      curInTarget = parsed.inTarget;
-      renderSteps();
-      await selectStep(name);
-    } catch (e) {
-      foot.innerHTML = `<span class="err">${escapeHtml((e as Error).message)}</span>`;
+      const { previewSection } = await import("mlang/steps");
+      const { evaluateSection } = await import("mlang");
+      const section = await previewSection(draft, name);
+      const r = await evaluateSection(section, await buildPqHost({ wb, attachedFiles })).then((s) => s.run(name));
+      return r.kind === "table" ? r.columns : [];
+    } catch { return []; }
+  }
+
+  async function appendQueries(): Promise<void> {
+    if (!curQuery || !curInTarget) return;
+    const others = queryNames.filter((n) => n !== curQuery);
+    if (others.length === 0) { foot.innerHTML = `<span class="err">${escapeHtml(t("pqNeedTwoQueries"))}</span>`; return; }
+    if (curStep !== curInTarget) await selectStep(curInTarget);
+    const v = await showFieldsDialog(t("pqAppend"), [{ key: "other", label: t("pqOtherQuery"), type: "select", options: others.map((n) => ({ value: n, label: n })) }], []);
+    if (!v) return;
+    await appendStepAndSelect("Appended Query", `Table.Combine({${prevRawName()}, ${quoteName(first(v.other))}})`);
+  }
+
+  const JOIN_KINDS = [
+    { value: "JoinKind.LeftOuter", label: "Left outer (all from first)" },
+    { value: "JoinKind.RightOuter", label: "Right outer (all from second)" },
+    { value: "JoinKind.FullOuter", label: "Full outer (all from both)" },
+    { value: "JoinKind.Inner", label: "Inner (matching only)" },
+    { value: "JoinKind.LeftAnti", label: "Left anti (non-matching from first)" },
+    { value: "JoinKind.RightAnti", label: "Right anti (non-matching from second)" },
+  ];
+
+  async function mergeQueries(): Promise<void> {
+    if (!curQuery || !curInTarget) return;
+    const others = queryNames.filter((n) => n !== curQuery);
+    if (others.length === 0) { foot.innerHTML = `<span class="err">${escapeHtml(t("pqNeedTwoQueries"))}</span>`; return; }
+    if (curStep !== curInTarget) await selectStep(curInTarget);
+    const pick = await showFieldsDialog(t("pqMerge"), [{ key: "other", label: t("pqOtherQuery"), type: "select", options: others.map((n) => ({ value: n, label: n })) }], []);
+    if (!pick) return;
+    const other = first(pick.other);
+    const otherCols = await queryColumns(other);
+    const v = await showFieldsDialog(t("pqMerge"), [
+      { key: "thisKey", label: t("pqMergeThisKey"), type: "columns", multi: false },
+      { key: "otherKey", label: t("pqMergeOtherKey"), type: "select", options: otherCols.map((c) => ({ value: c, label: c })) },
+      { key: "join", label: t("pqMergeJoin"), type: "select", options: JOIN_KINDS },
+    ], previewColumns);
+    if (!v) return;
+    const col = "Merged";
+    const nested = `Table.NestedJoin(${prevRawName()}, ${nameList([first(v.thisKey)])}, ${quoteName(other)}, ${nameList([first(v.otherKey)])}, ${strLit(col)}, ${first(v.join)})`;
+    await appendStepAndSelect("Merged Queries", nested);
+    if (otherCols.length) {
+      const prefixed = otherCols.map((c) => `${other}.${c}`);
+      await appendStepAndSelect(`Expanded ${other}`, `Table.ExpandTableColumn(${quoteName("Merged Queries")}, ${strLit(col)}, ${nameList(otherCols)}, ${nameList(prefixed)})`);
     }
   }
 
