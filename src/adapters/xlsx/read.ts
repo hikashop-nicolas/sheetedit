@@ -300,6 +300,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readHyperlinks(sheet, doc, files, path);
       readDataValidations(sheet, doc);
       readCondFormats(sheet, doc, dxfs, theme);
+      readComments(sheet, files, path);
     }
     wb.sheets.push(sheet);
   }
@@ -373,6 +374,60 @@ function readDataValidations(sheet: Sheet, doc: Document): void {
     if (ranges.length) out.push({ ranges, values, rangeRef, allowBlank });
   }
   if (out.length) sheet.validations = out;
+}
+
+/** Read legacy comments (comments*.xml) and threaded comments for a sheet, attaching each to its
+    cell. Both parts are referenced from the sheet's rels; threaded-comment authors resolve
+    through xl/persons/*.xml. The comment parts round-trip untouched; this only reads them. */
+function readComments(sheet: Sheet, files: Record<string, Uint8Array>, path: string): void {
+  const relsPath = path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  const relsDoc = files[relsPath] ? parseXmlOpt(files[relsPath]) : undefined;
+  if (!relsDoc) return;
+  const resolve = (tgt: string): string => {
+    if (tgt.startsWith("/")) return tgt.slice(1);
+    const parts: string[] = [];
+    for (const seg of `xl/worksheets/${tgt}`.split("/")) { if (seg === "..") parts.pop(); else if (seg !== ".") parts.push(seg); }
+    return parts.join("/");
+  };
+  const targets = new Set<string>();
+  for (const r of Array.from(relsDoc.getElementsByTagName("Relationship"))) {
+    const tgt = r.getAttribute("Target") ?? "";
+    if (/comments\d*\.xml$/i.test(tgt) || /threadedComment/i.test(tgt)) targets.add(resolve(tgt));
+  }
+  if (!targets.size) return;
+  const allByLocal = (root: Element | Document, local: string): Element[] =>
+    Array.from(root.getElementsByTagName("*")).filter((e) => e.localName === local);
+  // Persons map (threaded-comment authors).
+  const persons = new Map<string, string>();
+  for (const [fp, data] of Object.entries(files))
+    if (/^xl\/persons\/.*\.xml$/i.test(fp)) { const pd = parseXmlOpt(data); if (pd) for (const p of allByLocal(pd, "person")) { const id = p.getAttribute("id"); if (id) persons.set(id, p.getAttribute("displayName") ?? ""); } }
+  const add = (ref: string, author: string | undefined, text: string): void => {
+    const p = parseA1Ref(ref);
+    if (!p || !text) return;
+    const cell = ensureCell(sheet, p.row, p.col);
+    (cell.comments ??= []).push({ author: author || undefined, text });
+  };
+  for (const cp of targets) {
+    const data = files[cp];
+    const cd = data ? parseXmlOpt(data) : undefined;
+    if (!cd) continue;
+    if (allByLocal(cd, "commentList").length) {
+      const authors = allByLocal(cd, "author").map((a) => a.textContent ?? "");
+      for (const cm of allByLocal(cd, "comment")) {
+        const ref = cm.getAttribute("ref");
+        if (!ref) continue;
+        const text = allByLocal(cm, "t").map((t) => t.textContent ?? "").join("").trim();
+        add(ref, authors[Number(cm.getAttribute("authorId") || "0")], text);
+      }
+    } else {
+      for (const tc of allByLocal(cd, "threadedComment")) {
+        const ref = tc.getAttribute("ref");
+        if (!ref) continue;
+        const text = (allByLocal(tc, "text")[0]?.textContent ?? "").trim();
+        add(ref, persons.get(tc.getAttribute("personId") ?? ""), text);
+      }
+    }
+  }
 }
 
 export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichString[], styles: XlsxStyles): void {

@@ -72,4 +72,4 @@ with its sibling elements intact:
 - (DONE) 3. Data validation dropdowns - list type: caret picker (inline + range values) + invalid-value outline
 - (DONE) 4. Shift CF/DV/hyperlink/autofilter ranges (sqref/ref) + model validations on insert/delete
 - (DONE) 5. Conditional formatting rendering - cellIs/text/top-bottom/average/dup dxf + colour scales + data bars (icon sets, expression, time-period round-trip only)
-- (pending) 6. Comments display
+- (DONE) 6. Comments display - legacy + threaded comments: corner marker + hover popover (author + text)

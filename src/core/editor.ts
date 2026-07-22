@@ -120,6 +120,13 @@ export function injectStyles(): void {
     .sheetedit-table td.has-cfbar { position:relative; }
     .sheetedit-cfbar { position:absolute; left:1px; top:2px; bottom:2px; z-index:0; border-radius:1px; opacity:.85; pointer-events:none; }
     .sheetedit-table td.has-cfbar input { position:relative; z-index:1; background:transparent; }
+    /* Comment marker (corner triangle) + hover popover. */
+    .sheetedit-table td.has-comment { position:relative; }
+    .sheetedit-commark { position:absolute; top:0; right:0; z-index:2; width:0; height:0; border-top:6px solid #d9534f; border-left:6px solid transparent; pointer-events:none; }
+    .sheetedit-compop { position:fixed; z-index:40; max-width:260px; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e7eaf0); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.45); padding:8px 10px; font:12px/1.45 system-ui,sans-serif; }
+    .sheetedit-comitem + .sheetedit-comitem { margin-top:7px; padding-top:7px; border-top:1px solid var(--sheetedit-border, #1c1f24); }
+    .sheetedit-comauthor { font-weight:600; margin-bottom:2px; }
+    .sheetedit-comtext { white-space:pre-wrap; color:var(--sheetedit-muted, #cfd3da); }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -1671,6 +1678,16 @@ export function createSheetEditor(
           td.insertBefore(bar, td.firstChild);
         }
       }
+      // Comments / notes: a corner marker with a hover popover.
+      if (cell?.comments?.length) {
+        td.classList.add("has-comment");
+        const mark = document.createElement("span");
+        mark.className = "sheetedit-commark";
+        mark.title = cell.comments.map((cm) => (cm.author ? `${cm.author}: ` : "") + cm.text).join("\n");
+        td.appendChild(mark);
+        td.addEventListener("mouseenter", () => showComment(td, cell.comments!));
+        td.addEventListener("mouseleave", hideComment);
+      }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
       input.addEventListener("mousedown", (e) => {
@@ -2090,6 +2107,30 @@ export function createSheetEditor(
     const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
+
+  // Comment popover: shown while hovering a cell that carries notes / threaded comments.
+  let commentPop: HTMLElement | null = null;
+  const hideComment = (): void => { commentPop?.remove(); commentPop = null; };
+  const showComment = (td: HTMLElement, comments: { author?: string; text: string }[]): void => {
+    hideComment();
+    const pop = document.createElement("div");
+    pop.className = "sheetedit-compop";
+    for (const cm of comments) {
+      const block = document.createElement("div");
+      block.className = "sheetedit-comitem";
+      if (cm.author) { const a = document.createElement("div"); a.className = "sheetedit-comauthor"; a.textContent = cm.author; block.appendChild(a); }
+      const txt = document.createElement("div");
+      txt.className = "sheetedit-comtext";
+      txt.textContent = cm.text;
+      block.appendChild(txt);
+      pop.appendChild(block);
+    }
+    wrap.appendChild(pop);
+    const rect = td.getBoundingClientRect();
+    pop.style.left = `${Math.min(rect.right + 4, window.innerWidth - pop.offsetWidth - 8)}px`;
+    pop.style.top = `${Math.min(rect.top, window.innerHeight - pop.offsetHeight - 8)}px`;
+    commentPop = pop;
+  };
 
   /** Focus a cell, scrolling it into the rendered window first if needed. */
   const focusCell = (r: number, c: number): void => {

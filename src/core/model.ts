@@ -94,6 +94,9 @@ export interface Cell {
   el?: Element;
   /** ods: the original <table:table-cell> element (cloned verbatim if untouched). */
   odfFormula?: string;
+  /** Comments / notes on this cell (xlsx legacy comments + threaded comments), newest last.
+      Shown as a marker with a hover popover; preserved via the untouched comment parts. */
+  comments?: { author?: string; text: string }[];
   /** Hyperlink on this cell (xlsx <hyperlinks>): an external URL, or an internal
       "Sheet!A1" / defined-name target. Rendered as a clickable link; preserved via the
       untouched sheet XML (sheetedit reads and follows it, it does not rewrite it). */
