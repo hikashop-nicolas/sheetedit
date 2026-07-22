@@ -10,7 +10,7 @@ import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
-import type { Cell, CellStyle, Phonetic, Sheet, StyleChange, Workbook } from "./model";
+import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
@@ -107,6 +107,14 @@ export function injectStyles(): void {
     .sheetedit-table td.has-link input:not(:focus) { color:#2563eb; text-decoration:underline; }
     .sheetedit-linkbtn { position:absolute; top:1px; right:1px; z-index:3; display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; padding:0; border:0; border-radius:3px; background:transparent; color:#2563eb; cursor:pointer; opacity:.8; }
     .sheetedit-linkbtn:hover { opacity:1; background:rgba(37,99,235,0.14); }
+    /* Data-validation dropdowns: a caret on the cell's right edge (shown on hover/select), and a
+       red outline when the value is not in the allowed list. */
+    .sheetedit-table td.has-dv { position:relative; }
+    .sheetedit-dvbtn { position:absolute; top:0; right:0; bottom:0; z-index:3; visibility:hidden; display:inline-flex; align-items:center; justify-content:center; width:17px; padding:0; border:0; border-left:1px solid #d4d4d8; background:#eef0f4; color:#555; cursor:pointer; }
+    .sheetedit-dvbtn:hover { background:#e3e6ec; color:#111; }
+    .sheetedit-table td.has-dv:hover .sheetedit-dvbtn, .sheetedit-table td.has-dv:focus-within .sheetedit-dvbtn, .sheetedit-table td.has-dv.sheetedit-sel .sheetedit-dvbtn { visibility:visible; }
+    .sheetedit-table td.sheetedit-dv-invalid { box-shadow: inset 0 0 0 2px #e0533d; }
+    .sheetedit-dvmenu { min-width:120px; max-height:240px; overflow-y:auto; }
     .sheetedit-furi-pop { min-width:180px; gap:6px; }
     .sheetedit-furi-input { font:inherit; font-size:13px; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border,#4a4f57); background:var(--sheetedit-btn,#3a3f47); color:var(--sheetedit-text,#e6e6e6); }
     .sheetedit-furi-row { display:flex; gap:4px; }
@@ -1289,8 +1297,9 @@ export function createSheetEditor(
     recordCells([{ r, c }], () => setCellInput(sheet, r, c, raw));
     recalc(wb);
     mark();
-    // A wrap cell's new text may change its row height (and its overlay); re-render to remeasure.
-    if (getCell(sheet, r, c)?.cellStyle?.wrap) renderGrid();
+    // A wrap cell's new text may change its row height (and its overlay); a validated cell may
+    // gain/lose its invalid flag; either way re-render. Otherwise just refresh displays.
+    if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c)) renderGrid();
     else refreshDisplays(sheet);
   };
 
@@ -1618,6 +1627,25 @@ export function createSheetEditor(
         lb.addEventListener("mousedown", (e) => e.preventDefault());
         lb.addEventListener("click", (e) => { e.stopPropagation(); openLink(cell.link!); });
         td.appendChild(lb);
+      }
+      // Data-validation dropdown: a caret that opens the allowed-value list; the cell is flagged
+      // when its value is not one of them.
+      const dv = dvForCell(sheet, r, c);
+      if (dv) {
+        td.classList.add("has-dv");
+        const cur = cellDisplay(cell);
+        const allowed = resolveDvValues(dv, sheet);
+        if (cur !== "" && allowed.length && !allowed.includes(cur)) td.classList.add("sheetedit-dv-invalid");
+        const caret = document.createElement("button");
+        caret.type = "button";
+        caret.className = "sheetedit-dvbtn";
+        caret.tabIndex = -1;
+        caret.title = t("dvChoose");
+        caret.setAttribute("aria-label", t("dvChoose"));
+        caret.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>`;
+        caret.addEventListener("mousedown", (e) => e.preventDefault());
+        caret.addEventListener("click", (e) => { e.stopPropagation(); openDvMenu(td, r, c, dv); });
+        td.appendChild(caret);
       }
       const ki = key(r, c);
       // Shift-click extends the selection from the anchor (no caret/edit).
@@ -1986,6 +2014,58 @@ export function createSheetEditor(
     const p = parseA1Ref(ref);
     if (p) focusCell(p.row, p.col);
   };
+
+  // Data-validation dropdowns: find the list validation covering a cell, and resolve its
+  // allowed values (inline, or from a referenced range read live).
+  const dvForCell = (sheet: Sheet, r: number, c: number): DataValidation | null => {
+    for (const v of sheet.validations ?? [])
+      if (v.ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2)) return v;
+    return null;
+  };
+  const resolveDvValues = (dv: DataValidation, home: Sheet): string[] => {
+    if (dv.values) return dv.values;
+    if (!dv.rangeRef) return [];
+    let ref = dv.rangeRef;
+    if (wb.definedNames?.has(ref)) ref = wb.definedNames.get(ref)!;
+    const m = /^(?:'([^']+)'|([^!]+))!(.+)$/.exec(ref);
+    const target = m ? wb.sheets.find((s) => s.name === (m[1] ?? m[2])) : home;
+    const body = (m ? m[3] : ref).replace(/\$/g, "");
+    if (!target) return [];
+    const [a, b] = body.split(":");
+    const p1 = parseA1Ref(a ?? "");
+    const p2 = b ? parseA1Ref(b) : p1;
+    if (!p1 || !p2) return [];
+    const out: string[] = [];
+    for (let r = p1.row; r <= p2.row; r++)
+      for (let c = p1.col; c <= p2.col; c++) {
+        const cell = getCell(target, r, c);
+        const d = cell ? cellDisplay(cell) : "";
+        if (d !== "") out.push(d);
+      }
+    return out;
+  };
+  function openDvMenu(td: HTMLElement, r: number, c: number, dv: DataValidation): void {
+    const values = resolveDvValues(dv, wb.sheets[active]!);
+    const menu = document.createElement("div");
+    menu.className = "sheetedit-pop sheetedit-dvmenu";
+    const add = (label: string, val: string): void => {
+      const it = document.createElement("button");
+      it.type = "button";
+      it.className = "sheetedit-pop-item";
+      it.textContent = label;
+      it.addEventListener("click", () => { menu.remove(); commitValue(r, c, val); });
+      menu.appendChild(it);
+    };
+    if (dv.allowBlank) add(t("dvBlank"), "");
+    for (const v of values) add(v, v);
+    if (!values.length && !dv.allowBlank) { const e = document.createElement("div"); e.className = "sheetedit-pop-item"; e.style.opacity = ".6"; e.textContent = t("dvEmpty"); menu.appendChild(e); }
+    wrap.appendChild(menu);
+    const rect = td.getBoundingClientRect();
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 6)}px`;
+    menu.style.top = `${rect.bottom + 2}px`;
+    const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
 
   /** Focus a cell, scrolling it into the rendered window first if needed. */
   const focusCell = (r: number, c: number): void => {

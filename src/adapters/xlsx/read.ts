@@ -296,6 +296,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       }
       if (sheetData) readSheetData(sheet, sheetData, shared, styles);
       readHyperlinks(sheet, doc, files, path);
+      readDataValidations(sheet, doc);
     }
     wb.sheets.push(sheet);
   }
@@ -340,6 +341,35 @@ function readHyperlinks(sheet: Sheet, doc: Document, files: Record<string, Uint8
     for (let r = p1.row; r <= p2.row; r++)
       for (let c = p1.col; c <= p2.col; c++) ensureCell(sheet, r, c).link = { href, internal, tip };
   }
+}
+
+/** Read list-type <dataValidation> entries (dropdowns) into sheet.validations. Other validation
+    types (whole/decimal/date/custom) are left to round-trip via the untouched sheet XML. */
+function readDataValidations(sheet: Sheet, doc: Document): void {
+  const dvs = doc.getElementsByTagName("dataValidation");
+  if (!dvs.length) return;
+  const out: NonNullable<Sheet["validations"]> = [];
+  for (const dv of Array.from(dvs)) {
+    if ((dv.getAttribute("type") || "") !== "list") continue;
+    const sqref = dv.getAttribute("sqref") || (dv.getAttributeNS("http://schemas.microsoft.com/office/spreadsheetml/2009/9/main", "sqref") ?? "");
+    if (!sqref) continue;
+    const allowBlank = dv.getAttribute("allowBlank") === "1" || dv.getAttribute("allowBlank") === "true";
+    const f1 = firstByLocal(dv, "formula1")?.textContent?.trim() ?? "";
+    let values: string[] | undefined;
+    let rangeRef: string | undefined;
+    if (f1.startsWith('"') && f1.endsWith('"')) values = f1.slice(1, -1).split(",").map((s) => s.trim());
+    else if (f1) rangeRef = f1;
+    else continue;
+    const ranges: { r1: number; c1: number; r2: number; c2: number }[] = [];
+    for (const range of sqref.split(/\s+/)) {
+      const [a, b] = range.split(":");
+      const p1 = parseA1Ref(a ?? "");
+      const p2 = b ? parseA1Ref(b) : p1;
+      if (p1 && p2) ranges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
+    }
+    if (ranges.length) out.push({ ranges, values, rangeRef, allowBlank });
+  }
+  if (out.length) sheet.validations = out;
 }
 
 export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichString[], styles: XlsxStyles): void {

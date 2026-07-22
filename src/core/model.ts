@@ -29,6 +29,16 @@ export interface CellStyle {
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
 }
 
+/** A list-type data validation (dropdown): the ranges it covers and its allowed values,
+    either inline (`values`) or a range reference resolved at render time (`rangeRef`). Stored on
+    the sheet (not per cell) so a whole-column validation costs nothing. */
+export interface DataValidation {
+  ranges: { r1: number; c1: number; r2: number; c2: number }[];
+  values?: string[];
+  rangeRef?: string;
+  allowBlank?: boolean;
+}
+
 /** A phonetic-guide (furigana) run: the reading shown above base[sb..eb). */
 export interface Phonetic {
   sb: number; // start base-char offset (inclusive)
@@ -105,6 +115,8 @@ export interface Sheet {
   hiddenCols?: Set<number>;
   /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
+  /** List-type data validations (dropdowns), matched to cells by range at render time. */
+  validations?: DataValidation[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
