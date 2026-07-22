@@ -6,6 +6,9 @@ into an editable grid, **preserves formulas and recalculates** them as you edit,
 exports a valid workbook, **keeping styles, number formats, charts and other sheets**
 intact. No server, no upload.
 
+It also opens and edits a workbook's **Power Query** definitions in a built-in,
+Excel-style query editor, refreshing them on-device (see [Power Query](#power-query)).
+
 **[▶ Live demo](https://hikashop-nicolas.github.io/sheetedit/)** - open a `.xlsx` or
 `.ods`, edit cells and formulas, and download the result, entirely in your browser.
 
@@ -22,7 +25,10 @@ const editedBytes = await editor.getBytes(); // a valid .xlsx or .ods
 
 Runtime dependencies: [`fflate`](https://github.com/101arrowz/fflate) (zip) and
 [`fast-formula-parser`](https://github.com/LesterLyu/fast-formula-parser) (formula
-engine), both MIT.
+engine), both MIT. The Power Query engine
+([`mlang`](https://github.com/hikashop-nicolas/mlang)) and the on-device formula
+assistant ([`localml`](https://github.com/hikashop-nicolas/localml)) are lazy-loaded
+only when their features are used, so they stay out of the base bundle.
 
 ## Formulas and recalculation
 
@@ -53,6 +59,32 @@ recalc(wb);
 const out = writeWorkbook(wb); // re-zips, preserving other parts
 ```
 
+## Power Query
+
+`.xlsx` workbooks made with Power Query embed their query definitions (the M `Section1.m`
+inside the DataMashup blob). sheetedit reads them and gives you a full **Power Query
+Editor**, entirely in the browser:
+
+- **Applied Steps + live preview** - a query is a `let` expression, so its steps are listed
+  like Excel's; selecting a step evaluates the query up to that point and shows the result
+  (row-capped) in a preview grid with per-column type and quality bars.
+- **Transform ribbon** - GUI transforms that generate M and append a step: choose/remove/
+  rename columns, filter, sort, keep/remove rows, remove duplicates, change type, replace
+  values, split column, group by, unpivot, transpose, add custom/index columns, and
+  merge/append with other queries.
+- **Get Data** - create a new query from a workbook table, a web CSV/JSON URL, or blank.
+- **Load** - write a query's result into its destination table, or onto a new sheet.
+- **Refresh** - a quick panel refreshes existing queries into their tables, on open or on
+  demand. The formula bar and a raw-M view let you hand-edit steps.
+
+Evaluation is a **clean-room M engine** ([`mlang`](https://github.com/hikashop-nicolas/mlang),
+~640 standard-library functions), lazy-loaded so the base editor bundle never carries it.
+Workbook data is served through `Excel.CurrentWorkbook`; browser-reachable connectors
+(`Web.Contents`, `OData.Feed`, `File.Contents`) work, while queries that read databases or
+other native sources can only be refreshed in Excel and are reported as such. Power Query is
+`.xlsx`-only (OpenDocument has no equivalent payload). The editor is fully responsive: on
+narrow screens the ribbon goes icon-only and the side panels become drawers.
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the
@@ -75,6 +107,9 @@ const out = writeWorkbook(wb); // re-zips, preserving other parts
   common arithmetic, range and function cases are handled.
 - Not a full spreadsheet application (no charts editing, pivot tables, formatting UI).
   This is a lightweight, embeddable in-browser editor for cell and formula content.
+- Power Query editing is `.xlsx`-only, and a query result loaded onto a brand-new sheet is
+  written as plain cells (not a live, Excel-refreshable table). Loading onto an existing
+  destination table refreshes it in place.
 
 ## Develop
 
