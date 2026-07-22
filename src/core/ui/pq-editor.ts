@@ -61,15 +61,20 @@ function injectStyles(): void {
     .se-pqe-btn:hover:not(:disabled) { background:var(--sheetedit-btn-hover, #454b54); }
     .se-pqe-btn:disabled { opacity:.5; cursor:default; }
     .se-pqe-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
-    .se-pqe-ribbon { display:flex; flex-wrap:wrap; align-items:center; gap:3px; padding:5px 10px;
+    /* Excel-style ribbon: horizontal groups, each a 3-row column of buttons with a centered
+       group label underneath, divided by vertical rules. Scrolls horizontally when narrow. */
+    .se-pqe-ribbon { display:flex; align-items:stretch; padding:6px 2px 3px; overflow-x:auto;
       background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-rbtn { font:inherit; font-size:12px; display:inline-flex; align-items:center; gap:6px; background:transparent; color:var(--sheetedit-text, #e6e6e6);
-      border:1px solid transparent; border-radius:5px; padding:4px 9px; cursor:pointer; white-space:nowrap; }
-    .se-pqe-rbtn svg { display:block; flex:none; color:var(--sheetedit-accent, #6e7bff); }
-    .se-pqe-rbtn:hover:not(:disabled) { background:var(--sheetedit-btn, #3a3f47); border-color:var(--sheetedit-btn-border, #4a4f57); }
+    .se-pqe-grp { display:flex; flex-direction:column; padding:0 9px; border-right:1px solid var(--sheetedit-border, #1c1f24); }
+    .se-pqe-grp:last-child { border-right:0; }
+    .se-pqe-grp-body { display:grid; grid-template-rows:repeat(3, 23px); grid-auto-flow:column; grid-auto-columns:max-content; gap:2px 6px; }
+    .se-pqe-grp-label { text-align:center; font-size:10.5px; color:var(--sheetedit-muted, #aab2bf); padding-top:4px; margin-top:auto; }
+    .se-pqe-rbtn { font:inherit; font-size:12px; display:inline-flex; align-items:center; gap:8px; width:100%; justify-content:flex-start;
+      background:transparent; color:var(--sheetedit-text, #e6e6e6); border:1px solid transparent; border-radius:5px; padding:0 9px 0 7px; cursor:pointer; white-space:nowrap; }
+    .se-pqe-rbtn svg { display:block; flex:none; width:16px; height:16px; color:var(--sheetedit-accent, #6e7bff); }
+    .se-pqe-rbtn:hover:not(:disabled) { background:var(--sheetedit-btn, #3a3f47); }
     .se-pqe-rbtn:disabled { opacity:.4; cursor:default; }
-    .se-pqe-rsep { width:1px; align-self:stretch; background:var(--sheetedit-border, #1c1f24); margin:2px 4px; }
-    .se-pqe-rgroup { color:var(--sheetedit-muted, #aab2bf); font-size:10px; text-transform:uppercase; letter-spacing:.05em; padding:0 4px 0 2px; }
+    .se-pqe-rbtn:disabled svg { color:var(--sheetedit-muted, #aab2bf); }
     .se-pqe-modal { position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); }
     .se-pqe-modal[hidden] { display:none; }
     .se-pqe-card { width:min(420px,92%); max-height:80%; overflow:auto; background:var(--sheetedit-chrome, #2b2f36);
@@ -187,38 +192,46 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
   iconLabel(cancelBtn, CANCEL_ICON, t("pqCancel"));
   bar.append(title, spacer, loadBtn, cancelBtn, saveBtn);
 
-  // Transform ribbon: each button appends a step to the query's final result.
+  // Transform ribbon: each button appends a step to the query's final result. Buttons are laid
+  // out in Excel-style groups (a 3-row column of buttons with the group name underneath).
   const ribbon = document.createElement("div");
   ribbon.className = "se-pqe-ribbon";
   const ribbonButtons: HTMLButtonElement[] = [];
+  const makeRibbonBtn = (icon: string, label: string, fn: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.className = "se-pqe-rbtn";
+    b.type = "button";
+    iconLabel(b, icon, label);
+    b.addEventListener("click", fn);
+    ribbonButtons.push(b);
+    return b;
+  };
+  const addRibbonGroup = (title: string, buttons: HTMLButtonElement[]): void => {
+    const grp = document.createElement("div");
+    grp.className = "se-pqe-grp";
+    const body = document.createElement("div");
+    body.className = "se-pqe-grp-body";
+    buttons.forEach((b) => body.appendChild(b));
+    const lbl = document.createElement("div");
+    lbl.className = "se-pqe-grp-label";
+    lbl.textContent = title;
+    grp.append(body, lbl);
+    ribbon.appendChild(grp);
+  };
   {
-    let lastGroup = "";
+    // Preserve the group order declared in TRANSFORMS.
+    const groups: { title: string; specs: TransformSpec[] }[] = [];
     for (const spec of TRANSFORMS) {
-      if (spec.group !== lastGroup) {
-        if (lastGroup) { const sep = document.createElement("span"); sep.className = "se-pqe-rsep"; ribbon.appendChild(sep); }
-        const g = document.createElement("span"); g.className = "se-pqe-rgroup"; g.textContent = spec.group; ribbon.appendChild(g);
-        lastGroup = spec.group;
-      }
-      const b = document.createElement("button");
-      b.className = "se-pqe-rbtn";
-      b.type = "button";
-      iconLabel(b, TRANSFORM_ICONS[spec.id] ?? "", spec.label);
-      b.addEventListener("click", () => void applyTransform(spec));
-      ribbonButtons.push(b);
-      ribbon.appendChild(b);
+      let g = groups.find((x) => x.title === spec.group);
+      if (!g) { g = { title: spec.group, specs: [] }; groups.push(g); }
+      g.specs.push(spec);
     }
+    for (const g of groups) addRibbonGroup(g.title, g.specs.map((s) => makeRibbonBtn(TRANSFORM_ICONS[s.id] ?? "", s.label, () => void applyTransform(s))));
     // Combine group: cross-query operations (handled specially, not plain Table.* on one input).
-    const sep = document.createElement("span"); sep.className = "se-pqe-rsep"; ribbon.appendChild(sep);
-    const cg = document.createElement("span"); cg.className = "se-pqe-rgroup"; cg.textContent = t("pqCombine"); ribbon.appendChild(cg);
-    for (const [icon, label, fn] of [[APPEND_ICON, t("pqAppend"), () => void appendQueries()], [MERGE_ICON, t("pqMerge"), () => void mergeQueries()]] as const) {
-      const b = document.createElement("button");
-      b.className = "se-pqe-rbtn";
-      b.type = "button";
-      iconLabel(b, icon, label);
-      b.addEventListener("click", fn);
-      ribbonButtons.push(b);
-      ribbon.appendChild(b);
-    }
+    addRibbonGroup(t("pqCombine"), [
+      makeRibbonBtn(APPEND_ICON, t("pqAppend"), () => void appendQueries()),
+      makeRibbonBtn(MERGE_ICON, t("pqMerge"), () => void mergeQueries()),
+    ]);
   }
 
   // Formula bar
