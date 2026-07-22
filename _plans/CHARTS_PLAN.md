@@ -169,7 +169,7 @@ phase, same honesty as the Power Query load-to note.
 - (DONE) Phase 0/1: xlsx chart reader (chart-read.ts) + Chart.js overlay (chart-overlay.ts) glued
   to the grid, scroll-synced, live data from cells. Model in core/chart-model.ts, Sheet.charts.
   Browser-verified: grouped column chart renders, scrolls with cells, and updates on a cell edit.
-- (pending) Phase 2: ods chart reader
+- (DONE) Phase 2: ods chart reader (adapters/ods/chart-read.ts) - embedded object -> same model -> same overlay; browser-verified
 - (pending) Phase 3: create / edit UI
 - (pending) Phase 4: xlsx writer
 - (pending) Phase 5: ods writer

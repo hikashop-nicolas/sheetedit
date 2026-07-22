@@ -1,6 +1,7 @@
 import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
 import { formatNumber, key, noteExtent, numToStr, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
+import { readOdsCharts } from "./chart-read";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
@@ -180,6 +181,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     readOdsTable(sheet, table, styles);
     wb.sheets.push(sheet);
   }
+  readOdsCharts(wb, files);
   return wb;
 }
 
