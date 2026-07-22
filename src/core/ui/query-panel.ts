@@ -1,4 +1,4 @@
-import { t } from "../i18n";
+import { t, localeCode } from "../i18n";
 import { highlightM } from "./m-highlight";
 import { listWorkbookTables, refreshOnLoadQueries, tableForQuery, tableValue, type WorkbookTable } from "../../adapters/xlsx/tables";
 import type { Workbook } from "../model";
@@ -178,6 +178,8 @@ export function setupQueryPanel(deps: QueryPanelDeps): { open(anchor: HTMLElemen
     const urlOf = (args: MValue[]): string => (args[0] as { value: string }).value;
     const tables = listWorkbookTables(wb);
     return {
+      // Culture.Current reflects the editor's active language (overrides mlang's default).
+      "Culture.Current": { kind: "text", value: localeCode() } as MValue,
       "Excel.CurrentWorkbook": {
         kind: "function" as const,
         name: "Excel.CurrentWorkbook",
