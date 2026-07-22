@@ -101,7 +101,12 @@ function injectStyles(): void {
     .se-pqe-ptable { border-collapse:collapse; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; color:#1a1a1a; }
     .se-pqe-ptable th, .se-pqe-ptable td { border:1px solid #d4d4d8; padding:3px 9px; text-align:left; white-space:nowrap; }
     .se-pqe-ptable th { position:sticky; top:0; background:#f1f1f4; color:#333; font-weight:600; z-index:1; }
+    .se-pqe-ptable th .nm { display:block; }
     .se-pqe-ptable th .ty { display:block; font-weight:400; font-size:10px; color:#888; }
+    .se-pqe-ptable th .qbar { display:flex; height:3px; margin-top:3px; border-radius:2px; overflow:hidden; background:#d4d4d8; }
+    .se-pqe-ptable th .qv { background:#3fb950; }
+    .se-pqe-ptable th .qe { background:#c0c4cc; }
+    .se-pqe-ptable th .qx { background:#d33d3d; }
     .se-pqe-ptable td.num { text-align:right; font-variant-numeric:tabular-nums; }
     .se-pqe-ptable td.null, .se-pqe-ptable td.obj { color:#8a8f98; }
     .se-pqe-ptable td.err { color:#c0392b; }
@@ -397,17 +402,43 @@ export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string
     const table = result as MTable;
     const total = table.rows.length;
     const shown = Math.min(total, PREVIEW_ROWS);
+    // Column quality (Excel-style): tally valid / empty / error over the shown rows.
+    const quality = table.columns.map(() => ({ valid: 0, empty: 0, error: 0 }));
+    for (let r = 0; r < shown; r++) {
+      const row = table.rows[r];
+      for (let c = 0; c < table.columns.length; c++) {
+        const k = (row[c] ?? { kind: "null" }).kind;
+        quality[c][k === "null" ? "empty" : k === "error" ? "error" : "valid"]++;
+      }
+    }
     const tbl = document.createElement("table");
     tbl.className = "se-pqe-ptable";
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
-    for (const col of table.columns) {
+    table.columns.forEach((col, c) => {
       const th = document.createElement("th");
-      th.textContent = col;
+      const nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = col;
+      th.appendChild(nm);
       const ty = table.types?.get(col);
       if (ty) { const s = document.createElement("span"); s.className = "ty"; s.textContent = ty.ascription ?? ty.name; th.appendChild(s); }
+      // Quality bar: green valid, grey empty, red error (proportional over the preview).
+      const q = quality[c];
+      const n = Math.max(1, q.valid + q.empty + q.error);
+      const bar = document.createElement("span");
+      bar.className = "qbar";
+      bar.title = `${q.valid} valid · ${q.empty} empty · ${q.error} error`;
+      for (const [cls, v] of [["v", q.valid], ["e", q.empty], ["x", q.error]] as const) {
+        if (v === 0) continue;
+        const seg = document.createElement("span");
+        seg.className = `q${cls}`;
+        seg.style.width = `${(v / n) * 100}%`;
+        bar.appendChild(seg);
+      }
+      th.appendChild(bar);
       htr.appendChild(th);
-    }
+    });
     thead.appendChild(htr);
     tbl.appendChild(thead);
     const tbody = document.createElement("tbody");
