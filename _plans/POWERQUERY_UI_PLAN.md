@@ -71,10 +71,11 @@ mlang and the pq-editor module are lazy-imported; the base editor bundle is unch
 
 ## Status (2026-07-23)
 
-Phases A, B and C are DONE and shipped (sheetedit 2770335 / 9fd034a / 7102e35), on top of the
-`mlang/steps` API (mlang 6399889). Browser-verified on demo/pq-sales.xlsx. Remaining: Phase D
-polish and Load-To a brand-new sheet/table (deferred, needs an Excel-reopen test). See the
-per-phase notes below.
+All phases (A, B, C, D) are DONE and shipped, on top of the `mlang/steps` API (mlang 6399889),
+browser- and Cypress-verified on demo/pq-sales.xlsx. Load-To (existing table + NEW sheet via
+createWorksheet) is implemented and round-trip-tested through the reader; it is not yet verified
+in real Excel (write it, reopen in Excel, refresh) - that acceptance test is the one open item.
+See the per-phase notes below.
 
 ## Phases (each independently shippable)
 
@@ -92,13 +93,13 @@ Custom Column (raw M), Add Index Column, Add Conditional Column, Unpivot/Pivot. 
 delete / rename / reorder. This is the bulk of the work but each transform is small and
 independently testable (generate M, assert the preview).
 
-**Phase C (DONE, except new-destination Load-To) - Get Data + Load To.** Create new queries: from a workbook table/range
+**Phase C (DONE) - Get Data + Load To.** Create new queries: from a workbook table/range
 (`Excel.CurrentWorkbook`), from an attached CSV/JSON/Excel file, from a Web URL, or blank. Load
 To: an existing table (reuse `applyQueryResult`) or a **new sheet + table** (extend `tables.ts`
 to create a destination table part and register the query-to-table link). "Connection only"
 (no load) is allowed. This is where a fresh query first reaches the grid.
 
-**Phase D (remaining) - polish.** Merge/Append queries (reference other members), lightweight column
+**Phase D (DONE) - polish.** Merge/Append queries (reference other members), lightweight column
 profiling (row count, type, empty/error quality bar), query dependency view, `.ods` parity
 (ODF has no DataMashup, so queries are xlsx-only for now; the panel hides for `.ods`), full
 i18n, and a Cypress round-trip: build a query in the UI, Load, save, reopen (and refresh) in
