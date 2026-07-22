@@ -6,6 +6,7 @@ import { isDateFmt, parseDateInput } from "./dates";
 import { localeCode } from "./i18n";
 import { readCsv, writeCsv } from "../adapters/csv";
 import { readOds, writeOds } from "../adapters/ods";
+import { writeOdsCharts } from "../adapters/ods/chart-write";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -126,6 +127,7 @@ function assembleWorkbook(wb: Workbook): Packable {
     return { files: wb.files };
   }
   writeOds(wb);
+  writeOdsCharts(wb); // persist created/edited charts (embedded objects) after content.xml is built
   // ODF requires the "mimetype" entry first and stored (uncompressed).
   const repacked: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {};
   if (wb.files["mimetype"]) repacked["mimetype"] = [wb.files["mimetype"], { level: 0 }];
