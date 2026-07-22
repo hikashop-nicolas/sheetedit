@@ -1,9 +1,12 @@
 import { createSheetEditor, type SheetEditor } from "../src/index";
 
 const fileInput = document.getElementById("file") as HTMLInputElement;
+const openBtn = document.getElementById("open") as HTMLButtonElement;
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const editorEl = document.getElementById("editor") as HTMLElement;
+
+openBtn.addEventListener("click", () => fileInput.click());
 
 let editor: SheetEditor | null = null;
 let filename = "edited.xlsx";

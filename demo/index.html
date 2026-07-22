@@ -5,20 +5,113 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>sheetedit demo</title>
     <style>
-      html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; }
-      body { display: flex; flex-direction: column; }
-      header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #ddd; }
-      header strong { font-size: 15px; }
+      /* Theme tokens, following the OS preference (light default, dark via the media query).
+         The --sheetedit-* block maps them onto the editor widget's own custom properties, the
+         same way Omnitext themes an embedded sheetedit. The grid canvas stays paper-light by
+         design, like a real spreadsheet. */
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --chrome: #fbfbfd;
+        --surface: #f1f2f4;
+        --surface-hover: #e8eaed;
+        --border: #e4e6eb;
+        --text: #1c1e21;
+        --muted: #6b7280;
+        --accent: #4f46e5;
+        --accent-fg: #ffffff;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1117;
+          --chrome: #161b22;
+          --surface: #21262d;
+          --surface-hover: #2b323b;
+          --border: #2d333b;
+          --text: #e6edf3;
+          --muted: #8b949e;
+          --accent: #6e7bff;
+          --accent-fg: #0b0e14;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+      }
+      body {
+        --sheetedit-bg: var(--bg);
+        --sheetedit-chrome: var(--chrome);
+        --sheetedit-chrome2: var(--surface);
+        --sheetedit-border: var(--border);
+        --sheetedit-btn: var(--surface);
+        --sheetedit-btn-hover: var(--surface-hover);
+        --sheetedit-btn-border: var(--border);
+        --sheetedit-text: var(--text);
+        --sheetedit-muted: var(--muted);
+        --sheetedit-accent: var(--accent);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      body { display: flex; flex-direction: column; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+
+      header {
+        display: flex; align-items: center; gap: 14px;
+        padding: 8px 14px; background: var(--chrome);
+        border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+        position: relative; z-index: 2;
+      }
+      .brand {
+        display: flex; align-items: center; gap: 9px;
+        font-weight: 700; font-size: 15px; letter-spacing: -0.015em; user-select: none;
+      }
+      .brand-mark { width: 20px; height: 20px; display: block; filter: drop-shadow(0 1px 3px rgba(79, 70, 229, 0.4)); }
+      .sep { width: 1px; height: 22px; background: var(--border); }
+      .group { display: flex; align-items: center; gap: 6px; }
+
+      .btn {
+        font: inherit; font-size: 13px; display: inline-flex; align-items: center; gap: 7px;
+        padding: 5px 12px; border: 1px solid var(--border); border-radius: 7px;
+        background: var(--surface); color: var(--text); cursor: pointer;
+        transition: background 0.12s, border-color 0.12s, transform 0.04s;
+      }
+      .btn:hover { background: var(--surface-hover); }
+      .btn:active { transform: translateY(1px); }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .btn:disabled { opacity: 0.5; cursor: default; }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+      .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+      .btn-primary:disabled { opacity: 0.5; }
+      .btn svg { display: block; width: 17px; height: 17px; }
+
+      #status { color: var(--muted); }
+      .spacer { flex: 1; }
       #editor { flex: 1; min-height: 0; }
-      #status { color: #666; }
     </style>
   </head>
   <body>
     <header>
-      <strong>sheetedit</strong>
-      <input id="file" type="file" accept=".xlsx,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet" />
-      <button id="save" disabled>Download edited workbook</button>
+      <span class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="se-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#16a34a" /><stop offset="1" stop-color="#22d3ee" /></linearGradient></defs>
+          <rect width="24" height="24" rx="6" fill="url(#se-grad)" />
+          <rect x="5.5" y="6" width="13" height="12" rx="1.4" fill="#fff" />
+          <path d="M5.5 10h13M5.5 14h13M10 6v12M14 6v12" stroke="#16a34a" stroke-width="1.1" />
+        </svg>
+        <span>sheetedit</span>
+      </span>
+      <span class="sep"></span>
+      <div class="group">
+        <button id="open" class="btn" type="button" title="Open" aria-label="Open">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Open</span>
+        </button>
+        <button id="save" class="btn btn-primary" type="button" title="Save" aria-label="Save" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.8a2 2 0 0 0-.6-1.4l-3.8-3.8a2 2 0 0 0-1.4-.6Z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+          <span>Save</span>
+        </button>
+      </div>
+      <span class="spacer"></span>
       <span id="status">Open a .xlsx or .ods file</span>
+      <input id="file" type="file" accept=".xlsx,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet" hidden />
     </header>
     <div id="editor"></div>
     <script type="module" src="./main.ts"></script>
