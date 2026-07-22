@@ -16,6 +16,7 @@ import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsR
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
+import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
 import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
@@ -244,6 +245,10 @@ export function injectStyles(): void {
     }
     .sheetedit-tab[aria-selected="true"] { background:var(--sheetedit-accent, #6e7bff); color:#fff; border-color:var(--sheetedit-accent, #6e7bff); }
     .sheetedit-tab:focus-visible { outline:2px solid #fff; outline-offset:1px; }
+    .sheetedit-tab-rename { font:inherit; width:9ch; min-width:60px; box-sizing:border-box; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-accent, #6e7bff); border-radius:4px; padding:2px 5px; }
+    .sheetedit-tab-add { display:inline-flex; align-items:center; justify-content:center; flex:none; width:26px; height:26px; margin-left:4px; padding:0; cursor:pointer; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
+    .sheetedit-tab-add:hover { background:var(--sheetedit-btn-hover, #454b54); color:var(--sheetedit-text, #e6e6e6); }
+    .sheetedit-tabmenu { bottom:40px; }
   `;
   document.head.appendChild(s);
 }
@@ -2046,6 +2051,81 @@ export function createSheetEditor(
     renderGrid();
   };
 
+  // Sheet management (xlsx/ods): add, inline-rename, delete and reorder. Structural, so it
+  // marks the workbook dirty; there is no undo step (close without saving to discard).
+  const canManageSheets = sheetsEditable(wb);
+
+  const doAddSheet = (): void => {
+    try {
+      const i = addSheet(wb);
+      mark();
+      switchSheet(i); // renders tabs + grid
+      beginRenameTab(tabs.children[i] as HTMLElement, i); // let the user name it immediately
+    } catch { /* unsupported file type */ }
+  };
+  const doDeleteSheet = (i: number): void => {
+    if (wb.sheets.length <= 1) return;
+    deleteSheet(wb, i);
+    if (active === i) active = Math.min(i, wb.sheets.length - 1);
+    else if (active > i) active -= 1;
+    mark();
+    renderTabs();
+    renderGrid();
+  };
+  const doMoveSheet = (from: number, to: number): void => {
+    if (to < 0 || to >= wb.sheets.length || from === to) return;
+    const cur = wb.sheets[active];
+    moveSheet(wb, from, to);
+    active = wb.sheets.indexOf(cur);
+    mark();
+    renderTabs();
+  };
+  function beginRenameTab(tab: HTMLElement, i: number): void {
+    const input = document.createElement("input");
+    input.className = "sheetedit-tab-rename";
+    input.value = wb.sheets[i]?.name ?? "";
+    tab.textContent = "";
+    tab.appendChild(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit: boolean): void => {
+      if (done) return;
+      done = true;
+      const v = input.value.trim();
+      if (commit && v && v !== wb.sheets[i]?.name) { renameSheet(wb, i, v); mark(); }
+      renderTabs();
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  }
+  function showTabMenu(i: number, x: number): void {
+    const menu = document.createElement("div");
+    menu.className = "sheetedit-pop sheetedit-tabmenu";
+    const add = (label: string, fn: () => void, disabled = false): void => {
+      const it = document.createElement("button");
+      it.type = "button";
+      it.className = "sheetedit-pop-item";
+      it.textContent = label;
+      it.disabled = disabled;
+      it.addEventListener("click", () => { menu.remove(); fn(); });
+      menu.appendChild(it);
+    };
+    add(t("sheetRename"), () => beginRenameTab(tabs.children[i] as HTMLElement, i));
+    add(t("sheetMoveLeft"), () => doMoveSheet(i, i - 1), i === 0);
+    add(t("sheetMoveRight"), () => doMoveSheet(i, i + 1), i === wb.sheets.length - 1);
+    add(t("sheetDelete"), () => doDeleteSheet(i), wb.sheets.length <= 1);
+    wrap.appendChild(menu);
+    menu.style.left = `${Math.min(x, wrap.getBoundingClientRect().width - menu.offsetWidth - 6)}px`;
+    menu.style.bottom = "40px";
+    const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
+
   const renderTabs = () => {
     tabs.innerHTML = "";
     wb.sheets.forEach((sheet, i) => {
@@ -2057,6 +2137,10 @@ export function createSheetEditor(
       b.setAttribute("aria-selected", String(i === active));
       b.tabIndex = i === active ? 0 : -1; // roving tabindex for the tablist
       b.addEventListener("click", () => switchSheet(i));
+      if (canManageSheets) {
+        b.addEventListener("dblclick", (e) => { e.preventDefault(); beginRenameTab(b, i); });
+        b.addEventListener("contextmenu", (e) => { e.preventDefault(); showTabMenu(i, b.offsetLeft); });
+      }
       // Left/Right (Home/End) move between sheet tabs, activating and focusing each.
       b.addEventListener("keydown", (e) => {
         const n = wb.sheets.length;
@@ -2072,6 +2156,16 @@ export function createSheetEditor(
       });
       tabs.appendChild(b);
     });
+    if (canManageSheets) {
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "sheetedit-tab-add";
+      addBtn.title = t("sheetAdd");
+      addBtn.setAttribute("aria-label", t("sheetAdd"));
+      addBtn.innerHTML = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`;
+      addBtn.addEventListener("click", doAddSheet);
+      tabs.appendChild(addBtn);
+    }
   };
 
   // Floating style bar near the selection (approach-triggered, like richdoc).

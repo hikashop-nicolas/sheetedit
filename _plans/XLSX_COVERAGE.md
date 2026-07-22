@@ -67,7 +67,7 @@ with its sibling elements intact:
 
 ## Progress
 
-- (pending) 1. Sheet management UI
+- (DONE) 1. Sheet management UI - add/rename/delete/reorder tabs, xlsx + ods (sheet-ops.ts)
 - (pending) 2. Hyperlinks
 - (pending) 3. Data validation dropdowns
 - (pending) 4. Shift secondary ranges on structural edits

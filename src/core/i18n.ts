@@ -7,6 +7,11 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   sheets: "Sheets",
+  sheetAdd: "Add sheet",
+  sheetRename: "Rename",
+  sheetDelete: "Delete",
+  sheetMoveLeft: "Move left",
+  sheetMoveRight: "Move right",
   addRow: "+ Row",
   addCol: "+ Col",
   addRows: "Add rows",
@@ -166,6 +171,11 @@ const en: Dict = {
 
 const fr: Dict = {
   sheets: "Feuilles",
+  sheetAdd: "Ajouter une feuille",
+  sheetRename: "Renommer",
+  sheetDelete: "Supprimer",
+  sheetMoveLeft: "Déplacer à gauche",
+  sheetMoveRight: "Déplacer à droite",
   addRow: "+ Ligne",
   addCol: "+ Col.",
   addRows: "Ajouter des lignes",
@@ -325,6 +335,11 @@ const fr: Dict = {
 
 const ja: Dict = {
   sheets: "シート",
+  sheetAdd: "シートを追加",
+  sheetRename: "名前を変更",
+  sheetDelete: "削除",
+  sheetMoveLeft: "左へ移動",
+  sheetMoveRight: "右へ移動",
   addRow: "+ 行",
   addCol: "+ 列",
   addRows: "行を追加",
