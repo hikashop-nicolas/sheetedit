@@ -24,7 +24,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -2542,29 +2542,64 @@ export function createSheetEditor(
     mark(); renderGrid();
   };
 
+  // Parse an A1 range ("B2:F5") or single cell ("G2") into a normalised rect, or null.
+  const parseRange = (raw: string): { r1: number; c1: number; r2: number; c2: number } | null => {
+    const body = raw.trim().replace(/\$/g, "");
+    const parts = body.split(":");
+    const a = parseA1Ref(parts[0] ?? "");
+    if (!a) return null;
+    const b = parts[1] ? parseA1Ref(parts[1]) : a;
+    if (!b) return null;
+    return { r1: Math.min(a.row, b.row), c1: Math.min(a.col, b.col), r2: Math.max(a.row, b.row), c2: Math.max(a.col, b.col) };
+  };
+
   const openSparkDialog = (): void => {
     const s = getSelRect(); const sheet = wb.sheets[active]!;
     // Editing: the single focused cell already hosts a sparkline -> prefill from it.
     const single = s.r1 === s.r2 && s.c1 === s.c2;
     const cur = single ? sheet.sparklines?.find((sp) => sp.host.r === s.r1 && sp.host.c === s.c1) : undefined;
     // Creating: default location is one cell past the selection (right of a row, below a column).
+    // A 2-D selection defaults to a group: a column of hosts to the right, one per data row.
     const wide = s.c2 - s.c1 >= s.r2 - s.r1;
-    const host = cur ? cur.host : wide ? { r: s.r1, c: s.c2 + 1 } : { r: s.r2 + 1, c: s.c1 };
+    const twoD = s.r2 > s.r1 && s.c2 > s.c1;
     const dataRange = cur ? cur.dataRef : `${colToLetters(s.c1)}${s.r1}:${colToLetters(s.c2)}${s.r2}`;
+    const locRange = cur
+      ? `${colToLetters(cur.host.c)}${cur.host.r}`
+      : twoD
+        ? `${colToLetters(s.c2 + 1)}${s.r1}:${colToLetters(s.c2 + 1)}${s.r2}`
+        : (() => { const h = wide ? { r: s.r1, c: s.c2 + 1 } : { r: s.r2 + 1, c: s.c1 }; return `${colToLetters(h.c)}${h.r}`; })();
     formDialog(t("sparkEdit"), [
       { key: "data", label: t("sparkData"), type: "text", value: dataRange },
-      { key: "loc", label: t("sparkLoc"), type: "text", value: `${colToLetters(host.c)}${host.r}` },
+      { key: "loc", label: t("sparkLoc"), type: "text", value: locRange },
       { key: "type", label: t("sparkType"), type: "select", value: cur?.type ?? "line", options: [{ value: "line", label: t("sparkLine") }, { value: "column", label: t("sparkColumn") }, { value: "stacked", label: t("sparkWinLoss") }] },
       { key: "color", label: t("sparkColour"), type: "color", value: cur?.color ?? "#376092" },
       // The negative-point colour only applies to column / win-loss, so it is gated on the type.
       { key: "negColor", label: t("sparkNegColour"), type: "color", value: cur?.negColor ?? "#d00000", showFor: { key: "type", values: ["column", "stacked"] } },
     ], (v) => {
-      const loc = parseA1Ref(String(v.loc).trim().replace(/\$/g, ""));
       const data = String(v.data).trim();
+      const loc = parseRange(String(v.loc));
       if (!loc || !data) return;
-      const dataRef = data.includes("!") ? data : `${sheet.name}!${data}`;
       const type = String(v.type) as "line" | "column" | "stacked";
-      setXlsxSparkline(sheet, { r: loc.row, c: loc.col }, { type, color: String(v.color), negColor: type === "line" ? undefined : String(v.negColor), dataRef });
+      const style = { type, color: String(v.color), negColor: type === "line" ? undefined : String(v.negColor) };
+      const sheetName = data.includes("!") ? data.split("!")[0] : sheet.name;
+      const dataBody = data.includes("!") ? data.split("!")[1]! : data;
+      const dr = parseRange(dataBody);
+      const locCells = (loc.r2 - loc.r1 + 1) * (loc.c2 - loc.c1 + 1);
+      if (locCells > 1 && dr) {
+        // Group: map each location cell to a data row (column of hosts) or column (row of hosts).
+        const items: { host: { r: number; c: number }; dataRef: string }[] = [];
+        if (loc.c1 === loc.c2) {
+          for (let i = 0; loc.r1 + i <= loc.r2 && dr.r1 + i <= dr.r2; i++)
+            items.push({ host: { r: loc.r1 + i, c: loc.c1 }, dataRef: `${sheetName}!${colToLetters(dr.c1)}${dr.r1 + i}:${colToLetters(dr.c2)}${dr.r1 + i}` });
+        } else {
+          for (let j = 0; loc.c1 + j <= loc.c2 && dr.c1 + j <= dr.c2; j++)
+            items.push({ host: { r: loc.r1, c: loc.c1 + j }, dataRef: `${sheetName}!${colToLetters(dr.c1 + j)}${dr.r1}:${colToLetters(dr.c1 + j)}${dr.r2}` });
+        }
+        setXlsxSparklineGroup(sheet, style, items);
+      } else {
+        const dataRef = data.includes("!") ? data : `${sheet.name}!${data}`;
+        setXlsxSparkline(sheet, { r: loc.r1, c: loc.c1 }, { ...style, dataRef });
+      }
       mark(); renderGrid();
     });
   };

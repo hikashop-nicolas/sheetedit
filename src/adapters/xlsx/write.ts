@@ -300,7 +300,63 @@ const X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 const XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
 const SPARK_EXT_URI = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
 
-type SparkSpec = { type: "line" | "column" | "stacked"; color: string; negColor?: string; dataRef: string };
+type SparkStyle = { type: "line" | "column" | "stacked"; color: string; negColor?: string };
+type SparkSpec = SparkStyle & { dataRef: string };
+type SparkItem = { host: { r: number; c: number }; dataRef: string };
+
+// Locate the x14 sparkline containers, creating them (create=true) or returning what exists.
+function sparkContainers(doc: Document, ws: Element, create: boolean): { extLst?: Element; ext?: Element; groups?: Element } {
+  const ns = ws.namespaceURI || SS_MAIN;
+  const x14 = (name: string): Element => doc.createElementNS(X14_NS, `x14:${name}`);
+  let extLst = firstByLocal(ws, "extLst");
+  let ext = extLst && Array.from(extLst.children).find((e) => e.localName === "ext" && e.getAttribute("uri") === SPARK_EXT_URI);
+  let groups = ext && Array.from(ext.children).find((e) => e.localName === "sparklineGroups");
+  if (create) {
+    if (!extLst) { extLst = doc.createElementNS(ns, "extLst"); insertWsChild(ws, extLst); }
+    if (!ext) { ext = doc.createElementNS(ns, "ext"); ext.setAttribute("uri", SPARK_EXT_URI); extLst.appendChild(ext); }
+    if (!groups) { groups = x14("sparklineGroups"); ext.appendChild(groups); }
+  }
+  return { extLst, ext, groups };
+}
+
+// Remove any sparkline(s) whose location is in hostRefs, dropping now-empty groups.
+function dropSparklinesAt(groups: Element | undefined, hostRefs: Set<string>): void {
+  if (!groups) return;
+  for (const g of Array.from(groups.children)) {
+    for (const sp of Array.from(g.getElementsByTagName("*")).filter((e) => e.localName === "sparkline")) {
+      const sq = Array.from(sp.children).find((c) => c.localName === "sqref");
+      if (hostRefs.has((sq?.textContent ?? "").trim().replace(/\$/g, ""))) sp.parentNode?.removeChild(sp);
+    }
+    if (!Array.from(g.getElementsByTagName("*")).some((e) => e.localName === "sparkline")) g.parentNode?.removeChild(g);
+  }
+}
+
+// Build one <x14:sparklineGroup> containing a sparkline per item, appended to groups.
+function appendSparkGroup(doc: Document, groups: Element, style: SparkStyle, items: SparkItem[]): void {
+  const x14 = (name: string): Element => doc.createElementNS(X14_NS, `x14:${name}`);
+  const xm = (name: string, text: string): Element => { const e = doc.createElementNS(XM_NS, `xm:${name}`); e.textContent = text; return e; };
+  const group = x14("sparklineGroup");
+  if (style.type !== "line") group.setAttribute("type", style.type === "stacked" ? "stacked" : "column");
+  group.setAttribute("displayEmptyCellsAs", "gap");
+  const cs = x14("colorSeries"); cs.setAttribute("rgb", `FF${style.color.replace("#", "")}`); group.appendChild(cs);
+  // Column and win/loss sparklines carry a distinct negative-point colour (default Excel red).
+  if (style.type !== "line") { const cn = x14("colorNegative"); cn.setAttribute("rgb", `FF${(style.negColor ?? "#d00000").replace("#", "")}`); group.appendChild(cn); }
+  const spks = x14("sparklines");
+  for (const it of items) {
+    const spk = x14("sparkline");
+    spk.appendChild(xm("f", it.dataRef));
+    spk.appendChild(xm("sqref", `${colToLetters(it.host.c)}${it.host.r}`));
+    spks.appendChild(spk);
+  }
+  group.appendChild(spks);
+  groups.appendChild(group);
+}
+
+function cleanupSparkContainers(c: { extLst?: Element; ext?: Element; groups?: Element }): void {
+  if (c.groups && !c.groups.children.length) c.groups.parentNode?.removeChild(c.groups);
+  if (c.ext && !c.ext.children.length) c.ext.parentNode?.removeChild(c.ext);
+  if (c.extLst && !c.extLst.children.length) c.extLst.parentNode?.removeChild(c.extLst);
+}
 
 /** Add, replace, or (spec === null) remove the sparkline whose location is the host cell. */
 export function setXlsxSparkline(sheet: Sheet, host: { r: number; c: number }, spec: SparkSpec | null): void {
@@ -310,50 +366,24 @@ export function setXlsxSparkline(sheet: Sheet, host: { r: number; c: number }, s
   if (spec) sheet.sparklines.push({ type: spec.type, color: spec.color, negColor: spec.negColor, host: { r: host.r, c: host.c }, dataRef: spec.dataRef });
   if (!sheet.sparklines.length) sheet.sparklines = undefined;
   if (!doc || !ws) return;
-  const ns = ws.namespaceURI || SS_MAIN;
-  const x14 = (name: string): Element => doc.createElementNS(X14_NS, `x14:${name}`);
-  const xm = (name: string, text: string): Element => { const e = doc.createElementNS(XM_NS, `xm:${name}`); e.textContent = text; return e; };
+  const c = sparkContainers(doc, ws, !!spec);
+  dropSparklinesAt(c.groups, new Set([hostRef]));
+  if (spec) appendSparkGroup(doc, c.groups!, spec, [{ host, dataRef: spec.dataRef }]);
+  else cleanupSparkContainers(c);
+  sheet.layoutDirty = true;
+}
 
-  // Locate (or, when adding, create) extLst > ext[sparkline] > x14:sparklineGroups.
-  let extLst = firstByLocal(ws, "extLst");
-  let ext = extLst && Array.from(extLst.children).find((e) => e.localName === "ext" && e.getAttribute("uri") === SPARK_EXT_URI);
-  let groups = ext && Array.from(ext.children).find((e) => e.localName === "sparklineGroups");
-
-  // Drop any existing sparkline (and its now-empty group) for this host.
-  if (groups) {
-    for (const g of Array.from(groups.children)) {
-      const spks = Array.from(g.getElementsByTagName("*")).filter((e) => e.localName === "sparkline");
-      for (const sp of spks) {
-        const sq = Array.from(sp.children).find((c) => c.localName === "sqref");
-        if ((sq?.textContent ?? "").trim().replace(/\$/g, "") === hostRef) sp.parentNode?.removeChild(sp);
-      }
-      if (!Array.from(g.getElementsByTagName("*")).some((e) => e.localName === "sparkline")) g.parentNode?.removeChild(g);
-    }
-  }
-
-  if (spec) {
-    if (!extLst) { extLst = doc.createElementNS(ns, "extLst"); insertWsChild(ws, extLst); }
-    if (!ext) { ext = doc.createElementNS(ns, "ext"); ext.setAttribute("uri", SPARK_EXT_URI); extLst.appendChild(ext); }
-    if (!groups) { groups = x14("sparklineGroups"); ext.appendChild(groups); }
-    const group = x14("sparklineGroup");
-    if (spec.type !== "line") group.setAttribute("type", spec.type === "stacked" ? "stacked" : "column");
-    group.setAttribute("displayEmptyCellsAs", "gap");
-    const cs = x14("colorSeries"); cs.setAttribute("rgb", `FF${spec.color.replace("#", "")}`); group.appendChild(cs);
-    // Column and win/loss sparklines carry a distinct negative-point colour (default Excel red).
-    if (spec.type !== "line") { const cn = x14("colorNegative"); cn.setAttribute("rgb", `FF${(spec.negColor ?? "#d00000").replace("#", "")}`); group.appendChild(cn); }
-    const spks = x14("sparklines");
-    const spk = x14("sparkline");
-    spk.appendChild(xm("f", spec.dataRef));
-    spk.appendChild(xm("sqref", hostRef));
-    spks.appendChild(spk);
-    group.appendChild(spks);
-    groups.appendChild(group);
-  } else {
-    // Removal cleanup: drop empty containers so we do not leave an empty extLst behind.
-    if (groups && !groups.children.length) groups.parentNode?.removeChild(groups);
-    if (ext && !ext.children.length) ext.parentNode?.removeChild(ext);
-    if (extLst && !extLst.children.length) extLst.parentNode?.removeChild(extLst);
-  }
+/** Author one sparkline group spanning several location cells (each mapped to its own data ref). */
+export function setXlsxSparklineGroup(sheet: Sheet, style: SparkStyle, items: SparkItem[]): void {
+  if (!items.length) return;
+  const doc = sheet.doc, ws = doc?.documentElement;
+  const hostRefs = new Set(items.map((it) => `${colToLetters(it.host.c)}${it.host.r}`));
+  sheet.sparklines = (sheet.sparklines ?? []).filter((s) => !hostRefs.has(`${colToLetters(s.host.c)}${s.host.r}`));
+  for (const it of items) sheet.sparklines.push({ type: style.type, color: style.color, negColor: style.negColor, host: { ...it.host }, dataRef: it.dataRef });
+  if (!doc || !ws) return;
+  const c = sparkContainers(doc, ws, true);
+  dropSparklinesAt(c.groups, hostRefs);
+  appendSparkGroup(doc, c.groups!, style, items);
   sheet.layoutDirty = true;
 }
 

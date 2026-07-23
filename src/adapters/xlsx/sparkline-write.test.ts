@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { strToU8, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook, writeWorkbook } from "../../core/workbook";
-import { setXlsxSparkline } from "./write";
+import { setXlsxSparkline, setXlsxSparklineGroup } from "./write";
 
 function base(): ReturnType<typeof readWorkbook> {
   const xlsx = zipSync({
@@ -45,6 +45,25 @@ describe("sparkline authoring", () => {
     expect(sheet.sparklines).toBeUndefined();
     const re = readWorkbook(writeWorkbook(wb));
     expect(re.sheets[0].sparklines).toBeUndefined();
+  });
+
+  it("authors one group spanning several location cells", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    setXlsxSparklineGroup(sheet, { type: "line", color: "#376092" }, [
+      { host: { r: 1, c: 7 }, dataRef: "Sheet1!B1:D1" },
+      { host: { r: 2, c: 7 }, dataRef: "Sheet1!B2:D2" },
+      { host: { r: 3, c: 7 }, dataRef: "Sheet1!B3:D3" },
+    ]);
+    // Model has one entry per host.
+    expect(sheet.sparklines?.length).toBe(3);
+    const re = readWorkbook(writeWorkbook(wb));
+    const sps = re.sheets[0].sparklines ?? [];
+    expect(sps.length).toBe(3);
+    expect(sps.map((s) => `${s.host.r}:${s.host.c}`).sort()).toEqual(["1:7", "2:7", "3:7"]);
+    // The three sparklines live in a single <sparklineGroup> (one group, three sparklines).
+    const xml = strFromU8(unzipSync(writeWorkbook(wb))["xl/worksheets/sheet1.xml"]);
+    expect((xml.match(/<(?:\w+:)?sparklineGroup[ >]/g) ?? []).length).toBe(1);
+    expect((xml.match(/<(?:\w+:)?sparkline[ >]/g) ?? []).length).toBe(3);
   });
 
   it("replacing the host's sparkline does not stack duplicates", () => {
