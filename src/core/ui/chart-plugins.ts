@@ -442,10 +442,11 @@ function shade(colour: string, f: number): string {
   return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
 }
 
-interface BarEl { x: number; y: number; base: number; width: number; getProps?: (k: string[], f?: boolean) => { x: number; y: number; base: number; width: number } }
-interface Bar3DChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { threeDBar?: string }[] }; getDatasetMeta: (i: number) => { data: BarEl[] } }
-/** Draws each column as an extruded (isometric) 3-D block. The flat bars are made transparent by
-    the caller and only serve as scale carriers; this plugin draws the front, top and right faces. */
+interface BarEl { x: number; y: number; base: number; width: number; height: number; getProps?: (k: string[], f?: boolean) => { x: number; y: number; base: number; width: number; height: number } }
+interface Bar3DChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { threeDBar?: string; threeDHoriz?: boolean }[] }; getDatasetMeta: (i: number) => { data: BarEl[] } }
+/** Draws each bar/column as an extruded (isometric) 3-D block. The flat bars are made transparent
+    by the caller and only serve as scale carriers; this plugin draws the front, top and right faces
+    (works for vertical columns and horizontal bars). */
 export const bar3DPlugin = {
   id: "sheeteditBar3D",
   afterDatasetsDraw(chart: Bar3DChart): void {
@@ -458,9 +459,9 @@ export const bar3DPlugin = {
     dss.forEach((ds, i) => {
       if (!ds.threeDBar) return;
       for (const el of chart.getDatasetMeta(i).data) {
-        const p = el.getProps ? el.getProps(["x", "y", "base", "width"], true) : el;
-        const w = p.width;
-        bars.push({ x0: p.x - w / 2, x1: p.x + w / 2, top: Math.min(p.y, p.base), bot: Math.max(p.y, p.base), c: ds.threeDBar });
+        const p = el.getProps ? el.getProps(["x", "y", "base", "width", "height"], true) : el;
+        if (ds.threeDHoriz) bars.push({ x0: Math.min(p.base, p.x), x1: Math.max(p.base, p.x), top: p.y - p.height / 2, bot: p.y + p.height / 2, c: ds.threeDBar });
+        else bars.push({ x0: p.x - p.width / 2, x1: p.x + p.width / 2, top: Math.min(p.y, p.base), bot: Math.max(p.y, p.base), c: ds.threeDBar });
       }
     });
     ctx.save();
@@ -523,5 +524,49 @@ export const pie3DPlugin = {
       ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.stroke();
     });
     ctx.restore();
+  },
+};
+
+interface LinePt { x: number; y: number }
+interface Line3DChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { threeDLine?: { colour: string; area: boolean } }[] }; getDatasetMeta: (i: number) => { data: LinePt[]; yScale?: { getPixelForValue: (v: number) => number } } }
+/** Draws a 3-D line (an extruded ribbon) or 3-D area (a filled front face with a receding top lip
+    and a side wall) for the pseudo-3D look. The flat line/area is transparent (geometry carrier). */
+export const line3DPlugin = {
+  id: "sheeteditLine3D",
+  afterDatasetsDraw(chart: Line3DChart): void {
+    const dss = chart.data.datasets;
+    if (!dss.some((d) => d.threeDLine)) return;
+    const { ctx, chartArea } = chart;
+    const depth = Math.max(8, Math.min(24, (chartArea.right - chartArea.left) * 0.03));
+    const dx = depth, dy = -depth * 0.6;
+    dss.forEach((ds, i) => {
+      const cfg = ds.threeDLine;
+      if (!cfg) return;
+      const meta = chart.getDatasetMeta(i);
+      const pts = meta.data.map((el) => ({ x: el.x, y: el.y })).filter((p) => isFinite(p.x) && isFinite(p.y));
+      if (pts.length < 2) return;
+      const base = Math.min(chartArea.bottom, meta.yScale ? meta.yScale.getPixelForValue(0) : chartArea.bottom);
+      const c = cfg.colour;
+      ctx.save();
+      if (cfg.area) {
+        // Front face (area to baseline).
+        ctx.fillStyle = c;
+        ctx.beginPath(); ctx.moveTo(pts[0]!.x, base); for (const p of pts) ctx.lineTo(p.x, p.y); ctx.lineTo(pts[pts.length - 1]!.x, base); ctx.closePath(); ctx.fill();
+        // Right side wall.
+        const last = pts[pts.length - 1]!;
+        ctx.fillStyle = shade(c, 0.7);
+        ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(last.x, base); ctx.lineTo(last.x + dx, base + dy); ctx.lineTo(last.x + dx, last.y + dy); ctx.closePath(); ctx.fill();
+      }
+      // Receding top ribbon/lip.
+      ctx.fillStyle = cfg.area ? shade(c, 1.15) : shade(c, 0.82);
+      for (let k = 0; k < pts.length - 1; k++) {
+        const p0 = pts[k]!, p1 = pts[k + 1]!;
+        ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p1.x + dx, p1.y + dy); ctx.lineTo(p0.x + dx, p0.y + dy); ctx.closePath(); ctx.fill();
+      }
+      // The front edge line.
+      ctx.strokeStyle = shade(c, 0.7); ctx.lineWidth = 2; ctx.lineJoin = "round";
+      ctx.beginPath(); pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke();
+      ctx.restore();
+    });
   },
 };

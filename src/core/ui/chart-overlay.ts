@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, multiLevelAxisPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, line3DPlugin, multiLevelAxisPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 import { registerDateAdapter } from "./date-adapter";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
@@ -46,6 +46,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(backgroundPlugin as unknown); // no-ops unless its plugin options carry a fill
     ChartJs.register(bar3DPlugin as unknown); // no-ops unless a dataset carries threeDBar
     ChartJs.register(pie3DPlugin as unknown); // no-ops unless a dataset carries threeDPie
+    ChartJs.register(line3DPlugin as unknown); // no-ops unless a dataset carries threeDLine
     ChartJs.register(multiLevelAxisPlugin as unknown); // no-ops unless its plugin options carry levels
     // Chart.js reads the date adapter from the module-level _adapters singleton, not off the ctor.
     registerDateAdapter((core as { _adapters?: { _date?: { override(a: unknown): void } } })._adapters); // enables the time scale for date axes
@@ -178,12 +179,14 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   if (isSurface) datasets.forEach((d, i) => { d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.surfaceRow = i; d.surfaceName = nameOf(wb, model.series[i].name); d.datalabels = { display: false }; });
   // Pseudo-3D (isometric) rendering for 3-D column and pie/doughnut charts: the flat datasets go
   // transparent (scale/geometry carriers) and a plugin draws the extruded look.
-  const threeDBar = model.threeD === true && model.kind === "column";
+  const threeDBar = model.threeD === true && (model.kind === "column" || model.kind === "bar");
   const threeDPie = model.threeD === true && pieLike;
+  const threeDLine = model.threeD === true && (model.kind === "line" || model.kind === "area");
   // Tiered category axis: draw the outer level(s) below the innermost labels (a plugin does it).
   const multiLevel = !!model.categoryLevels && model.categoryLevels.length > 1 && !xDate && !pieLike && !isStock && !isSurface && model.kind !== "scatter" && model.kind !== "bubble" && model.kind !== "radar";
-  if (threeDBar) datasets.forEach((d, i) => { d.threeDBar = palette(i, model.series[i]?.color); d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.datalabels = { display: false }; });
+  if (threeDBar) datasets.forEach((d, i) => { d.threeDBar = palette(i, model.series[i]?.color); d.threeDHoriz = model.kind === "bar"; d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.datalabels = { display: false }; });
   if (threeDPie && datasets[0]) { const arr = Array.isArray(datasets[0].backgroundColor) ? (datasets[0].backgroundColor as string[]) : []; datasets[0].threeDPie = arr; datasets[0].backgroundColor = arr.map(() => "rgba(0,0,0,0)"); datasets[0].borderColor = "rgba(0,0,0,0)"; datasets[0].datalabels = { display: false }; }
+  if (threeDLine) datasets.forEach((d, i) => { const s = model.series[i]; d.threeDLine = { colour: palette(i, s?.color), area: model.kind === "area" || s?.type === "area" }; d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.datalabels = { display: false }; });
   // Pie-of-pie / bar-of-pie: aggregate the last splitCount slices into "Other"; the plugin draws
   // the breakout as a small secondary pie or bar.
   const isOfPie = pieLike && !!model.ofPie && model.series.length >= 1;
@@ -252,6 +255,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
             ...cjFont(model.legendStyle),
             // 3-D datasets are transparent; source the legend swatch colours from the 3D tags.
             ...(threeDBar ? { generateLabels: (ch: { data: { datasets: { label?: string; threeDBar?: string }[] } }) => ch.data.datasets.map((d, i) => ({ text: d.label ?? "", fillStyle: d.threeDBar, strokeStyle: d.threeDBar, lineWidth: 0, datasetIndex: i })) } : {}),
+            ...(threeDLine ? { generateLabels: (ch: { data: { datasets: { label?: string; threeDLine?: { colour: string } }[] } }) => ch.data.datasets.map((d, i) => ({ text: d.label ?? "", fillStyle: d.threeDLine?.colour, strokeStyle: d.threeDLine?.colour, lineWidth: 0, datasetIndex: i })) } : {}),
             ...(threeDPie ? { generateLabels: (ch: { data: { labels?: unknown[]; datasets: { threeDPie?: string[] }[] } }) => (ch.data.labels ?? []).map((lab, i) => ({ text: String(lab), fillStyle: ch.data.datasets[0]?.threeDPie?.[i], strokeStyle: "#fff", lineWidth: 1, index: i })) } : {}),
           },
         },
