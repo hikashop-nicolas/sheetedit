@@ -121,8 +121,8 @@ approximation, not pixel-identical to Excel/LibreOffice.
   Desktop apps recompute on open, so cached values are a convenience, not authority.
 - `.ods` formulas typed in the grid are translated from A1 to ODF syntax on save; the
   common arithmetic, range and function cases are handled.
-- Not a full spreadsheet application (no charts editing, pivot tables, formatting UI).
-  This is a lightweight, embeddable in-browser editor for cell and formula content.
+- Not a full spreadsheet application (no pivot tables, no drawing/shape editing). This is a
+  lightweight, embeddable in-browser editor for cell, formula, chart and query content.
 - Power Query editing is `.xlsx`-only, and a query result loaded onto a brand-new sheet is
   written as plain cells (not a live, Excel-refreshable table). Loading onto an existing
   destination table refreshes it in place.
