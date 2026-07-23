@@ -399,7 +399,7 @@ export const multiLevelAxisPlugin = {
   id: "sheeteditMultiLevel",
   afterDraw(chart: MultiLevelChart, _args: unknown, opts: (string | number | null)[][] | undefined): void {
     const levels = opts;
-    if (!levels || levels.length < 2) return;
+    if (!Array.isArray(levels) || levels.length < 2) return;
     const xs = chart.scales?.x;
     if (!xs) return;
     const { ctx } = chart;

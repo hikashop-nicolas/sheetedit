@@ -31,6 +31,7 @@ const isCartesian = (k: ChartKind): boolean => k === "column" || k === "bar" || 
 // Which option groups apply to which chart kinds (a group is hidden when it does not apply).
 const canStack = (k: ChartKind): boolean => k === "column" || k === "bar" || k === "area";
 const canCombo = (k: ChartKind): boolean => isCartesian(k);
+const supports3D = (k: ChartKind): boolean => isCartesian(k) || k === "pie" || k === "doughnut";
 const hasLine = (k: ChartKind): boolean => k === "line" || k === "area" || k === "scatter" || k === "radar";
 const hasAxes = (k: ChartKind): boolean => isCartesian(k) || k === "scatter";
 const DASHES: { val: string; key: string }[] = [{ val: "solid", key: "chartDashSolid" }, { val: "dash", key: "chartDashDash" }, { val: "dot", key: "chartDashDot" }];
@@ -146,6 +147,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       showLegend: editModel ? (editModel.legend?.show ?? true) : true,
       legendPos: editModel?.legend?.pos ?? "bottom",
       dataLabels: !!editModel?.dataLabels,
+      threeD: !!editModel?.threeD,
       stacked: !!editModel?.stacked, percent: !!editModel?.percent,
       comboLine: !!editModel?.series.some((s) => s.type === "line"),
       comboSecondary: !!editModel?.series.some((s) => s.secondaryAxis),
@@ -233,7 +235,8 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
     legendSel.addEventListener("change", () => { state.legendPos = legendSel.value as typeof state.legendPos; redraw(); });
     const legendPosField = field("chartLegendPos", legendSel);
     const dataLabelsChk = mkCheck(t("chartDataLabels"), () => state.dataLabels, (v) => { state.dataLabels = v; });
-    const legendRow = el("div", "sheetedit-chart-row"); legendRow.append(legendChk, dataLabelsChk);
+    const threeDChk = mkCheck(t("chart3D"), () => state.threeD, (v) => { state.threeD = v; }, () => updateVisibility());
+    const legendRow = el("div", "sheetedit-chart-row"); legendRow.append(legendChk, dataLabelsChk, threeDChk);
 
     // Layout (stacking) - column/bar/area
     const stackChk = mkCheck(t("chartStacked"), () => state.stacked, (v) => { state.stacked = v; });
@@ -307,12 +310,14 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
     // Show only the sections/fields that apply to the current kind + series count.
     function updateVisibility(): void {
       const count = baseModelRaw()?.series.length ?? 0;
-      layoutSec.hidden = !canStack(kind);
-      comboSec.hidden = !(canCombo(kind) && count >= 2);
-      lineSec.hidden = !hasLine(kind);
-      axesSec.hidden = !hasAxes(kind);
+      // 3-D charts don't combine with combo, stacking, line-style or axis titles here.
+      layoutSec.hidden = !canStack(kind) || state.threeD;
+      comboSec.hidden = !(canCombo(kind) && count >= 2) || state.threeD;
+      lineSec.hidden = !hasLine(kind) || state.threeD;
+      axesSec.hidden = !hasAxes(kind) || state.threeD;
       firstColField.hidden = isScatter(kind);
       legendPosField.hidden = !state.showLegend;
+      threeDChk.hidden = !supports3D(kind);
       coloursHead.textContent = isPie(kind) ? t("chartSliceColours") : t("chartSeriesColours");
     }
     closeX.addEventListener("click", () => close());
@@ -339,6 +344,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       m.titleStyle = state.titleBold || state.titleColor ? { bold: state.titleBold || undefined, color: state.titleColor || undefined } : undefined;
       m.legend = { show: state.showLegend, pos: state.legendPos };
       m.dataLabels = state.dataLabels || undefined;
+      m.threeD = state.threeD && supports3D(m.kind) ? true : undefined;
       m.stacked = canStack(m.kind) ? (state.stacked || state.percent || undefined) : undefined;
       m.percent = canStack(m.kind) ? (state.percent || undefined) : undefined;
       if (canCombo(m.kind) && m.series.length >= 2) {
