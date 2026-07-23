@@ -53,7 +53,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const hasSecondary = model.series.some((s) => s.secondaryAxis);
   const blank = (v: number | null): number | null => (v == null ? (model.blanksAs === "gap" ? null : 0) : v); // "span" also keeps 0/null; spanGaps below connects
   // For a 100% stacked (percentStacked) chart, normalise each category to its total.
-  const rawBySeries = pieLike || model.kind === "scatter" || model.kind === "bubble" ? [] : model.series.map((s) => numbers(wb, s.values));
+  // Category-like values (everything except scatter/bubble, which use xVal/yVal). Pie/doughnut ARE
+  // category-like and need these to build their slice data.
+  const rawBySeries = model.kind === "scatter" || model.kind === "bubble" ? [] : model.series.map((s) => numbers(wb, s.values));
   const totals: number[] = [];
   if (model.percent) for (let j = 0; j < Math.max(0, ...rawBySeries.map((a) => a.length)); j++) totals[j] = rawBySeries.reduce((t, a) => t + (a[j] ?? 0), 0);
   const perPoint = (s: typeof model.series[number], j: number): string => s.pointColors?.[j] ?? CHART_PALETTE[j % CHART_PALETTE.length];

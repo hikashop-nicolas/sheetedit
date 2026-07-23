@@ -167,13 +167,16 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       if (["column","bar","line","area"].includes(model.kind) && model.series.length >= 2) { const last = model.series[model.series.length - 1]; if (state.comboLine) last.type = "line"; if (state.comboSecondary) last.secondaryAxis = true; }
       return model;
     }
+    let previewSeq = 0;
     function redraw(): void {
       const model = buildModel();
       if (!model) return;
+      const seq = ++previewSeq;
       void loadChartJs().then((Ctor) => {
-        const cfg = chartConfig(model, wb) as { data: unknown; options: unknown };
-        if (chart) { const c = chart as { data: unknown; options: unknown; update(): void }; c.data = cfg.data; c.options = cfg.options; c.update(); }
-        else chart = new Ctor(canvas.getContext("2d")!, cfg);
+        if (seq !== previewSeq) return; // a newer redraw superseded this one
+        // Chart.js can't change its type via update(); recreate on every redraw (a preview, so cheap).
+        chart?.destroy();
+        chart = new Ctor(canvas.getContext("2d")!, chartConfig(model, wb));
       });
     }
     const close = (): void => { chart?.destroy(); modal.remove(); };
