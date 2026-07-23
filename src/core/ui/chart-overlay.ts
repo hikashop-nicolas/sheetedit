@@ -45,6 +45,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const type = model.kind === "column" || model.kind === "bar" ? "bar" : model.kind === "area" ? "line" : model.kind;
   const cats = labels(wb, model.categories);
   const palette = (i: number, c?: string): string => c ?? CHART_PALETTE[i % CHART_PALETTE.length];
+  const pieLike = model.kind === "pie" || model.kind === "doughnut";
   const datasets = model.series.map((s, i) => {
     const base: Record<string, unknown> = { label: nameOf(wb, s.name), borderColor: palette(i, s.color), backgroundColor: palette(i, s.color) };
     if (model.kind === "scatter" || model.kind === "bubble") {
@@ -53,12 +54,17 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     } else {
       base.data = numbers(wb, s.values).map((v) => v ?? 0);
       if (model.kind === "area") base.fill = true;
+      // Pie / doughnut: colour each slice from the palette, not one colour for the whole series.
+      if (pieLike) { base.backgroundColor = (base.data as number[]).map((_, j) => CHART_PALETTE[j % CHART_PALETTE.length]); base.borderColor = "#fff"; }
     }
     return base;
   });
   const stacked = model.stacked ? { stacked: true } : {};
-  const scales = model.kind === "bar" ? { x: { ...stacked, beginAtZero: true }, y: { ...stacked } }
-    : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stacked }, y: { ...stacked, beginAtZero: model.kind !== "line" } }
+  const axisTitle = (t?: string): object => (t ? { title: { display: true, text: t } } : {});
+  const xt = axisTitle(model.axes?.x?.title);
+  const yt = axisTitle(model.axes?.y?.title);
+  const scales = model.kind === "bar" ? { x: { ...stacked, beginAtZero: true, ...yt }, y: { ...stacked, ...xt } }
+    : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stacked, ...xt }, y: { ...stacked, beginAtZero: model.kind !== "line", ...yt } }
     : undefined;
   return {
     type,
@@ -131,9 +137,9 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
     box.style.height = `${Math.max(40, y2 - y)}px`;
   };
 
-  // Drag the box to move, or its corner handle to resize; commit to the anchor on release.
+  // Drag the box to move, or its corner handle to resize (mouse or touch); commit on release.
   function attachDrag(box: HTMLElement, handle: HTMLElement, model: ChartModel): void {
-    const start = (e: MouseEvent, mode: "move" | "resize"): void => {
+    const start = (e: PointerEvent, mode: "move" | "resize"): void => {
       e.preventDefault();
       e.stopPropagation();
       setSelected(model.id);
@@ -143,23 +149,23 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
       const y0 = parseFloat(box.style.top) || 0;
       const w0 = box.offsetWidth;
       const h0 = box.offsetHeight;
-      const onMove = (ev: MouseEvent): void => {
+      const onMove = (ev: PointerEvent): void => {
         const dx = ev.clientX - sx;
         const dy = ev.clientY - sy;
         if (mode === "move") { box.style.left = `${Math.max(0, x0 + dx)}px`; box.style.top = `${Math.max(0, y0 + dy)}px`; }
         else { box.style.width = `${Math.max(80, w0 + dx)}px`; box.style.height = `${Math.max(60, h0 + dy)}px`; }
       };
       const onUp = (): void => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
         rectToAnchor(model, parseFloat(box.style.left) || 0, parseFloat(box.style.top) || 0, box.offsetWidth, box.offsetHeight);
         deps.onEdit?.(model);
       };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
     };
-    box.addEventListener("mousedown", (e) => { if (e.target !== handle) start(e, "move"); });
-    handle.addEventListener("mousedown", (e) => start(e, "resize"));
+    box.addEventListener("pointerdown", (e) => { if (e.target !== handle) start(e, "move"); });
+    handle.addEventListener("pointerdown", (e) => start(e, "resize"));
   }
 
   let drawSeq = 0;
@@ -215,8 +221,8 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
 
   gridScroll.addEventListener("scroll", syncScroll, { passive: true });
   window.addEventListener("resize", refresh);
-  // Click on empty grid deselects.
-  gridScroll.addEventListener("mousedown", () => { if (selectedId) setSelected(null); });
+  // Tap/click on empty grid deselects.
+  gridScroll.addEventListener("pointerdown", () => { if (selectedId) setSelected(null); });
 
   /** Screen rect of a chart's box (for anchoring an external edit toolbar). */
   const boxRect = (id: string): DOMRect | null => instances.get(id)?.box.getBoundingClientRect() ?? null;

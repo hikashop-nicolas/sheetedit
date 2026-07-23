@@ -174,5 +174,8 @@ phase, same honesty as the Power Query load-to note.
 - (DONE) Phase 4: xlsx writer (adapters/xlsx/chart-write.ts) - DrawingML chart part + anchor/drawing/rels/content-type registration for created charts; rewrite part + anchor for edited ones. Round-trip unit-tested through the reader; NOT real-Excel-verified.
 - (DONE) Phase 5: ods writer (adapters/ods/chart-write.ts) - embedded Object N/ (chart:chart + internal data table) + manifest + draw:frame in content.xml. Round-trip unit-tested; anchor absolute-approximate (default-width sheets).
 - (DONE) Phase 6 (core): Cypress e2e (cypress/e2e/charts.cy.ts, fixture chart.xlsx) - renders an
-  existing chart + creates one via the insert dialog. Deferred polish: combo/stacked-secondary
-  axes, data labels, per-point colours/theme, touch drag on mobile (move/resize is mouse-only).
+  existing chart + creates one via the insert dialog. Polish done: pie/doughnut per-slice colours, axis titles, POINTER-event drag (move/resize works
+  on touch/mobile). LibreOffice-validated: headless round-trips both directions (our xlsx chart
+  -> ods object, our ods chart -> xl/charts) confirm LibreOffice reads our written charts (this
+  caught + fixed the xmlns="" namespace bug on generated content-types/rels). Still deferred:
+  combo/secondary axes, data labels (needs a Chart.js plugin).
