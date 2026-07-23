@@ -1,5 +1,5 @@
 import { parseXmlOpt, type Sheet } from "../../core/model";
-import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartKind, type ChartModel, type ChartRef, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
+import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartErrorBars, type ChartKind, type ChartModel, type ChartRef, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
 
 // Read the charts anchored on a worksheet: sheet rels -> drawingN.xml (the anchors) -> chartN.xml
 // (the DrawingML chart) -> ChartModel. Namespace-prefix-agnostic (elements are matched by local
@@ -85,6 +85,24 @@ function readTrendline(ser: Element): ChartTrendline | undefined {
   if (attr(kid(t, "dispRSqr"), "val") === "1") out.dispRSqr = true;
   const nm = textOf(kid(t, "name")).trim(); if (nm) out.name = nm;
   const col = colorOf(t); if (col) out.color = col;
+  return out;
+}
+
+/** A c:errBars on a series -> ChartErrorBars. */
+function readErrorBars(ser: Element): ChartErrorBars | undefined {
+  const eb = kid(ser, "errBars");
+  if (!eb) return undefined;
+  const valueType = (attr(kid(eb, "errValType"), "val") as ChartErrorBars["valueType"]) ?? "fixedVal";
+  const out: ChartErrorBars = { valueType };
+  const dir = attr(kid(eb, "errBarType"), "val"); if (dir === "both" || dir === "plus" || dir === "minus") out.direction = dir;
+  const v = attr(kid(eb, "val"), "val"); if (v != null) out.value = Number(v);
+  if (attr(kid(eb, "noEndCap"), "val") === "1") out.noEndCap = true;
+  const side = (name: string): (number | null)[] | undefined => {
+    const el = kid(eb, name);
+    const cacheEl = el ? (kid(el, "numLit") ?? (kid(el, "numRef") ? kid(kid(el, "numRef"), "numCache") : undefined)) : undefined;
+    return cacheEl ? ptsOf(cacheEl).map((x) => (typeof x === "number" ? x : x == null ? null : Number(x))) : undefined;
+  };
+  if (valueType === "cust") { out.plus = side("plus"); out.minus = side("minus"); }
   return out;
 }
 
@@ -201,6 +219,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       }
       const sl = readDLbls(ser); if (sl) s.labels = sl;
       const tl = readTrendline(ser); if (tl) s.trendline = tl;
+      const eb = readErrorBars(ser); if (eb) s.errorBars = eb;
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));

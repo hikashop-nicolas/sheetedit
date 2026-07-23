@@ -3,7 +3,7 @@
 // (dataset.trendline / dataset.errorBars), so it never affects charts that do not use it. Kept
 // dependency-free: the regressions and the drawing are computed here.
 
-import type { ChartTrendline } from "../chart-model";
+import type { ChartErrorBars, ChartTrendline } from "../chart-model";
 
 interface Pt { x: number; y: number }
 type FitFn = (x: number) => number;
@@ -112,7 +112,8 @@ export function fitTrendline(t: ChartTrendline, pts: Pt[]): { f?: FitFn; points?
 }
 
 type Scale = { getPixelForValue: (v: number) => number };
-interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: unknown }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean } }
+interface Elem { x: number; y: number }
+interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: ChartErrorBars; borderColor?: string }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean; data: Elem[] } }
 
 /** Extract (x,y) points from a dataset's raw data (category index or {x,y}). */
 function ptsOfDataset(data: unknown[]): Pt[] {
@@ -173,6 +174,61 @@ export const trendlinePlugin = {
         ctx.textBaseline = "top";
         lines.forEach((ln, k) => ctx.fillText(ln, chartArea.right - 6, chartArea.top + 4 + k * 14));
       }
+      ctx.restore();
+    });
+  },
+};
+
+const yOfRaw = (v: unknown): number | null => {
+  const y = v && typeof v === "object" ? (v as { y?: number }).y : (v as number);
+  return y == null || isNaN(y) ? null : y;
+};
+function stddev(vals: number[]): number {
+  if (vals.length < 2) return 0;
+  const m = mean(vals);
+  return Math.sqrt(vals.reduce((t, v) => t + (v - m) ** 2, 0) / (vals.length - 1));
+}
+
+/** Draws error-bar whiskers for any dataset carrying an `errorBars` config. */
+export const errorBarsPlugin = {
+  id: "sheeteditErrorBars",
+  afterDatasetsDraw(chart: DrawChart): void {
+    const { ctx } = chart;
+    chart.data.datasets.forEach((ds, i) => {
+      const eb = ds.errorBars;
+      if (!eb) return;
+      const meta = chart.getDatasetMeta(i);
+      if (meta.hidden || !meta.yScale) return;
+      const ys = ds.data.map(yOfRaw).filter((v): v is number => v != null);
+      const sd = stddev(ys);
+      const magOf = (y: number, idx: number): { plus: number; minus: number } => {
+        switch (eb.valueType) {
+          case "fixedVal": return { plus: eb.value ?? 0, minus: eb.value ?? 0 };
+          case "percentage": return { plus: Math.abs(y) * (eb.value ?? 0) / 100, minus: Math.abs(y) * (eb.value ?? 0) / 100 };
+          case "stdDev": return { plus: sd * (eb.value ?? 1), minus: sd * (eb.value ?? 1) };
+          case "stdErr": { const e = sd / Math.sqrt(Math.max(1, ys.length)); return { plus: e, minus: e }; }
+          case "cust": return { plus: eb.plus?.[idx] ?? 0, minus: eb.minus?.[idx] ?? 0 };
+        }
+      };
+      const dir = eb.direction ?? "both";
+      const cap = eb.noEndCap ? 0 : 4;
+      ctx.save();
+      ctx.strokeStyle = ds.borderColor ?? "#555";
+      ctx.lineWidth = 1;
+      ds.data.forEach((v, idx) => {
+        const y = yOfRaw(v);
+        const el = meta.data[idx];
+        if (y == null || !el) return;
+        const px = el.x;
+        const { plus, minus } = magOf(y, idx);
+        const drawTo = (val: number): void => {
+          const py = meta.yScale!.getPixelForValue(val);
+          ctx.beginPath(); ctx.moveTo(px, el.y); ctx.lineTo(px, py); ctx.stroke();
+          if (cap) { ctx.beginPath(); ctx.moveTo(px - cap, py); ctx.lineTo(px + cap, py); ctx.stroke(); }
+        };
+        if (dir !== "minus" && plus) drawTo(y + plus);
+        if (dir !== "plus" && minus) drawTo(y - minus);
+      });
       ctx.restore();
     });
   },

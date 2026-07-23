@@ -1,5 +1,5 @@
 import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
-import { pxToEmu, type ChartDataLabels, type ChartModel, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
+import { pxToEmu, type ChartDataLabels, type ChartErrorBars, type ChartModel, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
 import { resolveLabels, resolveNumbers, seriesName } from "../../core/chart-data";
 
 // Write created / edited charts to xlsx DrawingML. Only dirty charts are emitted; a chart read
@@ -61,13 +61,23 @@ function trendlineXml(t?: ChartTrendline): string {
   const eq = t.dispEq ? `<c:dispEq val="1"/>` : "";
   return `<c:trendline>${name}${spPr}<c:trendlineType val="${t.type}"/>${order}${period}${fw}${bw}${ic}${rsq}${eq}</c:trendline>`;
 }
+/** A c:errBars (error bars) inside a series. */
+function errBarsXml(eb?: ChartErrorBars): string {
+  if (!eb) return "";
+  const numLit = (vals?: (number | null)[]): string => (vals ? `<c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${vals.map((v, i) => (v == null ? "" : `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`)).join("")}</c:numLit>` : "");
+  const cust = eb.valueType === "cust";
+  const plus = cust ? `<c:plus>${numLit(eb.plus)}</c:plus>` : "";
+  const minus = cust ? `<c:minus>${numLit(eb.minus)}</c:minus>` : "";
+  const val = !cust && eb.value != null ? `<c:val val="${eb.value}"/>` : "";
+  return `<c:errBars><c:errDir val="y"/><c:errBarType val="${eb.direction ?? "both"}"/><c:errValType val="${eb.valueType}"/><c:noEndCap val="${eb.noEndCap ? 1 : 0}"/>${plus}${minus}${val}</c:errBars>`;
+}
 function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | undefined, catLabels: string[], catLevels?: (string | number | null)[][]): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const spPr = s.color ? fillPr(s.color) : "";
   const cat = catXml(catRef, catLabels, catLevels);
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dPtsXml(s)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dPtsXml(s)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${errBarsXml(s.errorBars)}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
 }
 function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
@@ -75,7 +85,7 @@ function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const x = `<c:xVal>${numRef(s.xValues?.ref, resolveNumbers(wb, s.xValues))}</c:xVal>`;
   const y = `<c:yVal>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:yVal>`;
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${errBarsXml(s.errorBars)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
 }
 
 const catAx = (id: number, cross: number, pos: string, del = false, date = false): string => date

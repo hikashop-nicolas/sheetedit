@@ -175,6 +175,18 @@ describe("xlsx chart writer", () => {
     expect(re.series[0].trendline).toEqual({ type: "movingAvg", order: 3 });
   });
 
+  it("error bars round-trip (fixed value and custom per-point)", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "eb", defaultAnchor(rect));
+    m.series[0].errorBars = { valueType: "fixedVal", value: 3, direction: "both" };
+    m.series[1].errorBars = { valueType: "cust", direction: "plus", plus: [2, 4], minus: [1, 1], noEndCap: true };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].errorBars).toEqual({ valueType: "fixedVal", value: 3, direction: "both" });
+    expect(re.series[1].errorBars).toEqual({ valueType: "cust", direction: "plus", plus: [2, 4], minus: [1, 1], noEndCap: true });
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
