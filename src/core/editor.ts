@@ -23,7 +23,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1615,6 +1615,8 @@ export function createSheetEditor(
     toolbar.append(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
     const NOTE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`;
     toolbar.append(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
+    const CF_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`;
+    toolbar.append(tbIcon(CF_ICON, t("cfEdit"), () => openCfDialog()));
   }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
@@ -2316,21 +2318,25 @@ export function createSheetEditor(
     renderGrid();
   };
 
-  // A small modal form (text/checkbox fields) used by the link / data-validation authoring dialogs.
-  function formDialog(title: string, fields: { key: string; label: string; type: "text" | "checkbox"; value?: string | boolean }[], onOk: (vals: Record<string, string | boolean>) => void): void {
+  // A small modal form used by the authoring dialogs. Field types: text, checkbox, color, select.
+  type FormField = { key: string; label: string; type: "text" | "checkbox" | "color"; value?: string | boolean } | { key: string; label: string; type: "select"; options: { value: string; label: string }[]; value?: string };
+  function formDialog(title: string, fields: FormField[], onOk: (vals: Record<string, string | boolean>) => void): void {
     const modal = document.createElement("div");
     modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
     const card = document.createElement("div");
     card.style.cssText = "width:min(420px,94%);background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
     const h = document.createElement("h3"); h.textContent = title; h.style.cssText = "margin:0 0 12px;font-size:15px"; card.appendChild(h);
-    const inputs: Record<string, HTMLInputElement> = {};
+    const fieldStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:6px 8px";
+    const inputs: Record<string, HTMLInputElement | HTMLSelectElement> = {};
     for (const f of fields) {
+      const inline = f.type === "checkbox";
       const lbl = document.createElement("label");
-      lbl.style.cssText = "display:flex;" + (f.type === "checkbox" ? "align-items:center;gap:7px;" : "flex-direction:column;gap:4px;") + "margin-bottom:10px;font-size:13px";
-      const inp = document.createElement("input"); inp.type = f.type;
-      if (f.type === "checkbox") inp.checked = !!f.value; else { inp.value = (f.value as string) ?? ""; inp.style.cssText = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:6px 8px"; }
+      lbl.style.cssText = "display:flex;" + (inline ? "align-items:center;gap:7px;" : "flex-direction:column;gap:4px;") + "margin-bottom:10px;font-size:13px";
+      let inp: HTMLInputElement | HTMLSelectElement;
+      if (f.type === "select") { const s = document.createElement("select"); s.style.cssText = fieldStyle; for (const o of f.options) { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; s.appendChild(op); } if (f.value != null) s.value = f.value; inp = s; }
+      else { const i = document.createElement("input"); i.type = f.type; if (f.type === "checkbox") i.checked = !!f.value; else { i.value = (f.value as string) ?? ""; if (f.type === "text") i.style.cssText = fieldStyle; else i.style.cssText = "width:34px;height:26px;padding:0;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;cursor:pointer"; } inp = i; }
       const sp = document.createElement("span"); sp.textContent = f.label; sp.style.color = "var(--sheetedit-muted,#aab2bf)";
-      if (f.type === "checkbox") lbl.append(inp, sp); else lbl.append(sp, inp);
+      if (inline) lbl.append(inp, sp); else lbl.append(sp, inp);
       card.appendChild(lbl); inputs[f.key] = inp;
     }
     const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:6px";
@@ -2338,11 +2344,11 @@ export function createSheetEditor(
     const cancel = btn(t("chartCancel"), false), ok = btn(t("chartApply"), true);
     const close = (): void => modal.remove();
     cancel.addEventListener("click", close);
-    ok.addEventListener("click", () => { const vals: Record<string, string | boolean> = {}; for (const f of fields) vals[f.key] = f.type === "checkbox" ? inputs[f.key]!.checked : inputs[f.key]!.value; close(); onOk(vals); });
+    ok.addEventListener("click", () => { const vals: Record<string, string | boolean> = {}; for (const f of fields) { const inp = inputs[f.key]!; vals[f.key] = f.type === "checkbox" ? (inp as HTMLInputElement).checked : inp.value; } close(); onOk(vals); });
     actions.append(cancel, ok); card.appendChild(actions);
     modal.appendChild(card); wrap.appendChild(modal);
     modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
-    const firstText = fields.find((f) => f.type !== "checkbox");
+    const firstText = fields.find((f) => f.type === "text");
     if (firstText) inputs[firstText.key]!.focus();
   }
 
@@ -2372,6 +2378,23 @@ export function createSheetEditor(
       const range = String(v.range).trim();
       if (!values.length && !range) setXlsxDataValidation(sheet, ranges, null);
       else setXlsxDataValidation(sheet, ranges, { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank });
+      mark(); renderGrid();
+    });
+  };
+
+  const openCfDialog = (): void => {
+    const s = getSelRect(); const sheet = wb.sheets[active]!;
+    const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    formDialog(t("cfEdit"), [
+      { key: "kind", label: t("cfKind"), type: "select", value: "cellIs", options: [{ value: "cellIs", label: t("cfHighlight") }, { value: "colorScale", label: t("cfColorScale") }, { value: "dataBar", label: t("cfDataBar") }] },
+      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: [["greaterThan", "> "], ["lessThan", "< "], ["equal", "= "], ["notEqual", "≠ "], ["greaterThanOrEqual", "≥ "], ["lessThanOrEqual", "≤ "], ["containsText", t("cfContains")]].map(([v, l]) => ({ value: v!, label: l! })) },
+      { key: "value", label: t("cfValue"), type: "text", value: "" },
+      { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce" },
+    ], (v) => {
+      const kind = String(v.kind), color = String(v.color);
+      if (kind === "colorScale") setXlsxCondFormat(wb, sheet, ranges, { kind: "colorScale", colors: ["#f8696b", "#ffeb84", "#63be7b"] });
+      else if (kind === "dataBar") setXlsxCondFormat(wb, sheet, ranges, { kind: "dataBar", color: color || "#638ec6" });
+      else setXlsxCondFormat(wb, sheet, ranges, { kind: "cellIs", operator: String(v.operator), value: String(v.value), fill: color });
       mark(); renderGrid();
     });
   };

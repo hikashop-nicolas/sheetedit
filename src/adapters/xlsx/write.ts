@@ -213,13 +213,85 @@ export function setXlsxAutoFilter(sheet: Sheet, ref: string | null): void {
 }
 
 const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
-/** Insert a worksheet child before the first "later" element (pageMargins, drawing, ...), keeping
-    a roughly schema-valid order; else append. */
+// Canonical CT_Worksheet child order, so inserted elements land in a schema-valid position.
+const WS_ORDER = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "sheetCalcPr", "sheetProtection", "protectedRanges", "scenarios", "autoFilter", "sortState", "dataConsolidate", "customSheetViews", "mergeCells", "phoneticPr", "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks", "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing", "drawingHF", "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"];
+/** Insert a worksheet child in canonical order (before the first later-ordered sibling). */
 function insertWsChild(ws: Element, el: Element): void {
-  const later = new Set(["sheetCalcPr", "printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks", "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing", "drawingHF", "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"]);
+  const idx = WS_ORDER.indexOf(el.localName);
   let before: ChildNode | null = null;
-  for (const ch of Array.from(ws.children)) if (later.has(ch.localName)) { before = ch; break; }
+  for (const ch of Array.from(ws.children)) { const ci = WS_ORDER.indexOf(ch.localName); if (ci !== -1 && ci > idx) { before = ch; break; } }
   ws.insertBefore(el, before);
+}
+
+/** Append a differential format (a fill) to styles.xml <dxfs>, returning its index. */
+function addDxf(wb: Workbook, fillHex: string): number {
+  const doc = wb.stylesDoc;
+  if (!doc) return -1;
+  const ns = doc.documentElement.namespaceURI || SS_MAIN;
+  let dxfs = doc.getElementsByTagName("dxfs")[0];
+  if (!dxfs) {
+    dxfs = doc.createElementNS(ns, "dxfs");
+    const order = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles", "dxfs", "tableStyles", "colors", "extLst"];
+    let before: ChildNode | null = null;
+    for (const ch of Array.from(doc.documentElement.children)) { const ci = order.indexOf(ch.localName); if (ci !== -1 && ci > order.indexOf("dxfs")) { before = ch; break; } }
+    doc.documentElement.insertBefore(dxfs, before);
+  }
+  const dxf = doc.createElementNS(ns, "dxf");
+  const fill = doc.createElementNS(ns, "fill");
+  const pf = doc.createElementNS(ns, "patternFill"); pf.setAttribute("patternType", "solid");
+  const bg = doc.createElementNS(ns, "bgColor"); bg.setAttribute("rgb", `FF${fillHex.replace("#", "")}`);
+  pf.appendChild(bg); fill.appendChild(pf); dxf.appendChild(fill); dxfs.appendChild(dxf);
+  dxfs.setAttribute("count", String(dxfs.getElementsByTagName("dxf").length));
+  wb.stylesDirty = true;
+  return dxfs.getElementsByTagName("dxf").length - 1;
+}
+
+export type CfSpec =
+  | { kind: "cellIs"; operator: string; value: string; fill: string }
+  | { kind: "colorScale"; colors: string[] }
+  | { kind: "dataBar"; color: string };
+
+/** Add (or, with spec null, clear) a conditional-formatting rule over the given ranges, writing the
+    worksheet <conditionalFormatting> (+ a dxf for a highlight fill) and updating sheet.condFormats
+    so it renders. */
+export function setXlsxCondFormat(wb: Workbook, sheet: Sheet, ranges: { r1: number; c1: number; r2: number; c2: number }[], spec: CfSpec | null): void {
+  const doc = sheet.doc, ws = doc?.documentElement;
+  const ns = ws?.namespaceURI || SS_MAIN;
+  const sqref = ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ");
+  if (doc && ws) for (const cf of Array.from(ws.getElementsByTagName("conditionalFormatting"))) if (cf.getAttribute("sqref") === sqref) cf.parentNode?.removeChild(cf);
+  sheet.condFormats = (sheet.condFormats ?? []).filter((cf) => cf.ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ") !== sqref);
+  if (!spec) { sheet.layoutDirty = true; return; }
+  const priority = 1 + Math.max(0, ...(sheet.condFormats.flatMap((cf) => cf.rules.map((r) => r.priority))));
+  const rule: import("../../core/model").CfRule = { type: spec.kind, priority };
+  if (doc && ws) {
+    const cf = doc.createElementNS(ns, "conditionalFormatting"); cf.setAttribute("sqref", sqref);
+    const cr = doc.createElementNS(ns, "cfRule"); cr.setAttribute("type", spec.kind); cr.setAttribute("priority", String(priority));
+    if (spec.kind === "cellIs") {
+      cr.setAttribute("operator", spec.operator);
+      const dxfId = addDxf(wb, spec.fill);
+      if (dxfId >= 0) cr.setAttribute("dxfId", String(dxfId));
+      const f = doc.createElementNS(ns, "formula"); f.textContent = spec.value; cr.appendChild(f);
+      rule.operator = spec.operator; rule.formulas = [spec.value]; rule.dxf = { bg: spec.fill };
+    } else if (spec.kind === "colorScale") {
+      const cs = doc.createElementNS(ns, "colorScale");
+      const cfvoTypes = spec.colors.length >= 3 ? ["min", "percentile", "max"] : ["min", "max"];
+      cfvoTypes.forEach((ty, i) => { const v = doc.createElementNS(ns, "cfvo"); v.setAttribute("type", ty); if (ty === "percentile") v.setAttribute("val", "50"); cs.appendChild(v); void i; });
+      spec.colors.forEach((col) => { const co = doc.createElementNS(ns, "color"); co.setAttribute("rgb", `FF${col.replace("#", "")}`); cs.appendChild(co); });
+      cr.appendChild(cs);
+      rule.colorScale = { cfvo: cfvoTypes.map((ty) => ({ type: ty, val: ty === "percentile" ? 50 : undefined })), colors: spec.colors };
+    } else {
+      const db = doc.createElementNS(ns, "dataBar");
+      const lo = doc.createElementNS(ns, "cfvo"); lo.setAttribute("type", "min");
+      const hi = doc.createElementNS(ns, "cfvo"); hi.setAttribute("type", "max");
+      const co = doc.createElementNS(ns, "color"); co.setAttribute("rgb", `FF${spec.color.replace("#", "")}`);
+      db.appendChild(lo); db.appendChild(hi); db.appendChild(co); cr.appendChild(db);
+      rule.dataBar = { color: spec.color, min: { type: "min" }, max: { type: "max" } };
+    }
+    cf.appendChild(cr);
+    insertWsChild(ws, cf);
+  }
+  sheet.condFormats.push({ ranges, rules: [rule] });
+  sheet.layoutDirty = true;
 }
 
 /** Add or remove a list data validation over the given ranges (1-based inclusive). */

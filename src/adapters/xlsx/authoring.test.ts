@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
-import { setXlsxComment, setXlsxDataValidation, setXlsxHyperlink, writeXlsx } from "./write";
+import { setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, writeXlsx } from "./write";
 import { serializeXml } from "../../core/model";
 
 function base(): ReturnType<typeof readWorkbook> {
@@ -58,5 +58,16 @@ describe("authoring writers", () => {
     const srels = new TextDecoder().decode(wb.files["xl/worksheets/_rels/sheet1.xml.rels"]);
     expect(srels).toMatch(/relationships\/comments/);
     expect(srels).toMatch(/vmlDrawing/);
+  });
+
+  it("authors a cellIs conditional format (dxf + cfRule) that round-trips", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    setXlsxCondFormat(wb, sheet, [{ r1: 2, c1: 1, r2: 9, c2: 1 }], { kind: "cellIs", operator: "greaterThan", value: "5", fill: "#ffc7ce" });
+    const xml = new TextDecoder().decode(serializeXml(sheet.doc!));
+    expect(xml).toContain('<conditionalFormatting sqref="A2:A9">');
+    expect(xml).toMatch(/<cfRule type="cellIs"[^>]*operator="greaterThan"/);
+    expect(new TextDecoder().decode(serializeXml(wb.stylesDoc!))).toContain("FFffc7ce");
+    // model updated so it renders
+    expect(sheet.condFormats?.[0].rules[0].dxf?.bg).toBe("#ffc7ce");
   });
 });
