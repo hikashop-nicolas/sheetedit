@@ -250,6 +250,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     gapWidth: numAttr(barEl, "gapWidth"),
     overlap: numAttr(barEl, "overlap"),
     rotation: numAttr(pieEl, "firstSliceAng"),
+    threeD: (kind !== "surface" && /3DChart$/.test(el0.localName)) || undefined,
     title: titleText(chart),
     legend: { show: !!legendEl, pos: LEGEND_POS[attr(kid(legendEl, "legendPos"), "val") ?? "r"] ?? "right" },
     categories,

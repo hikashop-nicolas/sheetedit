@@ -97,6 +97,23 @@ const valAx = (id: number, cross: number, pos: string, crossesMax = false, bound
   return `<c:valAx><c:axId val="${id}"/><c:scaling>${scale}</c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>${fmt}${crossesMax ? '<c:crosses val="max"/>' : ""}<c:crossAx val="${cross}"/></c:valAx>`;
 };
 const localOf = (k: string): string => (k === "column" || k === "bar" ? "barChart" : k === "line" ? "lineChart" : "areaChart");
+const serAx = (id: number, cross: number): string => `<c:serAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="${cross}"/></c:serAx>`;
+
+/** Body for a 3D chart (bar3D / line3D / area3D / pie3D): the flat model re-emitted as its 3D
+    element plus a series axis and a minimal view3D so it stays 3D in Excel. */
+function threeDBody(model: ChartModel, wb: Workbook, catRef: string | undefined, catLabels: string[], catLevels: (string | number | null)[][] | undefined, dLbls: string): string {
+  const AX1 = 111111111, AX2 = 222222222, AX3 = 333333333;
+  const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
+  if (model.kind === "pie") return `<c:pie3DChart><c:varyColors val="1"/>${sers}${dLbls}</c:pie3DChart>`;
+  const group = model.percent ? "percentStacked" : model.stacked ? "stacked" : model.kind === "line" || model.kind === "area" ? "standard" : "clustered";
+  const axes = catAx(AX1, AX2, model.kind === "bar" ? "l" : "b") + valAx(AX2, AX1, model.kind === "bar" ? "b" : "l", false, model.axes?.y) + serAx(AX3, AX2);
+  const ids = `<c:axId val="${AX1}"/><c:axId val="${AX2}"/><c:axId val="${AX3}"/>`;
+  if (model.kind === "line") return `<c:line3DChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}${ids}</c:line3DChart>${axes}`;
+  if (model.kind === "area") return `<c:area3DChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}${ids}</c:area3DChart>${axes}`;
+  const dir = model.kind === "bar" ? "bar" : "col";
+  const spacing = `${model.gapWidth != null ? `<c:gapWidth val="${model.gapWidth}"/>` : ""}`;
+  return `<c:bar3DChart><c:barDir val="${dir}"/><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}${spacing}<c:shape val="box"/>${ids}</c:bar3DChart>${axes}`;
+}
 
 /** Body for a combo chart (mixed series types and/or a secondary axis): one chart-type element per
     (kind, axis) group, plus the primary axes and a secondary value axis when needed. */
@@ -135,8 +152,11 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   const xDate = model.axes?.x?.date === true;
   const dLbls = dLblsXml(model.labels ?? (model.dataLabels ? { value: true } : undefined));
   const isCombo = ["column", "bar", "line", "area"].includes(model.kind) && model.series.some((s) => (s.type && s.type !== model.kind) || s.secondaryAxis);
+  const d3 = model.threeD === true && ["column", "bar", "line", "area", "pie"].includes(model.kind) && !isCombo;
   let body: string;
-  if (isCombo) {
+  if (d3) {
+    body = threeDBody(model, wb, catRef, catLabels, catLevels, dLbls);
+  } else if (isCombo) {
     body = comboBody(model, wb, catRef, catLabels, dLbls, catLevels);
   } else if (model.kind === "scatter" || model.kind === "bubble") {
     const sers = model.series.map((s, i) => serXY(wb, s, i)).join("");
@@ -174,7 +194,8 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   const legendEntries = (model.legend?.deleted ?? []).map((i) => `<c:legendEntry><c:idx val="${i}"/><c:delete val="1"/></c:legendEntry>`).join("");
   const legend = model.legend?.show ? `<c:legend><c:legendPos val="${(model.legend.pos ?? "b")[0]}"/>${legendEntries}<c:overlay val="${model.legend.overlay ? 1 : 0}"/></c:legend>` : "";
   const blanks = model.blanksAs ? `<c:dispBlanksAs val="${model.blanksAs}"/>` : "";
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart>${title}<c:plotArea><c:layout/>${body}</c:plotArea>${legend}<c:plotVisOnly val="1"/>${blanks}</c:chart></c:chartSpace>`;
+  const view3D = d3 ? `<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:depthPercent val="100"/><c:rAngAx val="1"/></c:view3D>` : "";
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart>${title}${view3D}<c:plotArea><c:layout/>${body}</c:plotArea>${legend}<c:plotVisOnly val="1"/>${blanks}</c:chart></c:chartSpace>`;
 }
 
 function anchorXml(model: ChartModel, chartRid: string, frameId: number): string {

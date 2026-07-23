@@ -211,6 +211,21 @@ describe("xlsx chart writer", () => {
     expect(readWorkbook(out).sheets[0].charts![0].kind).toBe("surface");
   });
 
+  it("a 3D column chart is re-emitted 3D (bar3DChart + view3D) and round-trips threeD", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "d3", defaultAnchor(rect));
+    m.threeD = true;
+    (wb.sheets[0].charts ??= []).push(m);
+    const out = writeWorkbook(wb);
+    const xml = new TextDecoder().decode(unzipSync(out)["xl/charts/chart1.xml"]);
+    expect(xml).toContain("c:bar3DChart");
+    expect(xml).toContain("c:view3D");
+    const re = readWorkbook(out).sheets[0].charts![0];
+    expect(re.kind).toBe("column");
+    expect(re.threeD).toBe(true);
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
