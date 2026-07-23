@@ -56,6 +56,40 @@ export interface ChartSeries {
   labels?: ChartDataLabels;
   /** Per-point pie/doughnut slice explosion (c:dPt c:explosion), as a % of the radius. */
   explosion?: (number | undefined)[];
+  /** A fitted trendline over this series (c:trendline). */
+  trendline?: ChartTrendline;
+  /** Error bars on this series (c:errBars). */
+  errorBars?: ChartErrorBars;
+}
+
+/** A fitted trendline (c:trendline): regression type + display of its equation. */
+export interface ChartTrendline {
+  type: "linear" | "exp" | "log" | "poly" | "power" | "movingAvg";
+  /** Polynomial order (poly) or moving-average period (movingAvg). */
+  order?: number;
+  /** Project the line forward / backward, in category units. */
+  forward?: number;
+  backward?: number;
+  /** Force the y-intercept (linear/poly/exp). */
+  intercept?: number;
+  /** Show the equation / R-squared on the plot. */
+  dispEq?: boolean;
+  dispRSqr?: boolean;
+  name?: string;
+  color?: string;
+}
+
+/** Error bars (c:errBars): direction, how the magnitude is derived, and any custom values. */
+export interface ChartErrorBars {
+  direction?: "both" | "plus" | "minus";
+  /** How the magnitude is computed: fixed value, percentage, std-dev multiple, std-err, or custom. */
+  valueType: "fixedVal" | "percentage" | "stdDev" | "stdErr" | "cust";
+  /** The magnitude for fixedVal/percentage/stdDev. */
+  value?: number;
+  /** Custom per-point magnitudes (valueType "cust"). */
+  plus?: (number | null)[];
+  minus?: (number | null)[];
+  noEndCap?: boolean;
 }
 
 /** A two-cell anchor in 1-based grid coordinates; offsets are pixels within the from/to cell. */
@@ -70,7 +104,7 @@ export interface ChartAnchor {
   toRowOff: number;
 }
 
-export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter" | "bubble" | "radar";
+export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter" | "bubble" | "radar" | "stock" | "surface";
 
 export interface ChartModel {
   id: string;
@@ -100,6 +134,11 @@ export interface ChartModel {
   series: ChartSeries[];
   axes?: { x?: ChartAxis; y?: ChartAxis };
   anchor: ChartAnchor;
+  /** A 3D chart (bar3DChart / pie3DChart / etc.): rendered flat, but re-emitted 3D on write. */
+  threeD?: boolean;
+  /** Pie-of-pie / bar-of-pie (c:ofPieChart): the last `splitCount` slices break out into a
+      secondary pie or bar. Rendered as the main pie plus a small secondary plot. */
+  ofPie?: { type: "pie" | "bar"; splitCount?: number; secondSize?: number; gapWidth?: number };
   /** For a chart read from the file and not yet edited: the part paths to preserve verbatim. */
   original?: { partPath?: string; drawingPath?: string; objectDir?: string };
   /** Created or edited in the UI -> written from this model; otherwise preserved untouched. */

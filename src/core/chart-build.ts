@@ -29,10 +29,13 @@ export function buildChart(sheetName: string, kind: ChartKind, rect: Rect, opts:
   const nameOf = (col: number) => (opts.firstRowHeader ? { ref: cell(sheetName, col, rect.r1) } : undefined);
 
   if (kind === "scatter" || kind === "bubble") {
-    // First value column is x, the next is y (bubble: a third is the size); one series.
-    const x = valueCols[0];
-    const y = valueCols[1] ?? valueCols[0];
-    const size = valueCols[2];
+    // Scatter/bubble have no category labels: every column is data. The first column is x, the
+    // next y (bubble: a third is the size). firstColLabels does not apply here.
+    const cols: number[] = [];
+    for (let c = rect.c1; c <= rect.c2; c++) cols.push(c);
+    const x = cols[0];
+    const y = cols[1] ?? cols[0];
+    const size = cols[2];
     return {
       id, kind, dirty: true,
       legend: { show: false, pos: "bottom" },

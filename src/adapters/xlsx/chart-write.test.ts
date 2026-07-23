@@ -155,6 +155,26 @@ describe("xlsx chart writer", () => {
     expect(re.categories?.cache).toEqual(["Q1", "Q2"]);
   });
 
+  it("trendline round-trips (type, poly order, projection, display flags)", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "scatter", rect, { firstRowHeader: true, firstColLabels: true }, "tl", defaultAnchor(rect));
+    m.series[0].trendline = { type: "poly", order: 3, forward: 2, backward: 1, dispEq: true, dispRSqr: true };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].trendline).toEqual({ type: "poly", order: 3, forward: 2, backward: 1, dispEq: true, dispRSqr: true });
+  });
+
+  it("moving-average trendline round-trips its period", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "line", rect, { firstRowHeader: true, firstColLabels: true }, "ma", defaultAnchor(rect));
+    m.series[0].trendline = { type: "movingAvg", order: 3 };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].trendline).toEqual({ type: "movingAvg", order: 3 });
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

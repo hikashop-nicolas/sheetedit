@@ -1,5 +1,5 @@
 import { parseXmlOpt, type Sheet } from "../../core/model";
-import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartKind, type ChartModel, type ChartRef, type ChartSeries } from "../../core/chart-model";
+import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartKind, type ChartModel, type ChartRef, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
 
 // Read the charts anchored on a worksheet: sheet rels -> drawingN.xml (the anchors) -> chartN.xml
 // (the DrawingML chart) -> ChartModel. Namespace-prefix-agnostic (elements are matched by local
@@ -64,6 +64,28 @@ function refOf(container: Element | undefined): ChartRef | undefined {
   }
   const lit = kid(container, "v");
   return lit ? { cache: [textOf(lit)] } : undefined;
+}
+
+const TREND_TYPE: Record<string, ChartTrendline["type"]> = { linear: "linear", exp: "exp", log: "log", poly: "poly", power: "power", movingAvg: "movingAvg" };
+/** A c:trendline on a series -> ChartTrendline. */
+function readTrendline(ser: Element): ChartTrendline | undefined {
+  const t = kid(ser, "trendline");
+  if (!t) return undefined;
+  const ty = attr(kid(t, "trendlineType"), "val");
+  const type = ty ? TREND_TYPE[ty] : undefined;
+  if (!type) return undefined;
+  const num = (n: string): number | undefined => { const v = attr(kid(t, n), "val"); return v != null ? Number(v) : undefined; };
+  const out: ChartTrendline = { type };
+  const order = num("order"); if (order != null) out.order = order;
+  const period = num("period"); if (period != null) out.order = period; // movingAvg reuses order for the period
+  const fw = num("forward"); if (fw != null) out.forward = fw;
+  const bw = num("backward"); if (bw != null) out.backward = bw;
+  const ic = num("intercept"); if (ic != null) out.intercept = ic;
+  if (attr(kid(t, "dispEq"), "val") === "1") out.dispEq = true;
+  if (attr(kid(t, "dispRSqr"), "val") === "1") out.dispRSqr = true;
+  const nm = textOf(kid(t, "name")).trim(); if (nm) out.name = nm;
+  const col = colorOf(t); if (col) out.color = col;
+  return out;
 }
 
 /** A c:dLbls (chart-level or per-series) -> the content/position flags that are set. */
@@ -178,6 +200,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
         if (expl.some((v) => v != null)) s.explosion = expl;
       }
       const sl = readDLbls(ser); if (sl) s.labels = sl;
+      const tl = readTrendline(ser); if (tl) s.trendline = tl;
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));

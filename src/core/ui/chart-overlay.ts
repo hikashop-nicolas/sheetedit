@@ -1,6 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
+import { trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -33,6 +34,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
   loading ??= Promise.all([import("chart.js/auto"), import("chartjs-plugin-datalabels")]).then(([m, dl]) => {
     ChartJs = (m.default ?? (m as { Chart: ChartCtor }).Chart) as ChartCtor;
     ChartJs.register((dl.default ?? dl) as unknown); // registered globally; per-chart display is opt-in
+    ChartJs.register(trendlinePlugin as unknown); // no-ops unless a dataset carries a trendline
   });
   await loading;
   return ChartJs!;
@@ -141,6 +143,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     const spec = labelSpecOf(s);
     if (spec) { const pm = posMap(spec.position); base.datalabels = { display: true, anchor: pm.anchor, align: pm.align, color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: makeFormatter(spec) }; }
     else base.datalabels = { display: false };
+    // Regression trendline (drawn by the trendline plugin).
+    if (s.trendline) base.trendline = { ...s.trendline, color: s.trendline.color ?? palette(i, s.color) };
     return base;
   });
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
