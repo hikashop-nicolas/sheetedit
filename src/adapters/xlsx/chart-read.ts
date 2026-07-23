@@ -130,6 +130,8 @@ const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
   { local: "doughnutChart", kind: "doughnut" },
   { local: "scatterChart", kind: "scatter" }, { local: "bubbleChart", kind: "bubble" },
   { local: "radarChart", kind: "radar" },
+  { local: "stockChart", kind: "stock" },
+  { local: "surfaceChart", kind: "surface" }, { local: "surface3DChart", kind: "surface" },
 ];
 
 /** The fill colour of an element's OWN spPr (not a descendant's), as CSS. Resolves srgbClr,

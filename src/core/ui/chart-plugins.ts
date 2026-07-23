@@ -113,7 +113,8 @@ export function fitTrendline(t: ChartTrendline, pts: Pt[]): { f?: FitFn; points?
 
 type Scale = { getPixelForValue: (v: number) => number };
 interface Elem { x: number; y: number }
-interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: ChartErrorBars; borderColor?: string }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean; data: Elem[] } }
+type StockRole = "open" | "high" | "low" | "close";
+interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: ChartErrorBars; borderColor?: string; stockRole?: StockRole }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean; data: Elem[] } }
 
 /** Extract (x,y) points from a dataset's raw data (category index or {x,y}). */
 function ptsOfDataset(data: unknown[]): Pt[] {
@@ -231,5 +232,44 @@ export const errorBarsPlugin = {
       });
       ctx.restore();
     });
+  },
+};
+
+/** Draws candlesticks (open-high-low-close) or high-low-close bars for stock charts. The O/H/L/C
+    series are invisible line datasets tagged with stockRole; this reads them and draws. */
+export const stockPlugin = {
+  id: "sheeteditStock",
+  afterDatasetsDraw(chart: DrawChart): void {
+    const dss = chart.data.datasets;
+    if (!dss.some((d) => d.stockRole)) return;
+    const roleMeta: Partial<Record<StockRole, { data: unknown[]; meta: { xScale?: Scale; yScale?: Scale } }>> = {};
+    dss.forEach((d, i) => { if (d.stockRole) roleMeta[d.stockRole] = { data: d.data, meta: chart.getDatasetMeta(i) }; });
+    const close = roleMeta.close ?? roleMeta.low;
+    if (!close?.meta.xScale || !close.meta.yScale) return;
+    const xs = close.meta.xScale, ys = close.meta.yScale;
+    const n = close.data.length;
+    const step = n > 1 ? Math.abs(xs.getPixelForValue(1) - xs.getPixelForValue(0)) : 40;
+    const bw = Math.max(3, Math.min(24, step * 0.5));
+    const ctx = chart.ctx;
+    const val = (role: StockRole, j: number): number | null => { const r = roleMeta[role]; if (!r) return null; return yOfRaw(r.data[j]); };
+    ctx.save();
+    ctx.lineWidth = 1.2;
+    for (let j = 0; j < n; j++) {
+      const hi = val("high", j), lo = val("low", j), op = val("open", j), cl = val("close", j);
+      if (hi == null || lo == null) continue;
+      const px = xs.getPixelForValue(j);
+      const up = op != null && cl != null ? cl >= op : true;
+      const color = up ? "#2e9e5b" : "#d1493f";
+      ctx.strokeStyle = color; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(px, ys.getPixelForValue(hi)); ctx.lineTo(px, ys.getPixelForValue(lo)); ctx.stroke();
+      if (op != null && cl != null) {
+        const y1 = ys.getPixelForValue(op), y2 = ys.getPixelForValue(cl);
+        const top = Math.min(y1, y2), h = Math.max(1, Math.abs(y2 - y1));
+        ctx.fillRect(px - bw / 2, top, bw, h);
+      } else if (cl != null) {
+        const yc = ys.getPixelForValue(cl); ctx.beginPath(); ctx.moveTo(px, yc); ctx.lineTo(px + bw / 2, yc); ctx.stroke();
+      }
+    }
+    ctx.restore();
   },
 };

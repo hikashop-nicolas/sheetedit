@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { errorBarsPlugin, trendlinePlugin } from "./chart-plugins";
+import { errorBarsPlugin, stockPlugin, trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -36,6 +36,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register((dl.default ?? dl) as unknown); // registered globally; per-chart display is opt-in
     ChartJs.register(trendlinePlugin as unknown); // no-ops unless a dataset carries a trendline
     ChartJs.register(errorBarsPlugin as unknown); // no-ops unless a dataset carries error bars
+    ChartJs.register(stockPlugin as unknown); // no-ops unless datasets carry stock roles
   });
   await loading;
   return ChartJs!;
@@ -50,7 +51,7 @@ const nameOf = seriesName;
 export function chartConfig(model: ChartModel, wb: Workbook): unknown {
   return toConfig(model, wb);
 }
-const mapKind = (k: ChartModel["kind"]): string => (k === "column" || k === "bar" ? "bar" : k === "area" ? "line" : k);
+const mapKind = (k: ChartModel["kind"]): string => (k === "column" || k === "bar" || k === "surface" ? "bar" : k === "area" || k === "stock" ? "line" : k);
 function toConfig(model: ChartModel, wb: Workbook): unknown {
   const type = mapKind(model.kind);
   const cats = labels(wb, model.categories);
@@ -150,6 +151,12 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     if (s.errorBars) base.errorBars = s.errorBars;
     return base;
   });
+  // Stock: the O/H/L/C series become invisible scale-carriers; the stock plugin draws the candles.
+  const isStock = model.kind === "stock";
+  if (isStock) {
+    const roles = model.series.length >= 4 ? ["open", "high", "low", "close"] : model.series.length === 3 ? ["high", "low", "close"] : ["high", "low"];
+    datasets.forEach((d, i) => { d.type = "line"; d.borderColor = "rgba(0,0,0,0)"; d.backgroundColor = "rgba(0,0,0,0)"; d.pointRadius = 0; d.showLine = false; d.stockRole = roles[i] ?? "close"; d.datalabels = { display: false }; });
+  }
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
   const yFmt = model.axes?.y?.numFmt;
   const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
@@ -158,8 +165,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     ? { type: "linear", ticks: { callback: (v: unknown) => fmtDate(Number(v)) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title } } : {}) }
     : axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt);
   const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt);
+  const catLinear = model.kind === "column" || model.kind === "line" || model.kind === "area" || model.kind === "stock" || model.kind === "surface";
   const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stackOpt, beginAtZero: true, ...ya }, y: { ...stackOpt, ...xa } }
-    : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line", ...ya } }
+    : catLinear ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line" && model.kind !== "stock", ...ya } }
     : undefined;
   if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
   return {
@@ -175,7 +183,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       ...(pieLike && model.rotation != null ? { rotation: model.rotation } : {}),
       plugins: {
         legend: {
-          display: model.legend?.show ?? true,
+          display: isStock ? false : (model.legend?.show ?? true),
           position: model.legend?.pos ?? "top",
           // Hide deleted legend entries (by slice index for pie-like, else by dataset index).
           ...(model.legend?.deleted?.length ? { labels: { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } } : {}),

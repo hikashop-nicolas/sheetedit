@@ -141,6 +141,15 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   } else if (model.kind === "scatter" || model.kind === "bubble") {
     const sers = model.series.map((s, i) => serXY(wb, s, i)).join("");
     body = `<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:scatterChart>${valAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
+  } else if (model.kind === "stock") {
+    // High-low-close (3 series) or open-high-low-close (4); the extra open series adds up/down bars.
+    const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
+    const upDown = model.series.length >= 4 ? `<c:upDownBars><c:gapWidth val="150"/><c:upBars/><c:downBars/></c:upDownBars>` : "";
+    body = `<c:stockChart>${sers}<c:hiLowLines/>${upDown}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:stockChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
+  } else if (model.kind === "surface") {
+    // No 2D surface; write a wireframe surfaceChart so it round-trips (rendered as a heatmap).
+    const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
+    body = `<c:surfaceChart><c:wireframe val="0"/>${sers}<c:axId val="${AX1}"/><c:axId val="${AX2}"/><c:axId val="333333333"/></c:surfaceChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}<c:serAx><c:axId val="333333333"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="${AX2}"/></c:serAx>`;
   } else {
     const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
     const group = model.percent ? "percentStacked" : model.stacked ? "stacked" : model.kind === "line" || model.kind === "area" ? "standard" : "clustered";

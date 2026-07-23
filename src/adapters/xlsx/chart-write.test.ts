@@ -187,6 +187,20 @@ describe("xlsx chart writer", () => {
     expect(re.series[1].errorBars).toEqual({ valueType: "cust", direction: "plus", plus: [2, 4], minus: [1, 1], noEndCap: true });
   });
 
+  it("stock chart (OHLC) round-trips as kind stock with four series", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "stock", rect, { firstRowHeader: true, firstColLabels: true }, "st", defaultAnchor(rect));
+    // Give it four value series so it writes up/down bars.
+    m.series = [m.series[0], m.series[1], { ...m.series[0] }, { ...m.series[1] }];
+    (wb.sheets[0].charts ??= []).push(m);
+    const out = writeWorkbook(wb);
+    expect(new TextDecoder().decode(unzipSync(out)["xl/charts/chart1.xml"])).toContain("c:stockChart");
+    const re = readWorkbook(out).sheets[0].charts![0];
+    expect(re.kind).toBe("stock");
+    expect(re.series).toHaveLength(4);
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
