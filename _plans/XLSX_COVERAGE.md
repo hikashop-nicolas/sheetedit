@@ -47,8 +47,9 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
 - No editing of the preserved-only features above (charts, pivots, sparklines, protection); the
   now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
-- Conditional formatting: icon sets, arbitrary expression rules and time-period rules round-trip
-  but are not rendered; cellIs operands are numeric literals (cell-ref/formula operands skipped).
+- Conditional formatting: icon sets now render (arrows/traffic-lights/symbols/ratings, bucketed by
+  the cfvo thresholds); arbitrary expression rules and time-period rules still round-trip only, and
+  cellIs operands are numeric literals (cell-ref/formula operands skipped).
 - Rich text within one cell renders each run's own style (bold/italic/colour/etc.); editing a
   rich cell keeps the plain text (per-run style is preserved, not authored from the UI).
 - Recalc is a subset: unsupported functions or circular refs yield an error value (cached value

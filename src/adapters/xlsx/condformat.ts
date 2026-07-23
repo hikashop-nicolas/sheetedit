@@ -84,6 +84,11 @@ export function readCondFormats(sheet: Sheet, doc: Document, dxfs: CfDxf[], them
         const color = db ? (argbToCss(firstByLocal(db, "color")?.getAttribute("rgb")) ?? resolveColor(firstByLocal(db, "color"), theme) ?? "#638ec6") : "#638ec6";
         if (cfvos.length >= 2) r.dataBar = { min: cfvos[0], max: cfvos[cfvos.length - 1], color };
       }
+      if (type === "iconSet") {
+        const is = firstByLocal(rule, "iconSet");
+        const cfvo = is ? childrenByLocal(is, "cfvo").map((el) => ({ ...cfvoOf(el), gte: el.getAttribute("gte") !== "0" })) : [];
+        if (cfvo.length) r.iconSet = { set: is?.getAttribute("iconSet") || "3TrafficLights1", cfvo, reverse: is?.getAttribute("reverse") === "1" };
+      }
       rules.push(r);
     }
     rules.sort((a, b) => a.priority - b.priority); // lower priority number wins
@@ -94,7 +99,7 @@ export function readCondFormats(sheet: Sheet, doc: Document, dxfs: CfDxf[], them
 
 // --- evaluation -------------------------------------------------------------
 
-export interface CfVisual { bg?: string; color?: string; bold?: boolean; italic?: boolean; bar?: { pct: number; color: string } }
+export interface CfVisual { bg?: string; color?: string; bold?: boolean; italic?: boolean; bar?: { pct: number; color: string }; icon?: string }
 
 const numOf = (s: string): number | null => { const n = Number(s.replace(/,/g, "")); return s.trim() !== "" && Number.isFinite(n) ? n : null; };
 const lerp = (a: number, b: number, t: number): number => Math.round(a + (b - a) * t);
@@ -118,6 +123,50 @@ const stopValue = (c: { type: string; val?: number }, min: number, max: number, 
     default: return c.val ?? 0; // num / formula (literal)
   }
 };
+
+// Render an icon-set glyph as a small inline SVG. Faithful for the common families (arrows,
+// symbols/signs, ratings/quarters, traffic lights); other sets fall back to a colour ramp circle.
+// index is the value's bucket (0 = lowest), count the number of icons in the set.
+export function cfIconSvg(set: string, index: number, count: number): string {
+  const gray = /Gray|Grey|Black/.test(set);
+  const hue = count > 1 ? Math.round((index / (count - 1)) * 120) : 120; // 0=red .. 120=green
+  const col = gray ? "#808080" : `hsl(${hue},60%,42%)`;
+  const wrap = (inner: string): string => `<svg viewBox="0 0 14 14" width="12" height="12" aria-hidden="true">${inner}</svg>`;
+  if (/Arrows/.test(set)) {
+    const rot = count > 1 ? 180 * (1 - index / (count - 1)) : 0; // lowest points down, highest up
+    return wrap(`<g transform="rotate(${rot} 7 7)" stroke="${col}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12V3M3.6 6.4 7 3l3.4 3.4"/></g>`);
+  }
+  if (/Symbols|Signs/.test(set)) {
+    if (index === 0) return wrap(`<path d="M4 4l6 6M10 4l-6 6" stroke="${col}" stroke-width="1.8" stroke-linecap="round"/>`); // cross
+    if (index === count - 1) return wrap(`<path d="M3.5 7.5 6 10l4.5-5.5" stroke="${col}" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`); // check
+    return wrap(`<g stroke="${col}" stroke-width="1.8" stroke-linecap="round"><path d="M7 3.5v4.2"/></g><circle cx="7" cy="10.8" r="1" fill="${col}"/>`); // exclamation
+  }
+  if (/Rating|Quarters|Stars|Boxes/.test(set)) {
+    const frac = count > 1 ? index / (count - 1) : 1;
+    let pie = "";
+    if (frac >= 1) pie = `<circle cx="7" cy="7" r="5" fill="#555"/>`;
+    else if (frac > 0) {
+      const a = frac * 2 * Math.PI - Math.PI / 2;
+      const x = (7 + 5 * Math.cos(a)).toFixed(2), y = (7 + 5 * Math.sin(a)).toFixed(2);
+      pie = `<path d="M7 7 L7 2 A5 5 0 ${frac > 0.5 ? 1 : 0} 1 ${x} ${y} Z" fill="#555"/>`;
+    }
+    return wrap(`<circle cx="7" cy="7" r="5" fill="none" stroke="#888" stroke-width="1"/>${pie}`);
+  }
+  if (/Flags/.test(set)) return wrap(`<g stroke="#555" stroke-width="1"><path d="M4 2v10" stroke="${col}"/></g><path d="M4.6 2.5h6l-1.4 2 1.4 2h-6z" fill="${col}"/>`);
+  return wrap(`<circle cx="7" cy="7" r="5.2" fill="${col}"/>`); // traffic lights / default
+}
+
+/** The 0-based icon bucket for a value given the set's thresholds. */
+function iconIndex(v: number, rule: NonNullable<CfRule["iconSet"]>, min: number, max: number, sorted: number[]): number {
+  // cfvo[0] is the implicit lower bound; cfvo[1..] are the thresholds between icons.
+  let idx = 0;
+  for (let i = 1; i < rule.cfvo.length; i++) {
+    const t = stopValue(rule.cfvo[i], min, max, sorted);
+    if (rule.cfvo[i].gte === false ? v > t : v >= t) idx = i;
+    else break;
+  }
+  return rule.reverse ? rule.cfvo.length - 1 - idx : idx;
+}
 
 /** Compute the conditional-format visual for every affected cell of the sheet, once per render. */
 export function computeCondVisuals(sheet: Sheet): Map<string, CfVisual> {
@@ -152,6 +201,13 @@ export function computeCondVisuals(sheet: Sheet): Map<string, CfVisual> {
           const hi = stopValue(rule.dataBar.max, min, max, sorted);
           const pct = hi > lo ? Math.max(0, Math.min(1, (cell.num - lo) / (hi - lo))) : 0;
           out.set(key(cell.r, cell.c), { bar: { pct, color: rule.dataBar.color } });
+          done = true;
+          break;
+        }
+        if (rule.type === "iconSet" && rule.iconSet && cell.num != null) {
+          const n = rule.iconSet.cfvo.length;
+          const idx = iconIndex(cell.num, rule.iconSet, min, max, sorted);
+          out.set(key(cell.r, cell.c), { icon: cfIconSvg(rule.iconSet.set, idx, n) });
           done = true;
           break;
         }

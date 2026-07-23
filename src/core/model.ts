@@ -58,6 +58,7 @@ export interface CfRule {
   equalAverage?: boolean;
   colorScale?: { cfvo: { type: string; val?: number }[]; colors: string[] };
   dataBar?: { color: string; min: { type: string; val?: number }; max: { type: string; val?: number } };
+  iconSet?: { set: string; cfvo: { type: string; val?: number; gte?: boolean }[]; reverse?: boolean };
 }
 
 export interface CondFormat { ranges: { r1: number; c1: number; r2: number; c2: number }[]; rules: CfRule[]; }

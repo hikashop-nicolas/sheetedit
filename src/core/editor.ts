@@ -145,6 +145,9 @@ export function injectStyles(): void {
     .sheetedit-table td.has-cfbar { position:relative; }
     .sheetedit-cfbar { position:absolute; left:1px; top:2px; bottom:2px; z-index:0; border-radius:1px; opacity:.85; pointer-events:none; }
     .sheetedit-table td.has-cfbar input { position:relative; z-index:1; background:transparent; }
+    .sheetedit-table td.has-cficon { position:relative; }
+    .sheetedit-cficon { position:absolute; left:3px; top:50%; transform:translateY(-50%); z-index:1; display:inline-flex; pointer-events:none; }
+    .sheetedit-table td.has-cficon input { padding-left:18px; }
     /* Comment marker (corner triangle) + hover popover. */
     .sheetedit-table td.has-comment { position:relative; }
     .sheetedit-commark { position:absolute; top:0; right:0; z-index:2; width:0; height:0; border-top:6px solid #d9534f; border-left:6px solid transparent; pointer-events:none; }
@@ -1817,6 +1820,13 @@ export function createSheetEditor(
           bar.style.width = `${Math.round(cfv.bar.pct * 100)}%`;
           bar.style.background = cfv.bar.color;
           td.insertBefore(bar, td.firstChild);
+        }
+        if (cfv.icon) {
+          td.classList.add("has-cficon");
+          const ic = document.createElement("span");
+          ic.className = "sheetedit-cficon";
+          ic.innerHTML = cfv.icon;
+          td.insertBefore(ic, td.firstChild);
         }
       }
       // Sparkline: a mini line/column/win-loss chart drawn into the host cell.
