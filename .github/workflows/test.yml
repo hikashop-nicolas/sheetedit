@@ -9,6 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # localml pulls onnxruntime-node, whose install downloads a large GPU binary from nuget.org
+      # that times out on CI. sheetedit is browser-only and never runs the Node binary, so skip it.
+      ONNXRUNTIME_NODE_INSTALL: skip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
