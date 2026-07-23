@@ -18,13 +18,16 @@ export function readSparklines(sheet: Sheet, doc: Document): void {
     const type = (g.getAttribute("type") as "line" | "column" | "stacked") || "line";
     const cs = Array.from(g.children).find((c) => c.localName === "colorSeries");
     const rgb = cs?.getAttribute("rgb");
-    const color = rgb ? `#${rgb.slice(-6)}` : type === "line" ? "#376092" : "#376092";
+    const color = rgb ? `#${rgb.slice(-6)}` : "#376092";
+    const cn = Array.from(g.children).find((c) => c.localName === "colorNegative");
+    const nrgb = cn?.getAttribute("rgb");
+    const negColor = nrgb ? `#${nrgb.slice(-6)}` : undefined;
     for (const sp of kids(g, "sparkline")) {
       const dataRef = childText(sp, "f");
       const host = childText(sp, "sqref");
       const p = parseA1Ref(host.replace(/\$/g, "").split(":")[0] ?? "");
       if (!dataRef || !p) continue;
-      out.push({ type, color, host: { r: p.row, c: p.col }, dataRef });
+      out.push({ type, color, negColor, host: { r: p.row, c: p.col }, dataRef });
     }
   }
   if (out.length) sheet.sparklines = out;

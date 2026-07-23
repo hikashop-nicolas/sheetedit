@@ -29,6 +29,15 @@ describe("sparkline authoring", () => {
     expect(sp?.color.toLowerCase()).toContain("00b050");
   });
 
+  it("round-trips a custom negative colour for win/loss", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    setXlsxSparkline(sheet, { r: 1, c: 7 }, { type: "stacked", color: "#376092", negColor: "#ff8800", dataRef: "Sheet1!B1:D1" });
+    const re = readWorkbook(writeWorkbook(wb));
+    const sp = re.sheets[0].sparklines?.[0];
+    expect(sp?.type).toBe("stacked");
+    expect(sp?.negColor?.toLowerCase()).toContain("ff8800");
+  });
+
   it("removes a sparkline and cleans up the extLst", () => {
     const wb = base(); const sheet = wb.sheets[0];
     setXlsxSparkline(sheet, { r: 1, c: 7 }, { type: "line", color: "#376092", dataRef: "Sheet1!B1:D1" });

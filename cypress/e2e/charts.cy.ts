@@ -23,7 +23,7 @@ describe("charts", () => {
     cy.get(".sheetedit-chart-modal", { timeout: TIMEOUT }).should("be.visible");
     cy.get(".sheetedit-chart-modal input[type=text]").first().clear().type("Sheet1!A1:C4");
     cy.contains(".sheetedit-chart-type", "Line").click();
-    cy.contains(".sheetedit-chart-actions button", "Insert").click();
+    cy.contains(".sheetedit-chart-foot button", "Insert").click();
     cy.get(".sheetedit-chart-modal").should("not.exist");
     cy.get(".sheetedit-chartbox", { timeout: TIMEOUT }).should("have.length", 2);
   });

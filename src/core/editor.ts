@@ -166,6 +166,9 @@ export function injectStyles(): void {
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
+    /* Chrome makes overflow:auto containers keyboard-focusable and paints a rounded focus ring;
+       the selected cell is the real focus indicator, so suppress the container's own ring. */
+    .sheetedit-grid:focus { outline:none; }
     table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; }
     .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
     .sheetedit-table th { border:1px solid #d4d4d8; }
@@ -1698,7 +1701,7 @@ export function createSheetEditor(
   };
 
   // Draw a mini line / column / win-loss sparkline into a cell-sized canvas.
-  const drawSparkline = (cv: HTMLCanvasElement, type: "line" | "column" | "stacked", color: string, valuesRaw: number[]): void => {
+  const drawSparkline = (cv: HTMLCanvasElement, type: "line" | "column" | "stacked", color: string, valuesRaw: number[], negColor = "#d1493f"): void => {
     const w = cv.clientWidth || 60, h = cv.clientHeight || 18;
     const dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
@@ -1709,15 +1712,15 @@ export function createSheetEditor(
     const pad = 1;
     if (type === "stacked") { // win/loss: equal up/down bars from the middle
       const n = valuesRaw.length, bw = (w - pad * 2) / n, mid = h / 2;
-      valuesRaw.forEach((v, i) => { if (isNaN(v) || v === 0) return; const x = pad + i * bw; ctx.fillStyle = v > 0 ? color : "#d1493f"; const bh = h * 0.32; ctx.fillRect(x + bw * 0.15, v > 0 ? mid - bh : mid, bw * 0.7, bh); });
+      valuesRaw.forEach((v, i) => { if (isNaN(v) || v === 0) return; const x = pad + i * bw; ctx.fillStyle = v > 0 ? color : negColor; const bh = h * 0.32; ctx.fillRect(x + bw * 0.15, v > 0 ? mid - bh : mid, bw * 0.7, bh); });
       return;
     }
     const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
     const yOf = (v: number): number => h - pad - ((v - lo) / span) * (h - pad * 2);
     const n = valuesRaw.length, step = n > 1 ? (w - pad * 2) / (n - 1) : 0;
     if (type === "column") {
-      const bw = (w - pad * 2) / n; ctx.fillStyle = color;
-      valuesRaw.forEach((v, i) => { if (isNaN(v)) return; const x = pad + i * bw; const y = yOf(v); ctx.fillRect(x + bw * 0.15, y, bw * 0.7, h - pad - y); });
+      const bw = (w - pad * 2) / n;
+      valuesRaw.forEach((v, i) => { if (isNaN(v)) return; const x = pad + i * bw; const y = yOf(v); ctx.fillStyle = v < 0 ? negColor : color; ctx.fillRect(x + bw * 0.15, y, bw * 0.7, h - pad - y); });
     } else {
       ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.lineJoin = "round"; ctx.beginPath();
       let started = false;
@@ -1822,7 +1825,7 @@ export function createSheetEditor(
         const cv = document.createElement("canvas");
         cv.className = "sheetedit-spark";
         const vals = resolveNumbers(wb, { ref: spk.dataRef }).map((v) => (v == null ? NaN : v));
-        requestAnimationFrame(() => drawSparkline(cv, spk.type, spk.color, vals));
+        requestAnimationFrame(() => drawSparkline(cv, spk.type, spk.color, vals, spk.negColor ?? undefined));
         td.insertBefore(cv, td.firstChild);
       }
       // Comments / notes: a corner marker with a hover popover.
@@ -2376,6 +2379,26 @@ export function createSheetEditor(
   }
 
   // Toggle the autofilter over the current selection (or the used range), or clear it.
+  // Excel's "current region": the contiguous block of non-empty cells containing the active cell,
+  // bounded by empty rows/columns and the used range. Used as the filter range when the user has
+  // not explicitly selected one, so a filter is scoped to the data table, not the whole sheet.
+  const currentRegion = (sheet: Sheet, r0: number, c0: number): { r1: number; c1: number; r2: number; c2: number } => {
+    const has = (r: number, c: number): boolean => { const v = getCell(sheet, r, c); return !!v && v.value !== "" && v.kind !== "blank"; };
+    const rowHas = (r: number, a: number, b: number): boolean => { for (let c = a; c <= b; c++) if (has(r, c)) return true; return false; };
+    const colHas = (c: number, a: number, b: number): boolean => { for (let r = a; r <= b; r++) if (has(r, c)) return true; return false; };
+    let r1 = r0, c1 = c0, r2 = r0, c2 = c0;
+    const maxR = Math.max(1, sheet.maxRow), maxC = Math.max(1, sheet.maxCol);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      if (r1 > 1 && rowHas(r1 - 1, c1, c2)) { r1--; grew = true; }
+      if (r2 < maxR && rowHas(r2 + 1, c1, c2)) { r2++; grew = true; }
+      if (c1 > 1 && colHas(c1 - 1, r1, r2)) { c1--; grew = true; }
+      if (c2 < maxC && colHas(c2 + 1, r1, r2)) { c2++; grew = true; }
+    }
+    return { r1, c1, r2, c2 };
+  };
+
   const toggleAutoFilter = (): void => {
     const sheet = wb.sheets[active]!;
     if (wb.kind !== "xlsx") return;
@@ -2385,7 +2408,8 @@ export function createSheetEditor(
       sheet.autoFilter = undefined; sheet.filters = undefined; sheet.filterHidden = undefined;
     } else {
       const s = getSelRect();
-      const range = (s.r2 > s.r1 || s.c2 > s.c1) ? s : { r1: 1, c1: 1, r2: Math.max(1, sheet.maxRow), c2: Math.max(1, sheet.maxCol) };
+      // Explicit multi-cell selection wins; otherwise scope to the data region around the cell.
+      const range = (s.r2 > s.r1 || s.c2 > s.c1) ? s : currentRegion(sheet, s.r1, s.c1);
       sheet.autoFilter = range;
       setXlsxAutoFilter(sheet, `${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`);
     }
@@ -2394,7 +2418,8 @@ export function createSheetEditor(
   };
 
   // A small modal form used by the authoring dialogs. Field types: text, checkbox, color, select.
-  type FormField = { key: string; label: string; type: "text" | "checkbox" | "color"; value?: string | boolean } | { key: string; label: string; type: "select"; options: { value: string; label: string }[]; value?: string };
+  // showFor hides the field unless another field's value is in the given set (live-updated).
+  type FormField = ({ key: string; label: string; type: "text" | "checkbox" | "color"; value?: string | boolean } | { key: string; label: string; type: "select"; options: { value: string; label: string }[]; value?: string }) & { showFor?: { key: string; values: string[] } };
   function formDialog(title: string, fields: FormField[], onOk: (vals: Record<string, string | boolean>) => void): void {
     const modal = document.createElement("div");
     modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
@@ -2403,6 +2428,7 @@ export function createSheetEditor(
     const h = document.createElement("h3"); h.textContent = title; h.style.cssText = "margin:0 0 12px;font-size:15px"; card.appendChild(h);
     const fieldStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:6px 8px";
     const inputs: Record<string, HTMLInputElement | HTMLSelectElement> = {};
+    const rows: Record<string, HTMLElement> = {};
     for (const f of fields) {
       const inline = f.type === "checkbox";
       const lbl = document.createElement("label");
@@ -2412,8 +2438,23 @@ export function createSheetEditor(
       else { const i = document.createElement("input"); i.type = f.type; if (f.type === "checkbox") i.checked = !!f.value; else { i.value = (f.value as string) ?? ""; if (f.type === "text") i.style.cssText = fieldStyle; else i.style.cssText = "width:34px;height:26px;padding:0;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;cursor:pointer"; } inp = i; }
       const sp = document.createElement("span"); sp.textContent = f.label; sp.style.color = "var(--sheetedit-muted,#aab2bf)";
       if (inline) lbl.append(inp, sp); else lbl.append(sp, inp);
-      card.appendChild(lbl); inputs[f.key] = inp;
+      card.appendChild(lbl); inputs[f.key] = inp; rows[f.key] = lbl;
     }
+    // Live show/hide of fields gated on another field's value.
+    const applyVisibility = (): void => {
+      for (const f of fields) {
+        if (!f.showFor) continue;
+        const driver = inputs[f.showFor.key];
+        // The label carries an inline display:flex, which would override the hidden attribute, so
+        // toggle display directly.
+        const show = !!driver && f.showFor.values.includes(driver.value);
+        rows[f.key]!.style.display = show ? "flex" : "none";
+      }
+    };
+    for (const f of fields) {
+      if (f.type === "select" && fields.some((o) => o.showFor?.key === f.key)) inputs[f.key]!.addEventListener("change", applyVisibility);
+    }
+    applyVisibility();
     const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:6px";
     const btn = (label: string, primary: boolean): HTMLButtonElement => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;" + (primary ? "background:var(--sheetedit-accent,#6e7bff);border-color:var(--sheetedit-accent,#6e7bff);color:#fff" : "background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)"); return b; };
     const cancel = btn(t("chartCancel"), false), ok = btn(t("chartApply"), true);
@@ -2502,12 +2543,15 @@ export function createSheetEditor(
       { key: "loc", label: t("sparkLoc"), type: "text", value: `${colToLetters(host.c)}${host.r}` },
       { key: "type", label: t("sparkType"), type: "select", value: cur?.type ?? "line", options: [{ value: "line", label: t("sparkLine") }, { value: "column", label: t("sparkColumn") }, { value: "stacked", label: t("sparkWinLoss") }] },
       { key: "color", label: t("sparkColour"), type: "color", value: cur?.color ?? "#376092" },
+      // The negative-point colour only applies to column / win-loss, so it is gated on the type.
+      { key: "negColor", label: t("sparkNegColour"), type: "color", value: cur?.negColor ?? "#d00000", showFor: { key: "type", values: ["column", "stacked"] } },
     ], (v) => {
       const loc = parseA1Ref(String(v.loc).trim().replace(/\$/g, ""));
       const data = String(v.data).trim();
       if (!loc || !data) return;
       const dataRef = data.includes("!") ? data : `${sheet.name}!${data}`;
-      setXlsxSparkline(sheet, { r: loc.row, c: loc.col }, { type: String(v.type) as "line" | "column" | "stacked", color: String(v.color), dataRef });
+      const type = String(v.type) as "line" | "column" | "stacked";
+      setXlsxSparkline(sheet, { r: loc.row, c: loc.col }, { type, color: String(v.color), negColor: type === "line" ? undefined : String(v.negColor), dataRef });
       mark(); renderGrid();
     });
   };

@@ -300,14 +300,14 @@ const X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 const XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
 const SPARK_EXT_URI = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
 
-type SparkSpec = { type: "line" | "column" | "stacked"; color: string; dataRef: string };
+type SparkSpec = { type: "line" | "column" | "stacked"; color: string; negColor?: string; dataRef: string };
 
 /** Add, replace, or (spec === null) remove the sparkline whose location is the host cell. */
 export function setXlsxSparkline(sheet: Sheet, host: { r: number; c: number }, spec: SparkSpec | null): void {
   const doc = sheet.doc, ws = doc?.documentElement;
   const hostRef = `${colToLetters(host.c)}${host.r}`;
   sheet.sparklines = (sheet.sparklines ?? []).filter((s) => !(s.host.r === host.r && s.host.c === host.c));
-  if (spec) sheet.sparklines.push({ type: spec.type, color: spec.color, host: { r: host.r, c: host.c }, dataRef: spec.dataRef });
+  if (spec) sheet.sparklines.push({ type: spec.type, color: spec.color, negColor: spec.negColor, host: { r: host.r, c: host.c }, dataRef: spec.dataRef });
   if (!sheet.sparklines.length) sheet.sparklines = undefined;
   if (!doc || !ws) return;
   const ns = ws.namespaceURI || SS_MAIN;
@@ -339,7 +339,8 @@ export function setXlsxSparkline(sheet: Sheet, host: { r: number; c: number }, s
     if (spec.type !== "line") group.setAttribute("type", spec.type === "stacked" ? "stacked" : "column");
     group.setAttribute("displayEmptyCellsAs", "gap");
     const cs = x14("colorSeries"); cs.setAttribute("rgb", `FF${spec.color.replace("#", "")}`); group.appendChild(cs);
-    if (spec.type === "stacked") { const cn = x14("colorNegative"); cn.setAttribute("rgb", "FFD00000"); group.appendChild(cn); }
+    // Column and win/loss sparklines carry a distinct negative-point colour (default Excel red).
+    if (spec.type !== "line") { const cn = x14("colorNegative"); cn.setAttribute("rgb", `FF${(spec.negColor ?? "#d00000").replace("#", "")}`); group.appendChild(cn); }
     const spks = x14("sparklines");
     const spk = x14("sparkline");
     spk.appendChild(xm("f", spec.dataRef));

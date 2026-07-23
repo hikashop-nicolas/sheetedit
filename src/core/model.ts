@@ -156,7 +156,7 @@ export interface Sheet {
   /** Embedded pictures anchored on this sheet (rendered on an overlay; preserved on save). */
   images?: { anchor: import("./chart-model").ChartAnchor; dataUri: string }[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
-  sparklines?: { type: "line" | "column" | "stacked"; color: string; host: { r: number; c: number }; dataRef: string }[];
+  sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
