@@ -2,7 +2,7 @@ import { t } from "../i18n";
 import { parseA1Ref, type Workbook } from "../model";
 import { buildChart, defaultAnchor, type Rect } from "../chart-build";
 import { chartConfig, loadChartJs, type ChartCtor } from "./chart-overlay";
-import { seriesName } from "../chart-data";
+import { resolveLabels, seriesName } from "../chart-data";
 import { CHART_PALETTE, type ChartKind, type ChartModel } from "../chart-model";
 
 // The chart create/edit UI: one dialog (type, range, options, appearance, live preview) used both
@@ -26,7 +26,13 @@ const KINDS: { kind: ChartKind; key: string }[] = [
   { kind: "scatter", key: "chartScatter" }, { kind: "radar", key: "chartRadar" },
 ];
 const isScatter = (k: ChartKind): boolean => k === "scatter" || k === "bubble";
+const isPie = (k: ChartKind): boolean => k === "pie" || k === "doughnut";
 const isCartesian = (k: ChartKind): boolean => k === "column" || k === "bar" || k === "line" || k === "area";
+// Which option groups apply to which chart kinds (a group is hidden when it does not apply).
+const canStack = (k: ChartKind): boolean => k === "column" || k === "bar" || k === "area";
+const canCombo = (k: ChartKind): boolean => isCartesian(k);
+const hasLine = (k: ChartKind): boolean => k === "line" || k === "area" || k === "scatter" || k === "radar";
+const hasAxes = (k: ChartKind): boolean => isCartesian(k) || k === "scatter";
 const DASHES: { val: string; key: string }[] = [{ val: "solid", key: "chartDashSolid" }, { val: "dash", key: "chartDashDash" }, { val: "dot", key: "chartDashDot" }];
 
 const STYLE_ID = "sheetedit-chart-style";
@@ -39,33 +45,50 @@ function injectStyles(): void {
       background:var(--sheetedit-accent, #6e7bff); border:2px solid #fff; border-radius:3px; opacity:0; }
     .sheetedit-chartbox.sel .sheetedit-chart-resize { opacity:1; }
     .sheetedit-chartbox { cursor:move; }
-    .sheetedit-chart-modal { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); }
-    .sheetedit-chart-card { width:min(560px,94%); max-height:88%; overflow:auto; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e6e6e6);
-      border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.5); padding:16px; font:13px system-ui,sans-serif; }
-    .sheetedit-chart-card h3 { margin:0 0 12px; font-size:15px; }
-    .sheetedit-chart-card h4 { margin:14px 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--sheetedit-muted, #aab2bf); border-bottom:1px solid var(--sheetedit-border, #1c1f24); padding-bottom:4px; }
-    .sheetedit-chart-types { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+    .sheetedit-chart-modal { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); padding:16px; }
+    .sheetedit-chart-card { display:flex; flex-direction:column; width:min(860px,100%); max-height:90vh; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e6e6e6);
+      border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.5); font:13px system-ui,sans-serif; overflow:hidden; }
+    .sheetedit-chart-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+    .sheetedit-chart-head h3 { margin:0; font-size:15px; }
+    .sheetedit-chart-x { font:inherit; font-size:18px; line-height:1; width:28px; height:28px; border:none; border-radius:6px; background:transparent; color:var(--sheetedit-muted, #aab2bf); cursor:pointer; }
+    .sheetedit-chart-x:hover { background:var(--sheetedit-btn, #3a3f47); color:inherit; }
+    .sheetedit-chart-body { display:flex; gap:18px; padding:16px; overflow:hidden; min-height:0; }
+    .sheetedit-chart-opts { flex:1 1 auto; min-width:0; overflow-y:auto; padding-right:4px; }
+    .sheetedit-chart-side { flex:0 0 340px; display:flex; flex-direction:column; }
+    .sheetedit-chart-sec { margin-bottom:14px; }
+    .sheetedit-chart-sec[hidden] { display:none; }
+    .sheetedit-chart-card h4 { margin:0 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--sheetedit-muted, #aab2bf); border-bottom:1px solid var(--sheetedit-border, #1c1f24); padding-bottom:4px; }
+    .sheetedit-chart-types { display:flex; flex-wrap:wrap; gap:6px; }
     .sheetedit-chart-type { font:inherit; font-size:12px; padding:6px 11px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px;
       background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); cursor:pointer; }
     .sheetedit-chart-type.sel { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
     .sheetedit-chart-field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+    .sheetedit-chart-field[hidden] { display:none; }
     .sheetedit-chart-field > span { color:var(--sheetedit-muted, #aab2bf); font-size:12px; }
     .sheetedit-chart-field input[type=text], .sheetedit-chart-field select, .sheetedit-chart-row select, .sheetedit-chart-row input[type=number] {
       font:inherit; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); padding:6px 8px; }
-    .sheetedit-chart-checks { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:12px; font-size:13px; }
+    .sheetedit-chart-checks { display:flex; flex-wrap:wrap; gap:12px 16px; font-size:13px; }
     .sheetedit-chart-checks label { display:flex; align-items:center; gap:6px; }
-    .sheetedit-chart-row { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-bottom:10px; }
+    .sheetedit-chart-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px 16px; margin-top:8px; }
     .sheetedit-chart-row label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--sheetedit-muted, #aab2bf); }
-    .sheetedit-chart-row input[type=number] { width:70px; }
-    .sheetedit-chart-swatches { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:10px; }
+    .sheetedit-chart-row input[type=number] { width:64px; }
+    .sheetedit-chart-two { display:flex; gap:12px; }
+    .sheetedit-chart-two > * { flex:1; }
+    .sheetedit-chart-swatches { display:flex; flex-wrap:wrap; gap:10px 14px; }
     .sheetedit-chart-swatch { display:flex; align-items:center; gap:6px; font-size:12px; }
     .sheetedit-chart-swatch input[type=color] { width:26px; height:22px; padding:0; border:1px solid var(--sheetedit-btn, #3a4047); border-radius:4px; background:none; cursor:pointer; }
     .sheetedit-chart-fill { display:flex; align-items:center; gap:6px; }
-    .sheetedit-chart-preview { height:220px; background:#fff; border-radius:6px; padding:6px; margin:12px 0; }
-    .sheetedit-chart-actions { display:flex; justify-content:flex-end; gap:8px; }
-    .sheetedit-chart-btn { font:inherit; font-size:13px; padding:6px 14px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px;
+    .sheetedit-chart-preview { flex:1 1 auto; min-height:240px; background:#fff; border-radius:6px; padding:8px; }
+    .sheetedit-chart-foot { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--sheetedit-border, #1c1f24); }
+    .sheetedit-chart-btn { font:inherit; font-size:13px; padding:7px 16px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px;
       background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); cursor:pointer; }
     .sheetedit-chart-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    @media (max-width:720px) {
+      .sheetedit-chart-body { flex-direction:column; overflow-y:auto; }
+      .sheetedit-chart-side { flex-basis:auto; order:-1; }
+      .sheetedit-chart-preview { min-height:170px; height:170px; }
+      .sheetedit-chart-opts { overflow:visible; }
+    }
     .sheetedit-chart-editbar { position:fixed; z-index:30; display:flex; align-items:center; gap:6px; padding:5px 7px;
       background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
     .sheetedit-chart-editbar[hidden] { display:none; }
@@ -131,134 +154,168 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       titleColor: editModel?.titleStyle?.color ?? "",
       xTitle: editModel?.axes?.x?.title ?? "", yTitle: editModel?.axes?.y?.title ?? "",
       seriesColors: [] as (string | undefined)[],
+      sliceColors: [] as (string | undefined)[],
       lineWidth: line0?.lineWidth ?? 0,
       dash: line0?.dash ?? "solid",
       plotFill: editModel?.plotFill ?? "", areaFill: editModel?.areaFill ?? "",
     };
-    if (editModel) editModel.series.forEach((s, i) => { if (s.color) state.seriesColors[i] = s.color; });
+    if (editModel) {
+      editModel.series.forEach((s, i) => { if (s.color) state.seriesColors[i] = s.color; });
+      (editModel.series[0]?.pointColors ?? []).forEach((c, j) => { if (c) state.sliceColors[j] = c; });
+    }
 
-    const modal = document.createElement("div");
-    modal.className = "sheetedit-chart-modal";
-    const card = document.createElement("div");
-    card.className = "sheetedit-chart-card";
-    const h = document.createElement("h3");
-    h.textContent = editModel ? t("chartEdit") : t("chartInsert");
+    const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+    const section = (titleKey: string, ...children: (HTMLElement | null)[]): HTMLDivElement => {
+      const s = el("div", "sheetedit-chart-sec");
+      const head = el("h4"); head.textContent = t(titleKey);
+      s.append(head, ...children.filter((c): c is HTMLElement => !!c));
+      return s;
+    };
+    const field = (labelKey: string, input: HTMLElement): HTMLLabelElement => {
+      const l = el("label", "sheetedit-chart-field");
+      const sp = el("span"); sp.textContent = t(labelKey);
+      l.append(sp, input);
+      return l;
+    };
+    const textInput = (val: string, onInput: (v: string) => void): HTMLInputElement => {
+      const i = el("input"); i.type = "text"; i.value = val;
+      i.addEventListener("input", () => onInput(i.value));
+      return i;
+    };
 
-    const types = document.createElement("div");
-    types.className = "sheetedit-chart-types";
+    const modal = el("div", "sheetedit-chart-modal");
+    const card = el("div", "sheetedit-chart-card");
+
+    // Header
+    const head = el("div", "sheetedit-chart-head");
+    const h = el("h3"); h.textContent = editModel ? t("chartEdit") : t("chartInsert");
+    const closeX = el("button", "sheetedit-chart-x"); closeX.type = "button"; closeX.textContent = "×";
+    head.append(h, closeX);
+
+    // Type strip
+    const types = el("div", "sheetedit-chart-types");
     const typeBtns = KINDS.map(({ kind: k, key }) => {
-      const b = document.createElement("button");
+      const b = el("button", "sheetedit-chart-type" + (k === kind ? " sel" : ""));
       b.type = "button";
-      b.className = "sheetedit-chart-type" + (k === kind ? " sel" : "");
       b.textContent = t(key);
-      b.addEventListener("click", () => { kind = k; typeBtns.forEach((x) => x.classList.toggle("sel", x === b)); renderSwatches(); redraw(); });
+      b.addEventListener("click", () => { kind = k; typeBtns.forEach((x) => x.classList.toggle("sel", x === b)); updateVisibility(); renderSwatches(); redraw(); });
       types.appendChild(b);
       return b;
     });
 
-    const field = (labelKey: string, input: HTMLElement): HTMLLabelElement => {
-      const l = document.createElement("label");
-      l.className = "sheetedit-chart-field";
-      const sp = document.createElement("span");
-      sp.textContent = t(labelKey);
-      l.append(sp, input);
-      return l;
-    };
-    const rangeInput = document.createElement("input");
-    rangeInput.type = "text";
-    rangeInput.value = origRange;
-    rangeInput.addEventListener("input", () => { renderSwatches(); redraw(); });
-    const titleInput = document.createElement("input");
-    titleInput.type = "text";
-    titleInput.value = state.title;
-    titleInput.addEventListener("input", () => { state.title = titleInput.value; redraw(); });
-
-    const checks = document.createElement("div");
-    checks.className = "sheetedit-chart-checks";
-    type BoolKey = "firstRowHeader" | "firstColLabels" | "showLegend" | "dataLabels" | "stacked" | "percent" | "comboLine" | "comboSecondary";
-    const mkCheck = (label: string, key: BoolKey): HTMLLabelElement => {
-      const l = document.createElement("label");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = state[key];
-      cb.addEventListener("change", () => { state[key] = cb.checked; if (key === "firstRowHeader" || key === "firstColLabels") renderSwatches(); redraw(); });
-      const sp = document.createElement("span");
-      sp.textContent = label;
+    // Data: range + header flags
+    const rangeInput = textInput(origRange, () => { updateVisibility(); renderSwatches(); redraw(); });
+    const checks = el("div", "sheetedit-chart-checks");
+    type BoolKey = "firstRowHeader" | "firstColLabels";
+    let firstColField: HTMLLabelElement;
+    const mkCheck = (label: string, get: () => boolean, set: (v: boolean) => void, onToggle?: () => void): HTMLLabelElement => {
+      const l = el("label");
+      const cb = el("input"); cb.type = "checkbox"; cb.checked = get();
+      cb.addEventListener("change", () => { set(cb.checked); onToggle?.(); renderSwatches(); redraw(); });
+      const sp = el("span"); sp.textContent = label;
       l.append(cb, sp);
       return l;
     };
-    checks.append(mkCheck(t("chartFirstRow"), "firstRowHeader"), mkCheck(t("chartFirstCol"), "firstColLabels"), mkCheck(t("chartLegend"), "showLegend"), mkCheck(t("chartDataLabels"), "dataLabels"), mkCheck(t("chartStacked"), "stacked"), mkCheck(t("chartPercent"), "percent"), mkCheck(t("chartComboLine"), "comboLine"), mkCheck(t("chartComboSecondary"), "comboSecondary"));
+    const boolCheck = (label: string, key: BoolKey, onToggle?: () => void): HTMLLabelElement => mkCheck(label, () => state[key], (v) => { state[key] = v; }, onToggle);
+    const firstRowChk = boolCheck(t("chartFirstRow"), "firstRowHeader");
+    firstColField = boolCheck(t("chartFirstCol"), "firstColLabels");
+    checks.append(firstRowChk, firstColField);
 
-    // Legend position
-    const legendSel = document.createElement("select");
-    for (const [val, key] of [["top", "chartPosTop"], ["bottom", "chartPosBottom"], ["left", "chartPosLeft"], ["right", "chartPosRight"]]) { const o = document.createElement("option"); o.value = val; o.textContent = t(key); legendSel.appendChild(o); }
+    // Title & legend
+    const titleInput = textInput(state.title, (v) => { state.title = v; redraw(); });
+    const boldChk = mkCheck(t("chartTitleBold"), () => state.titleBold, (v) => { state.titleBold = v; });
+    const titleColour = fillControl(t("chartTitleColour"), state.titleColor, (v) => { state.titleColor = v; redraw(); });
+    const titleRow = el("div", "sheetedit-chart-row"); titleRow.append(boldChk, titleColour);
+    const legendChk = mkCheck(t("chartLegend"), () => state.showLegend, (v) => { state.showLegend = v; }, () => updateVisibility());
+    const legendSel = el("select");
+    for (const [val, key] of [["top", "chartPosTop"], ["bottom", "chartPosBottom"], ["left", "chartPosLeft"], ["right", "chartPosRight"]]) { const o = el("option"); o.value = val; o.textContent = t(key); legendSel.appendChild(o); }
     legendSel.value = state.legendPos;
     legendSel.addEventListener("change", () => { state.legendPos = legendSel.value as typeof state.legendPos; redraw(); });
+    const legendPosField = field("chartLegendPos", legendSel);
+    const dataLabelsChk = mkCheck(t("chartDataLabels"), () => state.dataLabels, (v) => { state.dataLabels = v; });
+    const legendRow = el("div", "sheetedit-chart-row"); legendRow.append(legendChk, dataLabelsChk);
 
-    // Appearance: title bold/colour, series colours, line width/dash, backgrounds.
-    const appHead = document.createElement("h4");
-    appHead.textContent = t("chartAppearance");
-    const titleRow = document.createElement("div");
-    titleRow.className = "sheetedit-chart-row";
-    const boldLbl = document.createElement("label");
-    const boldCb = document.createElement("input"); boldCb.type = "checkbox"; boldCb.checked = state.titleBold;
-    boldCb.addEventListener("change", () => { state.titleBold = boldCb.checked; redraw(); });
-    boldLbl.append(boldCb, document.createTextNode(t("chartTitleBold")));
-    const titleColorWrap = fillControl(t("chartTitleColour"), state.titleColor, (v) => { state.titleColor = v; redraw(); });
-    titleRow.append(boldLbl, titleColorWrap);
+    // Layout (stacking) - column/bar/area
+    const stackChk = mkCheck(t("chartStacked"), () => state.stacked, (v) => { state.stacked = v; });
+    const percentChk = mkCheck(t("chartPercent"), () => state.percent, (v) => { state.percent = v; });
+    const layoutRow = el("div", "sheetedit-chart-checks"); layoutRow.append(stackChk, percentChk);
+    const layoutSec = section("chartLayoutSection", layoutRow);
 
-    const swHead = document.createElement("h4");
-    swHead.textContent = t("chartSeriesColours");
-    const swatches = document.createElement("div");
-    swatches.className = "sheetedit-chart-swatches";
+    // Combo - cartesian, >=2 series
+    const comboLineChk = mkCheck(t("chartComboLine"), () => state.comboLine, (v) => { state.comboLine = v; });
+    const comboSecChk = mkCheck(t("chartComboSecondary"), () => state.comboSecondary, (v) => { state.comboSecondary = v; });
+    const comboRow = el("div", "sheetedit-chart-checks"); comboRow.append(comboLineChk, comboSecChk);
+    const comboSec = section("chartComboSection", comboRow);
 
-    const lineRow = document.createElement("div");
-    lineRow.className = "sheetedit-chart-row";
-    const lwLbl = document.createElement("label");
-    const lwInput = document.createElement("input"); lwInput.type = "number"; lwInput.min = "0"; lwInput.step = "0.5"; lwInput.value = String(state.lineWidth || "");
+    // Line width/dash - line/area/scatter/radar
+    const lwInput = el("input"); lwInput.type = "number"; lwInput.min = "0"; lwInput.step = "0.5"; lwInput.value = String(state.lineWidth || "");
     lwInput.addEventListener("input", () => { state.lineWidth = Number(lwInput.value) || 0; redraw(); });
-    lwLbl.append(document.createTextNode(t("chartLineWidth")), lwInput);
-    const dashLbl = document.createElement("label");
-    const dashSel = document.createElement("select");
-    for (const { val, key } of DASHES) { const o = document.createElement("option"); o.value = val; o.textContent = t(key); dashSel.appendChild(o); }
+    const lwLbl = el("label"); lwLbl.append(document.createTextNode(t("chartLineWidth")), lwInput);
+    const dashSel = el("select");
+    for (const { val, key } of DASHES) { const o = el("option"); o.value = val; o.textContent = t(key); dashSel.appendChild(o); }
     dashSel.value = state.dash;
     dashSel.addEventListener("change", () => { state.dash = dashSel.value; redraw(); });
-    dashLbl.append(document.createTextNode(t("chartDash")), dashSel);
-    lineRow.append(lwLbl, dashLbl);
+    const dashLbl = el("label"); dashLbl.append(document.createTextNode(t("chartDash")), dashSel);
+    const lineRow = el("div", "sheetedit-chart-row"); lineRow.append(lwLbl, dashLbl);
+    const lineSec = section("chartLineSection", lineRow);
 
-    const bgRow = document.createElement("div");
-    bgRow.className = "sheetedit-chart-row";
+    // Axes - cartesian + scatter
+    const xTitleInput = textInput(state.xTitle, (v) => { state.xTitle = v; redraw(); });
+    const yTitleInput = textInput(state.yTitle, (v) => { state.yTitle = v; redraw(); });
+    const axesTwo = el("div", "sheetedit-chart-two"); axesTwo.append(field("chartXTitle", xTitleInput), field("chartYTitle", yTitleInput));
+    const axesSec = section("chartAxesSection", axesTwo);
+
+    // Series / slice colours
+    const swatches = el("div", "sheetedit-chart-swatches");
+    const coloursHead = el("h4");
+    const coloursSec = el("div", "sheetedit-chart-sec"); coloursSec.append(coloursHead, swatches);
+
+    // Background fills
+    const bgRow = el("div", "sheetedit-chart-row");
     bgRow.append(fillControl(t("chartPlotFill"), state.plotFill, (v) => { state.plotFill = v; redraw(); }), fillControl(t("chartAreaFill"), state.areaFill, (v) => { state.areaFill = v; redraw(); }));
+    const bgSec = section("chartBgSection", bgRow);
 
-    const axHead = document.createElement("h4");
-    axHead.textContent = t("chartAxesSection");
-    const xTitleInput = document.createElement("input"); xTitleInput.type = "text"; xTitleInput.value = state.xTitle;
-    xTitleInput.addEventListener("input", () => { state.xTitle = xTitleInput.value; redraw(); });
-    const yTitleInput = document.createElement("input"); yTitleInput.type = "text"; yTitleInput.value = state.yTitle;
-    yTitleInput.addEventListener("input", () => { state.yTitle = yTitleInput.value; redraw(); });
+    // Assemble options column
+    const opts = el("div", "sheetedit-chart-opts");
+    opts.append(
+      section("chartTypeSection", types),
+      section("chartDataSection", field("chartRange", rangeInput), checks),
+      section("chartTitleSection", field("chartTitle", titleInput), titleRow, legendRow, legendPosField),
+      layoutSec, comboSec, lineSec, axesSec, coloursSec, bgSec,
+    );
 
-    const preview = document.createElement("div");
-    preview.className = "sheetedit-chart-preview";
-    const canvas = document.createElement("canvas");
+    // Preview column
+    const side = el("div", "sheetedit-chart-side");
+    const preview = el("div", "sheetedit-chart-preview");
+    const canvas = el("canvas");
     preview.appendChild(canvas);
+    side.append(preview);
 
-    const actions = document.createElement("div");
-    actions.className = "sheetedit-chart-actions";
-    const cancel = document.createElement("button");
-    cancel.className = "sheetedit-chart-btn";
-    cancel.textContent = t("chartCancel");
-    const submit = document.createElement("button");
-    submit.className = "sheetedit-chart-btn primary";
-    submit.textContent = editModel ? t("chartApply") : t("chartInsertBtn");
-    actions.append(cancel, submit);
+    const body = el("div", "sheetedit-chart-body");
+    body.append(opts, side);
 
-    card.append(h, types, field("chartRange", rangeInput), field("chartTitle", titleInput), checks,
-      field("chartLegendPos", legendSel),
-      appHead, titleRow, swHead, swatches, lineRow, bgRow,
-      axHead, field("chartXTitle", xTitleInput), field("chartYTitle", yTitleInput),
-      preview, actions);
+    // Footer
+    const foot = el("div", "sheetedit-chart-foot");
+    const cancel = el("button", "sheetedit-chart-btn"); cancel.textContent = t("chartCancel");
+    const submit = el("button", "sheetedit-chart-btn primary"); submit.textContent = editModel ? t("chartApply") : t("chartInsertBtn");
+    foot.append(cancel, submit);
+
+    card.append(head, body, foot);
     modal.appendChild(card);
     deps.wrap.appendChild(modal);
+
+    // Show only the sections/fields that apply to the current kind + series count.
+    function updateVisibility(): void {
+      const count = baseModelRaw()?.series.length ?? 0;
+      layoutSec.hidden = !canStack(kind);
+      comboSec.hidden = !(canCombo(kind) && count >= 2);
+      lineSec.hidden = !hasLine(kind);
+      axesSec.hidden = !hasAxes(kind);
+      firstColField.hidden = isScatter(kind);
+      legendPosField.hidden = !state.showLegend;
+      coloursHead.textContent = isPie(kind) ? t("chartSliceColours") : t("chartSeriesColours");
+    }
+    closeX.addEventListener("click", () => close());
 
     // Build a model from the current state; reuse the edited chart's series unless the data
     // structure changed (range / header flags / scatter-vs-category), so read-in richness survives.
@@ -282,41 +339,54 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       m.titleStyle = state.titleBold || state.titleColor ? { bold: state.titleBold || undefined, color: state.titleColor || undefined } : undefined;
       m.legend = { show: state.showLegend, pos: state.legendPos };
       m.dataLabels = state.dataLabels || undefined;
-      m.stacked = state.stacked || state.percent || undefined;
-      m.percent = state.percent || undefined;
-      if (isCartesian(m.kind) && m.series.length >= 2) {
+      m.stacked = canStack(m.kind) ? (state.stacked || state.percent || undefined) : undefined;
+      m.percent = canStack(m.kind) ? (state.percent || undefined) : undefined;
+      if (canCombo(m.kind) && m.series.length >= 2) {
         const last = m.series[m.series.length - 1];
         last.type = state.comboLine ? "line" : undefined;
         last.secondaryAxis = state.comboSecondary || undefined;
       }
-      state.seriesColors.forEach((c, i) => { if (m.series[i]) m.series[i].color = c || undefined; });
-      const width = state.lineWidth > 0 ? state.lineWidth : undefined;
-      const dash = state.dash && state.dash !== "solid" ? state.dash : undefined;
+      if (isPie(m.kind)) {
+        if (m.series[0] && state.sliceColors.some((c) => c)) m.series[0].pointColors = state.sliceColors.map((c) => c || undefined);
+      } else {
+        state.seriesColors.forEach((c, i) => { if (m.series[i]) m.series[i].color = c || undefined; });
+      }
+      const width = hasLine(m.kind) && state.lineWidth > 0 ? state.lineWidth : undefined;
+      const dash = hasLine(m.kind) && state.dash && state.dash !== "solid" ? state.dash : undefined;
       m.series.forEach((s) => { s.lineWidth = width; s.dash = dash; });
-      const xa = state.xTitle ? { ...(m.axes?.x ?? {}), title: state.xTitle } : m.axes?.x;
-      const ya = state.yTitle ? { ...(m.axes?.y ?? {}), title: state.yTitle } : m.axes?.y;
+      const useAxes = hasAxes(m.kind);
+      const xa = useAxes && state.xTitle ? { ...(m.axes?.x ?? {}), title: state.xTitle } : m.axes?.x;
+      const ya = useAxes && state.yTitle ? { ...(m.axes?.y ?? {}), title: state.yTitle } : m.axes?.y;
       m.axes = xa || ya ? { x: xa, y: ya } : undefined;
       m.plotFill = state.plotFill || undefined;
       m.areaFill = state.areaFill || undefined;
     }
 
-    // One colour input per series, showing the current effective colour; blank = follow the palette.
+    // A colour input per series, or per slice for pie/doughnut (labelled by category). Blank input
+    // value shows the current effective colour; editing it makes that colour explicit.
     function renderSwatches(): void {
       const probe = baseModelRaw();
       swatches.textContent = "";
-      const series = probe?.series ?? [];
-      series.forEach((s, i) => {
+      const swatch = (colour: string, label: string, onPick: (v: string) => void): void => {
         const wrap = document.createElement("label");
         wrap.className = "sheetedit-chart-swatch";
         const inp = document.createElement("input");
         inp.type = "color";
-        inp.value = state.seriesColors[i] ?? s.color ?? probe?.palette?.[i] ?? CHART_PALETTE[i % CHART_PALETTE.length];
-        inp.addEventListener("input", () => { state.seriesColors[i] = inp.value; redraw(); });
+        inp.value = colour;
+        inp.addEventListener("input", () => { onPick(inp.value); redraw(); });
         const name = document.createElement("span");
-        name.textContent = seriesName(wb, s.name) ?? `#${i + 1}`;
+        name.textContent = label;
         wrap.append(inp, name);
         swatches.appendChild(wrap);
-      });
+      };
+      const pal = (i: number): string => probe?.palette?.[i] ?? CHART_PALETTE[i % CHART_PALETTE.length];
+      if (isPie(kind)) {
+        const cats = resolveLabels(wb, probe?.categories);
+        const pts = probe?.series[0]?.pointColors ?? [];
+        cats.forEach((label, j) => swatch(state.sliceColors[j] ?? pts[j] ?? pal(j), label || `#${j + 1}`, (v) => { state.sliceColors[j] = v; }));
+      } else {
+        (probe?.series ?? []).forEach((s, i) => swatch(state.seriesColors[i] ?? s.color ?? pal(i), seriesName(wb, s.name) ?? `#${i + 1}`, (v) => { state.seriesColors[i] = v; }));
+      }
     }
     // A model without the per-series colour application (used to probe series names/count).
     function baseModelRaw(): ChartModel | null {
@@ -351,6 +421,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       if (editModel) { Object.assign(editModel, model); deps.onChange(editModel); }
       else deps.onCreate(model);
     });
+    updateVisibility();
     renderSwatches();
     redraw();
   }
