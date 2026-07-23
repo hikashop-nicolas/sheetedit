@@ -2423,6 +2423,7 @@ export function createSheetEditor(
   type FormField = ({ key: string; label: string; type: "text" | "checkbox" | "color"; value?: string | boolean } | { key: string; label: string; type: "select"; options: { value: string; label: string }[]; value?: string }) & { showFor?: { key: string; values: string[] } };
   function formDialog(title: string, fields: FormField[], onOk: (vals: Record<string, string | boolean>) => void): void {
     const modal = document.createElement("div");
+    modal.className = "sheetedit-form-modal";
     modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
     const card = document.createElement("div");
     card.style.cssText = "width:min(420px,94%);background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
@@ -2437,6 +2438,7 @@ export function createSheetEditor(
       let inp: HTMLInputElement | HTMLSelectElement;
       if (f.type === "select") { const s = document.createElement("select"); s.style.cssText = fieldStyle; for (const o of f.options) { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; s.appendChild(op); } if (f.value != null) s.value = f.value; inp = s; }
       else { const i = document.createElement("input"); i.type = f.type; if (f.type === "checkbox") i.checked = !!f.value; else { i.value = (f.value as string) ?? ""; if (f.type === "text") i.style.cssText = fieldStyle; else i.style.cssText = "width:34px;height:26px;padding:0;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;cursor:pointer"; } inp = i; }
+      inp.dataset.field = f.key;
       const sp = document.createElement("span"); sp.textContent = f.label; sp.style.color = "var(--sheetedit-muted,#aab2bf)";
       if (inline) lbl.append(inp, sp); else lbl.append(sp, inp);
       card.appendChild(lbl); inputs[f.key] = inp; rows[f.key] = lbl;
@@ -2457,7 +2459,7 @@ export function createSheetEditor(
     }
     applyVisibility();
     const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:6px";
-    const btn = (label: string, primary: boolean): HTMLButtonElement => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;" + (primary ? "background:var(--sheetedit-accent,#6e7bff);border-color:var(--sheetedit-accent,#6e7bff);color:#fff" : "background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)"); return b; };
+    const btn = (label: string, primary: boolean): HTMLButtonElement => { const b = document.createElement("button"); b.textContent = label; b.dataset.role = primary ? "ok" : "cancel"; b.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;" + (primary ? "background:var(--sheetedit-accent,#6e7bff);border-color:var(--sheetedit-accent,#6e7bff);color:#fff" : "background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)"); return b; };
     const cancel = btn(t("chartCancel"), false), ok = btn(t("chartApply"), true);
     const close = (): void => modal.remove();
     cancel.addEventListener("click", close);
