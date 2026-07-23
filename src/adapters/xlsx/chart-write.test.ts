@@ -201,6 +201,16 @@ describe("xlsx chart writer", () => {
     expect(re.series).toHaveLength(4);
   });
 
+  it("surface chart round-trips as kind surface", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "surface", rect, { firstRowHeader: true, firstColLabels: true }, "sf", defaultAnchor(rect));
+    (wb.sheets[0].charts ??= []).push(m);
+    const out = writeWorkbook(wb);
+    expect(new TextDecoder().decode(unzipSync(out)["xl/charts/chart1.xml"])).toContain("c:surfaceChart");
+    expect(readWorkbook(out).sheets[0].charts![0].kind).toBe("surface");
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

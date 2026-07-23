@@ -114,7 +114,7 @@ export function fitTrendline(t: ChartTrendline, pts: Pt[]): { f?: FitFn; points?
 type Scale = { getPixelForValue: (v: number) => number };
 interface Elem { x: number; y: number }
 type StockRole = "open" | "high" | "low" | "close";
-interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: ChartErrorBars; borderColor?: string; stockRole?: StockRole }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean; data: Elem[] } }
+interface DrawChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { data: unknown[]; trendline?: ChartTrendline; errorBars?: ChartErrorBars; borderColor?: string; stockRole?: StockRole; surfaceRow?: number; surfaceName?: string }[] }; getDatasetMeta: (i: number) => { xScale?: Scale; yScale?: Scale; hidden?: boolean; data: Elem[] } }
 
 /** Extract (x,y) points from a dataset's raw data (category index or {x,y}). */
 function ptsOfDataset(data: unknown[]): Pt[] {
@@ -270,6 +270,60 @@ export const stockPlugin = {
         const yc = ys.getPixelForValue(cl); ctx.beginPath(); ctx.moveTo(px, yc); ctx.lineTo(px + bw / 2, yc); ctx.stroke();
       }
     }
+    ctx.restore();
+  },
+};
+
+// A blue -> cyan -> yellow -> red colour ramp for the surface heatmap.
+const HEAT_STOPS: [number, [number, number, number]][] = [
+  [0, [49, 54, 149]], [0.25, [69, 117, 180]], [0.5, [255, 255, 191]], [0.75, [253, 174, 97]], [1, [165, 0, 38]],
+];
+function heat(t: number): string {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < HEAT_STOPS.length; i++) {
+    if (t <= HEAT_STOPS[i][0]) {
+      const [t0, c0] = HEAT_STOPS[i - 1], [t1, c1] = HEAT_STOPS[i];
+      const f = (t - t0) / (t1 - t0 || 1);
+      const c = c0.map((a, k) => Math.round(a + (c1[k] - a) * f));
+      return `rgb(${c[0]},${c[1]},${c[2]})`;
+    }
+  }
+  return "rgb(165,0,38)";
+}
+
+/** Renders a surface chart as a heatmap: one row per series, one column per category, cell colour
+    mapped from the value. Chart.js has no 3D surface; this is the standard 2D flattening. */
+export const surfacePlugin = {
+  id: "sheeteditSurface",
+  afterDatasetsDraw(chart: DrawChart): void {
+    const rows = chart.data.datasets.map((d, i) => ({ d, i })).filter((r) => r.d.surfaceRow != null);
+    if (!rows.length) return;
+    const first = chart.getDatasetMeta(rows[0].i);
+    const xs = first.xScale;
+    if (!xs) return;
+    const { ctx, chartArea } = chart;
+    const nCols = Math.max(...rows.map((r) => r.d.data.length));
+    const allVals = rows.flatMap((r) => r.d.data.map(yOfRaw).filter((v): v is number => v != null));
+    if (!allVals.length) return;
+    const lo = Math.min(...allVals), hi = Math.max(...allVals);
+    const step = nCols > 1 ? Math.abs(xs.getPixelForValue(1) - xs.getPixelForValue(0)) : (chartArea.right - chartArea.left) / Math.max(1, nCols);
+    const rowH = (chartArea.bottom - chartArea.top) / rows.length;
+    ctx.save();
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    rows.forEach((r, ri) => {
+      const top = chartArea.top + ri * rowH;
+      for (let j = 0; j < r.d.data.length; j++) {
+        const v = yOfRaw(r.d.data[j]);
+        if (v == null) continue;
+        const cx = xs.getPixelForValue(j);
+        ctx.fillStyle = heat(hi > lo ? (v - lo) / (hi - lo) : 0.5);
+        ctx.fillRect(cx - step / 2, top, step, rowH);
+      }
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.strokeRect(chartArea.left, top, chartArea.right - chartArea.left, rowH);
+      if (r.d.surfaceName) { ctx.fillStyle = "#111"; ctx.textAlign = "left"; ctx.fillText(r.d.surfaceName, chartArea.left + 3, top + rowH / 2); }
+    });
     ctx.restore();
   },
 };

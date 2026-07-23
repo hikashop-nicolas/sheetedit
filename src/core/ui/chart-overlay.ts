@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { errorBarsPlugin, stockPlugin, trendlinePlugin } from "./chart-plugins";
+import { errorBarsPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -37,6 +37,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(trendlinePlugin as unknown); // no-ops unless a dataset carries a trendline
     ChartJs.register(errorBarsPlugin as unknown); // no-ops unless a dataset carries error bars
     ChartJs.register(stockPlugin as unknown); // no-ops unless datasets carry stock roles
+    ChartJs.register(surfacePlugin as unknown); // no-ops unless datasets carry surface rows
   });
   await loading;
   return ChartJs!;
@@ -157,6 +158,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     const roles = model.series.length >= 4 ? ["open", "high", "low", "close"] : model.series.length === 3 ? ["high", "low", "close"] : ["high", "low"];
     datasets.forEach((d, i) => { d.type = "line"; d.borderColor = "rgba(0,0,0,0)"; d.backgroundColor = "rgba(0,0,0,0)"; d.pointRadius = 0; d.showLine = false; d.stockRole = roles[i] ?? "close"; d.datalabels = { display: false }; });
   }
+  // Surface: no 2D equivalent, so render a heatmap (series = rows, categories = columns, value = colour).
+  const isSurface = model.kind === "surface";
+  if (isSurface) datasets.forEach((d, i) => { d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.surfaceRow = i; d.surfaceName = nameOf(wb, model.series[i].name); d.datalabels = { display: false }; });
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
   const yFmt = model.axes?.y?.numFmt;
   const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
@@ -170,6 +174,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     : catLinear ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line" && model.kind !== "stock", ...ya } }
     : undefined;
   if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
+  if (isSurface && scales) scales.y = { display: false }; // the heatmap draws its own rows
   return {
     type,
     data: { labels: cats.length && !xDate ? cats : undefined, datasets },
@@ -183,7 +188,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       ...(pieLike && model.rotation != null ? { rotation: model.rotation } : {}),
       plugins: {
         legend: {
-          display: isStock ? false : (model.legend?.show ?? true),
+          display: isStock || isSurface ? false : (model.legend?.show ?? true),
           position: model.legend?.pos ?? "top",
           // Hide deleted legend entries (by slice index for pie-like, else by dataset index).
           ...(model.legend?.deleted?.length ? { labels: { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } } : {}),
