@@ -73,6 +73,36 @@ describe("xlsx chart writer", () => {
     expect(lineSeries!.secondaryAxis).toBe(true);
   });
 
+  it("Tier-1 options round-trip: percent, blanksAs, holeSize/gapWidth, per-point colours, axis max", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "t1", defaultAnchor(rect));
+    m.percent = true;
+    m.stacked = true;
+    m.blanksAs = "gap";
+    m.gapWidth = 80;
+    m.overlap = -20;
+    m.axes = { y: { max: 50 } };
+    m.series[0].pointColors = ["#ff0000", undefined, "#00ff00"];
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.percent).toBe(true);
+    expect(re.blanksAs).toBe("gap");
+    expect(re.gapWidth).toBe(80);
+    expect(re.overlap).toBe(-20);
+    expect(re.axes?.y?.max).toBe(50);
+    expect(re.series[0].pointColors?.[0]).toBe("#ff0000");
+  });
+
+  it("doughnut holeSize round-trips", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
+    const m = buildChart("Sheet1", "doughnut", rect, { firstRowHeader: true, firstColLabels: true }, "d", defaultAnchor(rect));
+    m.holeSize = 65;
+    (wb.sheets[0].charts ??= []).push(m);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].charts![0].holeSize).toBe(65);
+  });
+
   it("changing a chart's type and re-saving keeps a single chart of the new kind", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };

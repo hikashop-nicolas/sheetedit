@@ -10,13 +10,13 @@ less thing lost when a chart is edited.
 
 ### Tier 1 - quick wins (this pass)
 
-- [ ] Axis min/max: read c:valAx/c:catAx c:scaling c:max/c:min -> model.axes; apply in Chart.js scales.
-- [ ] dispBlanksAs (gap|zero|span): read chart-level; plot nulls as gaps/zeros/spanned; write it back.
-- [ ] Doughnut holeSize, bar gapWidth + overlap: read/apply (cutout, categoryPercentage/barPercentage)/write.
-- [ ] percentStacked: true 100% stacking (normalise per-category to %) on render; grouping on write.
-- [ ] ODS bar-vs-column + stacked/percentage: read the plot-area chart-properties style (chart:vertical,
+- [x] Axis min/max: read c:valAx/c:catAx c:scaling c:max/c:min -> model.axes; apply in Chart.js scales.
+- [x] dispBlanksAs (gap|zero|span): read chart-level; plot nulls as gaps/zeros/spanned; write it back.
+- [x] Doughnut holeSize, bar gapWidth + overlap: read/apply (cutout, categoryPercentage/barPercentage)/write.
+- [x] percentStacked: true 100% stacking (normalise per-category to %) on render; grouping on write.
+- [x] ODS bar-vs-column + stacked/percentage: read the plot-area chart-properties style (chart:vertical,
       chart:stacked, chart:percentage) so ODS bar charts and stacked charts render right.
-- [ ] Per-point colours (c:dPt): read per-point spPr srgbClr onto series.pointColors; use on render;
+- [x] Per-point colours (c:dPt): read per-point spPr srgbClr onto series.pointColors; use on render;
       write c:dPt. (Makes read pie/bar charts match the file's colours.)
 
 ### Tier 2 - moderate
@@ -58,4 +58,5 @@ less thing lost when a chart is edited.
 
 ## Progress
 
-- (in progress) Tier 1
+- (DONE) Tier 1 - all six items shipped, xlsx+ods round-trip tested, LibreOffice-validated (chart:percentage read), 100% stacked browser-verified. Insert dialog gained Stacked + 100% stacked options.
+- (next) Tier 2

@@ -68,8 +68,10 @@ const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
   { local: "radarChart", kind: "radar" },
 ];
 
-function colorOf(ser: Element): string | undefined {
-  const srgb = descend(ser, "srgbClr")[0];
+/** The solid fill colour of an element's OWN spPr (not a descendant's), as CSS. */
+function colorOf(el: Element): string | undefined {
+  const spPr = kid(el, "spPr");
+  const srgb = spPr && descend(spPr, "srgbClr")[0];
   return srgb ? `#${srgb.getAttribute("val")}` : undefined;
 }
 
@@ -103,6 +105,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const kind = kindOf(typeEls[0]);
   const grouping = attr(kid(typeEls[0], "grouping"), "val");
   const stacked = grouping === "stacked" || grouping === "percentStacked";
+  const percent = grouping === "percentStacked";
   let categories: ChartRef | undefined;
   const collected: { idx: number; s: ChartSeries }[] = [];
   const el0 = typeEls[0]; // for data-label detection
@@ -119,6 +122,12 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       };
       if (k === "scatter" || k === "bubble") { s.xValues = refOf(kid(ser, "xVal")); s.values = refOf(kid(ser, "yVal")) ?? s.values; }
       if (k === "bubble") s.sizes = refOf(kid(ser, "bubbleSize"));
+      const dpts = kids(ser, "dPt");
+      if (dpts.length) {
+        const pc: (string | undefined)[] = [];
+        for (const dp of dpts) { const col = colorOf(dp); if (col) pc[Number(attr(kid(dp, "idx"), "val") || "0")] = col; }
+        if (pc.some(Boolean)) s.pointColors = pc;
+      }
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));
@@ -127,11 +136,19 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   });
   const series = collected.sort((a, b) => a.idx - b.idx).map((x) => x.s);
   const el = el0;
+  const doughEl = typeEls.find((e) => e.localName === "doughnutChart");
+  const barEl = typeEls.find((e) => e.localName === "barChart" || e.localName === "bar3DChart");
+  const numAttr = (e: Element | undefined, name: string): number | undefined => { const v = attr(kid(e, name), "val"); return v != null ? Number(v) : undefined; };
   const legendEl = kid(chart, "legend");
   const model: ChartModel = {
     id,
     kind,
     stacked: stacked || undefined,
+    percent: percent || undefined,
+    blanksAs: (attr(kid(chart, "dispBlanksAs"), "val") as ChartModel["blanksAs"]) || undefined,
+    holeSize: numAttr(doughEl, "holeSize"),
+    gapWidth: numAttr(barEl, "gapWidth"),
+    overlap: numAttr(barEl, "overlap"),
     title: titleText(chart),
     legend: { show: !!legendEl, pos: LEGEND_POS[attr(kid(legendEl, "legendPos"), "val") ?? "r"] ?? "right" },
     categories,
@@ -141,7 +158,15 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   };
   const catAxTitle = titleText(kid(plot, "catAx") ?? space);
   const valAxTitle = titleText(kid(plot, "valAx") ?? space);
-  if (catAxTitle || valAxTitle) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: valAxTitle ? { title: valAxTitle } : undefined };
+  const bounds = (ax: Element | undefined): { min?: number; max?: number } | undefined => {
+    const sc = ax ? kid(ax, "scaling") : undefined;
+    if (!sc) return undefined;
+    const mn = attr(kid(sc, "min"), "val");
+    const mx = attr(kid(sc, "max"), "val");
+    return mn != null || mx != null ? { min: mn != null ? Number(mn) : undefined, max: mx != null ? Number(mx) : undefined } : undefined;
+  };
+  const yb = bounds(kid(plot, "valAx"));
+  if (catAxTitle || valAxTitle || yb) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: (valAxTitle || yb) ? { title: valAxTitle, min: yb?.min, max: yb?.max } : undefined };
   if (descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
   return model;
 }

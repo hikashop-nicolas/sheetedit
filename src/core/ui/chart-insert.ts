@@ -81,7 +81,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
     const wb = deps.getWorkbook();
     const sheetName = deps.activeSheetName();
     let kind: ChartKind = "column";
-    const state = { firstRowHeader: true, firstColLabels: true, showLegend: true, dataLabels: false, comboLine: false, comboSecondary: false, title: "" };
+    const state = { firstRowHeader: true, firstColLabels: true, showLegend: true, dataLabels: false, stacked: false, percent: false, comboLine: false, comboSecondary: false, title: "" };
 
     const modal = document.createElement("div");
     modal.className = "sheetedit-chart-modal";
@@ -122,7 +122,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
 
     const checks = document.createElement("div");
     checks.className = "sheetedit-chart-checks";
-    type BoolKey = "firstRowHeader" | "firstColLabels" | "showLegend" | "dataLabels" | "comboLine" | "comboSecondary";
+    type BoolKey = "firstRowHeader" | "firstColLabels" | "showLegend" | "dataLabels" | "stacked" | "percent" | "comboLine" | "comboSecondary";
     const mkCheck = (label: string, key: BoolKey): HTMLLabelElement => {
       const l = document.createElement("label");
       const cb = document.createElement("input");
@@ -134,7 +134,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       l.append(cb, sp);
       return l;
     };
-    checks.append(mkCheck(t("chartFirstRow"), "firstRowHeader"), mkCheck(t("chartFirstCol"), "firstColLabels"), mkCheck(t("chartLegend"), "showLegend"), mkCheck(t("chartDataLabels"), "dataLabels"), mkCheck(t("chartComboLine"), "comboLine"), mkCheck(t("chartComboSecondary"), "comboSecondary"));
+    checks.append(mkCheck(t("chartFirstRow"), "firstRowHeader"), mkCheck(t("chartFirstCol"), "firstColLabels"), mkCheck(t("chartLegend"), "showLegend"), mkCheck(t("chartDataLabels"), "dataLabels"), mkCheck(t("chartStacked"), "stacked"), mkCheck(t("chartPercent"), "percent"), mkCheck(t("chartComboLine"), "comboLine"), mkCheck(t("chartComboSecondary"), "comboSecondary"));
 
     const preview = document.createElement("div");
     preview.className = "sheetedit-chart-preview";
@@ -163,6 +163,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       model.title = state.title || undefined;
       model.legend = { show: state.showLegend, pos: "bottom" };
       model.dataLabels = state.dataLabels;
+      model.stacked = state.stacked || state.percent || undefined; model.percent = state.percent || undefined;
       if (["column","bar","line","area"].includes(model.kind) && model.series.length >= 2) { const last = model.series[model.series.length - 1]; if (state.comboLine) last.type = "line"; if (state.comboSecondary) last.secondaryAxis = true; }
       return model;
     }
@@ -185,6 +186,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       model.title = state.title || undefined;
       model.legend = { show: state.showLegend, pos: "bottom" };
       model.dataLabels = state.dataLabels;
+      model.stacked = state.stacked || state.percent || undefined; model.percent = state.percent || undefined;
       if (["column","bar","line","area"].includes(model.kind) && model.series.length >= 2) { const last = model.series[model.series.length - 1]; if (state.comboLine) last.type = "line"; if (state.comboSecondary) last.secondaryAxis = true; }
       close();
       deps.onCreate(model);

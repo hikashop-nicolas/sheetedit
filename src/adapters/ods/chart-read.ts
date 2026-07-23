@@ -108,9 +108,22 @@ function parseOdsChart(objectDoc: Document, anchor: ChartAnchor, id: string, obj
   const chart = descend(objectDoc.documentElement, "chart").find((c) => A(c, "class") || kid(c, "plot-area"));
   if (!chart) return null;
   const cls = (A(chart, "class") || "").replace(/^chart:/, "");
-  const kind = CLASS_KIND[cls] ?? "column";
+  let kind = CLASS_KIND[cls] ?? "column";
   const plot = kid(chart, "plot-area");
   if (!plot) return null;
+  // Resolve the plot-area's chart-properties style: bar orientation (vertical) + stacked/percentage.
+  const styleProps = new Map<string, Element>();
+  for (const st of descend(objectDoc.documentElement, "style")) { const nm = A(st, "name"); const cp = kid(st, "chart-properties"); if (nm && cp) styleProps.set(nm, cp); }
+  const props = styleProps.get(A(plot, "style-name") ?? A(chart, "style-name") ?? "");
+  let stacked = false;
+  let percent = false;
+  if (props) {
+    const v = A(props, "vertical");
+    if (cls === "bar" && v === "false") kind = "bar"; // horizontal bars
+    else if (cls === "bar" && v === "true") kind = "column";
+    if (A(props, "stacked") === "true") stacked = true;
+    if (A(props, "percentage") === "true") { stacked = true; percent = true; }
+  }
   const series = kids(plot, "series").map((s) => {
     const nameRef = asRef(A(s, "label-cell-address"));
     const sCls = (A(s, "class") || "").replace(/^chart:/, "");
@@ -128,6 +141,8 @@ function parseOdsChart(objectDoc: Document, anchor: ChartAnchor, id: string, obj
   return {
     id,
     kind,
+    stacked: stacked || undefined,
+    percent: percent || undefined,
     title,
     legend: { show: !!legendEl, pos: posMap[A(legendEl ?? chart, "legend-position") ?? "end"] ?? "right" },
     categories,

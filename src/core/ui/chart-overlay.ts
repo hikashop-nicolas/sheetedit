@@ -51,28 +51,37 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const palette = (i: number, c?: string): string => c ?? CHART_PALETTE[i % CHART_PALETTE.length];
   const pieLike = model.kind === "pie" || model.kind === "doughnut";
   const hasSecondary = model.series.some((s) => s.secondaryAxis);
+  const blank = (v: number | null): number | null => (v == null ? (model.blanksAs === "gap" ? null : 0) : v); // "span" also keeps 0/null; spanGaps below connects
+  // For a 100% stacked (percentStacked) chart, normalise each category to its total.
+  const rawBySeries = pieLike || model.kind === "scatter" || model.kind === "bubble" ? [] : model.series.map((s) => numbers(wb, s.values));
+  const totals: number[] = [];
+  if (model.percent) for (let j = 0; j < Math.max(0, ...rawBySeries.map((a) => a.length)); j++) totals[j] = rawBySeries.reduce((t, a) => t + (a[j] ?? 0), 0);
+  const perPoint = (s: typeof model.series[number], j: number): string => s.pointColors?.[j] ?? CHART_PALETTE[j % CHART_PALETTE.length];
   const datasets = model.series.map((s, i) => {
     const base: Record<string, unknown> = { label: nameOf(wb, s.name), borderColor: palette(i, s.color), backgroundColor: palette(i, s.color) };
     if (model.kind === "scatter" || model.kind === "bubble") {
       const xs = numbers(wb, s.xValues); const ys = numbers(wb, s.values); const rs = s.sizes ? numbers(wb, s.sizes) : [];
       base.data = ys.map((y, j) => ({ x: xs[j] ?? j, y: y ?? 0, r: model.kind === "bubble" ? (rs[j] ?? 5) : undefined }));
     } else {
-      base.data = numbers(wb, s.values).map((v) => v ?? 0);
+      base.data = rawBySeries[i].map((v, j) => (model.percent ? (totals[j] ? (v ?? 0) / totals[j] * 100 : 0) : blank(v)));
       const effKind = s.type ?? model.kind;
       if (effKind === "area") base.fill = true;
       if (s.type && mapKind(s.type) !== type) base.type = mapKind(s.type); // combo: per-series type override
       if (s.secondaryAxis) base.yAxisID = "y1";
-      // Pie / doughnut: colour each slice from the palette, not one colour for the whole series.
-      if (pieLike) { base.backgroundColor = (base.data as number[]).map((_, j) => CHART_PALETTE[j % CHART_PALETTE.length]); base.borderColor = "#fff"; }
+      // Per-point colours: pie/doughnut slices always; a series with its own dPt colours otherwise.
+      if (pieLike) { base.backgroundColor = (base.data as number[]).map((_, j) => perPoint(s, j)); base.borderColor = "#fff"; }
+      else if (s.pointColors) base.backgroundColor = (base.data as number[]).map((_, j) => perPoint(s, j));
+      // Bar spacing from the file's gapWidth (approximate mapping to Chart.js categoryPercentage).
+      if ((model.kind === "column" || model.kind === "bar") && model.gapWidth != null) base.categoryPercentage = Math.max(0.1, Math.min(1, 1 / (1 + model.gapWidth / 100)));
     }
     return base;
   });
-  const stacked = model.stacked ? { stacked: true } : {};
-  const axisTitle = (t?: string): object => (t ? { title: { display: true, text: t } } : {});
-  const xt = axisTitle(model.axes?.x?.title);
-  const yt = axisTitle(model.axes?.y?.title);
-  const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stacked, beginAtZero: true, ...yt }, y: { ...stacked, ...xt } }
-    : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stacked, ...xt }, y: { ...stacked, beginAtZero: model.kind !== "line", ...yt } }
+  const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
+  const axisOpts = (title?: string, min?: number, max?: number): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}) });
+  const xa = axisOpts(model.axes?.x?.title);
+  const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max);
+  const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stackOpt, beginAtZero: true, ...ya }, y: { ...stackOpt, ...xa } }
+    : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line", ...ya } }
     : undefined;
   if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
   return {
@@ -83,6 +92,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       maintainAspectRatio: false,
       animation: false,
       indexAxis: model.kind === "bar" ? "y" : "x",
+      spanGaps: model.blanksAs === "span",
+      ...(model.kind === "doughnut" && model.holeSize != null ? { cutout: `${model.holeSize}%` } : {}),
       plugins: {
         legend: { display: model.legend?.show ?? true, position: model.legend?.pos ?? "top" },
         title: { display: !!model.title, text: model.title },

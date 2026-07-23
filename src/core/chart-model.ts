@@ -22,6 +22,8 @@ export interface ChartSeries {
   xValues?: ChartRef;
   sizes?: ChartRef;
   color?: string;
+  /** Per-point colours (pie/doughnut slices, bar bars) from c:dPt; undefined = use the palette. */
+  pointColors?: (string | undefined)[];
   /** Combo charts: this series renders as a different kind from the chart's base kind. */
   type?: ChartKind;
   /** Plot this series against a secondary (right-hand) value axis. */
@@ -46,6 +48,14 @@ export interface ChartModel {
   id: string;
   kind: ChartKind;
   stacked?: boolean;
+  /** 100% stacked (percentStacked): each category normalised to 100%. Implies stacked. */
+  percent?: boolean;
+  /** How empty cells are plotted: "gap" (skip), "zero", or "span" (connect across). */
+  blanksAs?: "gap" | "zero" | "span";
+  /** Doughnut hole size (% of radius), and bar spacing (gap width %, series overlap %). */
+  holeSize?: number;
+  gapWidth?: number;
+  overlap?: number;
   title?: string;
   legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right" };
   /** Show the value on each data point. */

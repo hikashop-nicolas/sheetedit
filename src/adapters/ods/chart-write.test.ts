@@ -47,4 +47,17 @@ describe("ods chart writer", () => {
     expect(re[0].series[0].values.ref).toBe("Sheet1!B2:B3");
     expect(re[0].categories?.ref).toBe("Sheet1!A2:A3");
   });
+
+  it("orientation (bar) and 100% stacked round-trip through the plot-area style", () => {
+    const wb = readWorkbook(ods());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "bar", rect, { firstRowHeader: true, firstColLabels: true }, "b", defaultAnchor(rect));
+    m.stacked = true;
+    m.percent = true;
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.kind).toBe("bar"); // horizontal, from chart:vertical="false"
+    expect(re.stacked).toBe(true);
+    expect(re.percent).toBe(true);
+  });
 });
