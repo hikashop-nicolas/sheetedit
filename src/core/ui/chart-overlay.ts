@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { backgroundPlugin, errorBarsPlugin, ofPiePlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -43,6 +43,8 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(surfacePlugin as unknown); // no-ops unless datasets carry surface rows
     ChartJs.register(ofPiePlugin as unknown); // no-ops unless a dataset carries an ofPie config
     ChartJs.register(backgroundPlugin as unknown); // no-ops unless its plugin options carry a fill
+    ChartJs.register(bar3DPlugin as unknown); // no-ops unless a dataset carries threeDBar
+    ChartJs.register(pie3DPlugin as unknown); // no-ops unless a dataset carries threeDPie
   });
   await loading;
   return ChartJs!;
@@ -171,6 +173,12 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   // Surface: no 2D equivalent, so render a heatmap (series = rows, categories = columns, value = colour).
   const isSurface = model.kind === "surface";
   if (isSurface) datasets.forEach((d, i) => { d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.surfaceRow = i; d.surfaceName = nameOf(wb, model.series[i].name); d.datalabels = { display: false }; });
+  // Pseudo-3D (isometric) rendering for 3-D column and pie/doughnut charts: the flat datasets go
+  // transparent (scale/geometry carriers) and a plugin draws the extruded look.
+  const threeDBar = model.threeD === true && model.kind === "column";
+  const threeDPie = model.threeD === true && pieLike;
+  if (threeDBar) datasets.forEach((d, i) => { d.threeDBar = palette(i, model.series[i]?.color); d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.datalabels = { display: false }; });
+  if (threeDPie && datasets[0]) { const arr = Array.isArray(datasets[0].backgroundColor) ? (datasets[0].backgroundColor as string[]) : []; datasets[0].threeDPie = arr; datasets[0].backgroundColor = arr.map(() => "rgba(0,0,0,0)"); datasets[0].borderColor = "rgba(0,0,0,0)"; datasets[0].datalabels = { display: false }; }
   // Pie-of-pie / bar-of-pie: aggregate the last splitCount slices into "Other"; the plugin draws
   // the breakout as a small secondary pie or bar.
   const isOfPie = pieLike && !!model.ofPie && model.series.length >= 1;
@@ -237,6 +245,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
           labels: {
             ...(model.legend?.deleted?.length ? { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } : {}),
             ...cjFont(model.legendStyle),
+            // 3-D datasets are transparent; source the legend swatch colours from the 3D tags.
+            ...(threeDBar ? { generateLabels: (ch: { data: { datasets: { label?: string; threeDBar?: string }[] } }) => ch.data.datasets.map((d, i) => ({ text: d.label ?? "", fillStyle: d.threeDBar, strokeStyle: d.threeDBar, lineWidth: 0, datasetIndex: i })) } : {}),
+            ...(threeDPie ? { generateLabels: (ch: { data: { labels?: unknown[]; datasets: { threeDPie?: string[] }[] } }) => (ch.data.labels ?? []).map((lab, i) => ({ text: String(lab), fillStyle: ch.data.datasets[0]?.threeDPie?.[i], strokeStyle: "#fff", lineWidth: 1, index: i })) } : {}),
           },
         },
         title: { display: !!model.title, text: model.title, ...cjFont(model.titleStyle) },

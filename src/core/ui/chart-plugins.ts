@@ -390,3 +390,98 @@ export const ofPiePlugin = {
     ctx.restore();
   },
 };
+
+// ---- Pseudo-3D (isometric extrusion), matching how Excel draws its "3-D" charts ----
+
+/** Multiply an #rrggbb colour by a factor (>1 lightens, <1 darkens); passes non-hex through. */
+function shade(colour: string, f: number): string {
+  const h = colour.replace("#", "");
+  if (h.length < 6 || /[^0-9a-fA-F]/.test(h.slice(0, 6))) return colour;
+  const n = parseInt(h.slice(0, 6), 16);
+  const ch = (v: number): number => Math.max(0, Math.min(255, Math.round(v * f)));
+  return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+}
+
+interface BarEl { x: number; y: number; base: number; width: number; getProps?: (k: string[], f?: boolean) => { x: number; y: number; base: number; width: number } }
+interface Bar3DChart { ctx: CanvasRenderingContext2D; chartArea: { left: number; right: number; top: number; bottom: number }; data: { datasets: { threeDBar?: string }[] }; getDatasetMeta: (i: number) => { data: BarEl[] } }
+/** Draws each column as an extruded (isometric) 3-D block. The flat bars are made transparent by
+    the caller and only serve as scale carriers; this plugin draws the front, top and right faces. */
+export const bar3DPlugin = {
+  id: "sheeteditBar3D",
+  afterDatasetsDraw(chart: Bar3DChart): void {
+    const dss = chart.data.datasets;
+    if (!dss.some((d) => d.threeDBar)) return;
+    const { ctx, chartArea } = chart;
+    const depth = Math.max(8, Math.min(26, (chartArea.right - chartArea.left) * 0.035));
+    const dx = depth, dy = -depth * 0.6;
+    const bars: { x0: number; x1: number; top: number; bot: number; c: string }[] = [];
+    dss.forEach((ds, i) => {
+      if (!ds.threeDBar) return;
+      for (const el of chart.getDatasetMeta(i).data) {
+        const p = el.getProps ? el.getProps(["x", "y", "base", "width"], true) : el;
+        const w = p.width;
+        bars.push({ x0: p.x - w / 2, x1: p.x + w / 2, top: Math.min(p.y, p.base), bot: Math.max(p.y, p.base), c: ds.threeDBar });
+      }
+    });
+    ctx.save();
+    // Sides + tops first (they recede), then the front faces on top (nearest plane).
+    for (const b of bars) {
+      ctx.fillStyle = shade(b.c, 1.22);
+      ctx.beginPath(); ctx.moveTo(b.x0, b.top); ctx.lineTo(b.x1, b.top); ctx.lineTo(b.x1 + dx, b.top + dy); ctx.lineTo(b.x0 + dx, b.top + dy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = shade(b.c, 0.7);
+      ctx.beginPath(); ctx.moveTo(b.x1, b.top); ctx.lineTo(b.x1, b.bot); ctx.lineTo(b.x1 + dx, b.bot + dy); ctx.lineTo(b.x1 + dx, b.top + dy); ctx.closePath(); ctx.fill();
+    }
+    for (const b of bars) { ctx.fillStyle = b.c; ctx.fillRect(b.x0, b.top, b.x1 - b.x0, b.bot - b.top); }
+    ctx.restore();
+  },
+};
+
+interface PieArc { x: number; y: number; startAngle: number; endAngle: number; outerRadius: number; innerRadius: number }
+interface Pie3DChart { ctx: CanvasRenderingContext2D; data: { datasets: { threeDPie?: string[] }[] }; getDatasetMeta: (i: number) => { data: PieArc[] } }
+/** Draws a pie / doughnut as a flattened (elliptical) disc with a shaded side wall on its front
+    rim, for the pseudo-3D look. The flat arcs are transparent and only supply the geometry. */
+export const pie3DPlugin = {
+  id: "sheeteditPie3D",
+  afterDatasetsDraw(chart: Pie3DChart): void {
+    const ds = chart.data.datasets[0];
+    if (!ds?.threeDPie) return;
+    const arcs = chart.getDatasetMeta(0).data;
+    if (!arcs.length) return;
+    const { ctx } = chart;
+    const cx = arcs[0].x, r = arcs[0].outerRadius, inner = arcs[0].innerRadius || 0;
+    const flat = 0.55;
+    const depth = Math.max(10, r * 0.22);
+    const cy = arcs[0].y - depth / 2;
+    const cols = ds.threeDPie;
+    const pt = (a: number, rr: number): [number, number] => [cx + rr * Math.cos(a), cy + rr * flat * Math.sin(a)];
+    ctx.save();
+    // Front rim wall: the portion of each slice's outer arc that faces the viewer (sin > 0 = bottom).
+    arcs.forEach((a, j) => {
+      const s = a.startAngle, e = a.endAngle;
+      const N = Math.max(2, Math.ceil((e - s) / 0.12));
+      ctx.fillStyle = shade(cols[j] || "#888", 0.6);
+      for (let k = 0; k < N; k++) {
+        const a0 = s + (e - s) * k / N, a1 = s + (e - s) * (k + 1) / N;
+        if (Math.sin((a0 + a1) / 2) <= 0) continue;
+        const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x1, y1 + depth); ctx.lineTo(x0, y0 + depth); ctx.closePath(); ctx.fill();
+      }
+    });
+    // Top faces (flattened slices).
+    arcs.forEach((a, j) => {
+      ctx.beginPath();
+      if (inner > 0) {
+        ctx.ellipse(cx, cy, r, r * flat, 0, a.startAngle, a.endAngle);
+        ctx.ellipse(cx, cy, inner, inner * flat, 0, a.endAngle, a.startAngle, true);
+      } else {
+        ctx.moveTo(cx, cy);
+        ctx.ellipse(cx, cy, r, r * flat, 0, a.startAngle, a.endAngle);
+      }
+      ctx.closePath();
+      ctx.fillStyle = cols[j] || "#888";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.stroke();
+    });
+    ctx.restore();
+  },
+};
