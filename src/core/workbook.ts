@@ -160,6 +160,9 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
     cell.formula = nf;
     cell.odfFormula = undefined;
     cell.edited = true;
+    // The new content replaces any per-run rich text / furigana the old string carried.
+    cell.richRuns = undefined;
+    cell.phonetic = undefined;
     return;
   }
   if (existing == null && raw === "") return;
@@ -168,6 +171,9 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   cell.formula = undefined;
   cell.odfFormula = undefined;
   cell.edited = true;
+  // The new content replaces any per-run rich text / furigana the old string carried.
+  cell.richRuns = undefined;
+  cell.phonetic = undefined;
   // A CSV stores exactly what the user typed; typed dates/percents stay text.
   const csv = sheet.csvRows != null;
   const commaDecimal = !csv && localeCode() === "fr" && /^[-+]?\d+,\d+$/.test(raw.trim());
