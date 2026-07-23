@@ -19,14 +19,18 @@ included). Tracks the gap list and the agreed priority order for closing it.
 - Multiple sheets (switch via tabs), find and replace across sheets, fill down/right, on-device
   formula assistant.
 - Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data,
-  merge/append), refresh, and Load (existing table or new sheet).
+  merge/append), refresh, and Load (existing table or new sheet); can now author the first query
+  in a query-less workbook (bootstraps the DataMashup payload).
+- Charts: read, render (Chart.js + custom plugins), full create/edit dialog and write for every
+  DrawingML chart type, all option tiers (axes, labels, trendlines, error bars, stock, of-pie,
+  surface, styling), pseudo-3D, xlsx + ods round-trip.
 
 ## Preserved on save, but inert in the grid (round-trips, not rendered or editable)
 
 Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized
 with its sibling elements intact:
 
-- Charts, images, shapes, drawings
+- Images, shapes, drawings (charts are now fully editable, see above)
 - Pivot tables and caches (not refreshed)
 - Sparklines, form controls, slicers
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
