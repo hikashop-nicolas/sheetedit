@@ -93,6 +93,9 @@ export interface Cell {
   arrayRef?: string;
   /** This cell is filled by another cell's array formula (a spill result), not its own. */
   spill?: boolean;
+  /** Transient (never saved): for a dynamic-array anchor, the bottom-right cell of the
+      range its result last spilled into, so a later recalc can clear a stale/shrunk spill. */
+  dynSpill?: { r: number; c: number };
   /** xlsx: the <c> element in the worksheet DOM (for surgical edits). */
   el?: Element;
   /** ods: the original <table:table-cell> element (cloned verbatim if untouched). */

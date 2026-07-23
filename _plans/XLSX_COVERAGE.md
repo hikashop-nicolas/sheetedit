@@ -41,12 +41,16 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 
 ## Gaps / not handled
 
-- No dynamic-array / spill computation; only legacy array formulas are preserved (not re-spilled).
+- Dynamic-array spill (MVP): a plain formula returning a 2-D result spills into its anchor + range
+  (with a #SPILL! guard on collisions). Producers UNIQUE / SORT / FILTER / SEQUENCE are supplied
+  (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
+  mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
 - No editing of the preserved-only features above (charts, pivots, sparklines, protection); the
   now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
 - Conditional formatting: icon sets, arbitrary expression rules and time-period rules round-trip
   but are not rendered; cellIs operands are numeric literals (cell-ref/formula operands skipped).
-- No rich text within one cell: a multi-format string renders as plain text with a single style.
+- Rich text within one cell renders each run's own style (bold/italic/colour/etc.); editing a
+  rich cell keeps the plain text (per-run style is preserved, not authored from the UI).
 - Recalc is a subset: unsupported functions or circular refs yield an error value (cached value
   shown as fallback); exotic custom number-format codes may render slightly differently (SSF).
 
