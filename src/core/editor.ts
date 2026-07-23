@@ -68,7 +68,7 @@ export function injectStyles(): void {
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = `
-    .sheetedit-wrap { display:flex; flex-direction:column; height:100%; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); font:13px system-ui, sans-serif; }
+    .sheetedit-wrap { position:relative; display:flex; flex-direction:column; height:100%; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); font:13px system-ui, sans-serif; }
     .sheetedit-toolbar { display:flex; flex-wrap:nowrap; overflow:hidden; align-items:center; gap:5px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
     .sheetedit-btn {
       font:inherit; font-size:13px; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
