@@ -54,6 +54,23 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const palette = (i: number, c?: string): string => c ?? CHART_PALETTE[i % CHART_PALETTE.length];
   const pieLike = model.kind === "pie" || model.kind === "doughnut";
   const hasSecondary = model.series.some((s) => s.secondaryAxis);
+  // Date (category) axis for line/area: plot values against a timestamp on a linear scale with
+  // date-formatted ticks, so points are spaced by their date. No date adapter needed.
+  const xDate = model.axes?.x?.date === true && (model.kind === "line" || model.kind === "area");
+  const excelToMs = (serial: number): number => Math.round((serial - 25569) * 86400000);
+  const toTs = (c: unknown): number | null => {
+    if (typeof c === "number") return excelToMs(c);
+    if (typeof c === "string") {
+      const t = c.trim();
+      // A bare number is an Excel date serial; check this BEFORE Date.parse, which would read
+      // "45292" as the year 45292 rather than a serial.
+      if (/^-?\d+(?:\.\d+)?$/.test(t)) return excelToMs(Number(t));
+      const ms = Date.parse(t); if (!isNaN(ms)) return ms;
+    }
+    return null;
+  };
+  const fmtDate = (ts: number): string => new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const tss = xDate ? cats.map(toTs) : [];
   const blank = (v: number | null): number | null => (v == null ? (model.blanksAs === "gap" ? null : 0) : v); // "span" also keeps 0/null; spanGaps below connects
   // For a 100% stacked (percentStacked) chart, normalise each category to its total.
   // Category-like values (everything except scatter/bubble, which use xVal/yVal). Pie/doughnut ARE
@@ -97,6 +114,13 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       base.data = ys.map((y, j) => ({ x: xs[j] ?? j, y: y ?? 0, r: model.kind === "bubble" ? (rs[j] ?? 5) : undefined }));
       if (s.smooth) { base.tension = 0.4; base.showLine = true; }
       if (s.marker) { const st = MARKER_STYLE[s.marker.symbol ?? "circle"] ?? "circle"; base.pointStyle = st; base.pointRadius = s.marker.size ? s.marker.size / 2 : 4; }
+    } else if (xDate) {
+      base.data = rawBySeries[i].map((v, j) => ({ x: tss[j] ?? j, y: blank(v) }));
+      base.parsing = false; // data is already {x,y}
+      if (s.type && mapKind(s.type) !== type) base.type = mapKind(s.type);
+      if (model.kind === "area") base.fill = true;
+      if (s.smooth) base.tension = 0.4;
+      if (s.marker) { const st = MARKER_STYLE[s.marker.symbol ?? "circle"] ?? "circle"; base.pointStyle = st; base.pointRadius = st === false || s.marker.symbol === "none" ? 0 : (s.marker.size ? s.marker.size / 2 : 3); }
     } else {
       base.data = rawBySeries[i].map((v, j) => (model.percent ? (totals[j] ? (v ?? 0) / totals[j] * 100 : 0) : blank(v)));
       const effKind = s.type ?? model.kind;
@@ -123,7 +147,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const yFmt = model.axes?.y?.numFmt;
   const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
   const axisOpts = (title?: string, min?: number, max?: number, fmt?: string): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...ticksFmt(fmt) });
-  const xa = axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt);
+  const xa = xDate
+    ? { type: "linear", ticks: { callback: (v: unknown) => fmtDate(Number(v)) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title } } : {}) }
+    : axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt);
   const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt);
   const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stackOpt, beginAtZero: true, ...ya }, y: { ...stackOpt, ...xa } }
     : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line", ...ya } }
@@ -131,7 +157,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
   return {
     type,
-    data: { labels: cats.length ? cats : undefined, datasets },
+    data: { labels: cats.length && !xDate ? cats : undefined, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,

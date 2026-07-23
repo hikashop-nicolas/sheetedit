@@ -146,6 +146,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const stacked = grouping === "stacked" || grouping === "percentStacked";
   const percent = grouping === "percentStacked";
   let categories: ChartRef | undefined;
+  let categoryLevels: (string | number | null)[][] | undefined;
   const collected: { idx: number; s: ChartSeries }[] = [];
   const el0 = typeEls[0]; // for data-label detection
   typeEls.forEach((el, ti) => {
@@ -180,6 +181,11 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));
+      if (!categoryLevels) {
+        const ml = kid(kid(ser, "cat"), "multiLvlStrRef");
+        const ce = ml ? kid(ml, "multiLvlStrCache") : undefined;
+        if (ce) { const lv = kids(ce, "lvl").map((l) => ptsOf(l)); if (lv.length > 1) categoryLevels = lv; }
+      }
       collected.push({ idx: Number(attr(kid(ser, "idx"), "val") || String(collected.length)), s });
     }
   });
@@ -203,6 +209,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     title: titleText(chart),
     legend: { show: !!legendEl, pos: LEGEND_POS[attr(kid(legendEl, "legendPos"), "val") ?? "r"] ?? "right" },
     categories,
+    categoryLevels,
     series,
     anchor,
     original,

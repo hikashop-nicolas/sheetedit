@@ -94,6 +94,9 @@ export interface ChartModel {
   labels?: ChartDataLabels;
   /** Shared category (x) labels; not used for scatter/bubble. */
   categories?: ChartRef;
+  /** Multi-level category labels (c:multiLvlStrRef), innermost level first. Set only when the
+      categories are multi-level; preserved on write so editing does not flatten them. */
+  categoryLevels?: (string | number | null)[][];
   series: ChartSeries[];
   axes?: { x?: ChartAxis; y?: ChartAxis };
   anchor: ChartAnchor;

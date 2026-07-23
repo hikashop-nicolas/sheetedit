@@ -142,6 +142,19 @@ describe("xlsx chart writer", () => {
     expect(re.axes?.x?.date).toBe(true);
   });
 
+  it("multi-level categories survive an edit + re-save (not flattened)", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "ml", defaultAnchor(rect));
+    m.categories = { ref: "Sheet1!$A$2:$B$3", cache: ["Q1", "Q2"] };
+    m.categoryLevels = [["Q1", "Q2"], ["FY"]];
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.categoryLevels).toEqual([["Q1", "Q2"], ["FY"]]);
+    // The innermost level is still what renders as the category labels.
+    expect(re.categories?.cache).toEqual(["Q1", "Q2"]);
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

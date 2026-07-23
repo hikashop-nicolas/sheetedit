@@ -17,6 +17,14 @@ const strCache = (vals: string[]): string => `<c:strCache><c:ptCount val="${vals
 const numCache = (vals: (number | null)[]): string => `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${vals.length}"/>${vals.map((v, i) => (v == null ? "" : `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`)).join("")}</c:numCache>`;
 const strRef = (ref: string | undefined, cache: string[]): string => `<c:strRef><c:f>${esc(ref ?? "")}</c:f>${strCache(cache)}</c:strRef>`;
 const numRef = (ref: string | undefined, cache: (number | null)[]): string => `<c:numRef><c:f>${esc(ref ?? "")}</c:f>${numCache(cache)}</c:numRef>`;
+/** A c:multiLvlStrRef for multi-level category labels (levels innermost-first). */
+const multiLvlStrRef = (ref: string | undefined, levels: (string | number | null)[][]): string => {
+  const n = Math.max(0, ...levels.map((l) => l.length));
+  const lvls = levels.map((l) => `<c:lvl>${l.map((v, i) => (v == null ? "" : `<c:pt idx="${i}"><c:v>${esc(String(v))}</c:v></c:pt>`)).join("")}</c:lvl>`).join("");
+  return `<c:multiLvlStrRef><c:f>${esc(ref ?? "")}</c:f><c:multiLvlStrCache><c:ptCount val="${n}"/>${lvls}</c:multiLvlStrCache></c:multiLvlStrRef>`;
+};
+const catXml = (catRef: string | undefined, catLabels: string[], catLevels?: (string | number | null)[][]): string =>
+  catLevels && catLevels.length > 1 ? `<c:cat>${multiLvlStrRef(catRef, catLevels)}</c:cat>` : (catRef ? `<c:cat>${strRef(catRef, catLabels)}</c:cat>` : "");
 
 const fillPr = (hex: string): string => `<c:spPr><a:solidFill><a:srgbClr val="${hex.replace("#", "")}"/></a:solidFill></c:spPr>`;
 const markerXml = (m?: { symbol?: string; size?: number }): string => (m ? `<c:marker><c:symbol val="${m.symbol ?? "circle"}"/>${m.size != null ? `<c:size val="${m.size}"/>` : ""}</c:marker>` : "");
@@ -39,12 +47,12 @@ function dPtsXml(s: ChartSeries): string {
   }
   return out;
 }
-function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | undefined, catLabels: string[]): string {
+function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | undefined, catLabels: string[], catLevels?: (string | number | null)[][]): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const spPr = s.color ? fillPr(s.color) : "";
-  const cat = catRef ? `<c:cat>${strRef(catRef, catLabels)}</c:cat>` : "";
+  const cat = catXml(catRef, catLabels, catLevels);
   return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dPtsXml(s)}${dLblsXml(s.labels)}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
 }
 function serXY(wb: Workbook, s: ChartSeries, i: number): string {
@@ -68,7 +76,7 @@ const localOf = (k: string): string => (k === "column" || k === "bar" ? "barChar
 
 /** Body for a combo chart (mixed series types and/or a secondary axis): one chart-type element per
     (kind, axis) group, plus the primary axes and a secondary value axis when needed. */
-function comboBody(model: ChartModel, wb: Workbook, catRef: string | undefined, catLabels: string[], dLbls: string): string {
+function comboBody(model: ChartModel, wb: Workbook, catRef: string | undefined, catLabels: string[], dLbls: string, catLevels?: (string | number | null)[][]): string {
   const AX1 = 111111111, AX2 = 222222222, AX3 = 333333333, AX4 = 444444444;
   const groups = new Map<string, { kind: string; secondary: boolean; series: ChartSeries[] }>();
   model.series.forEach((s) => {
@@ -80,7 +88,7 @@ function comboBody(model: ChartModel, wb: Workbook, catRef: string | undefined, 
   let idx = 0;
   const parts: string[] = [];
   for (const g of groups.values()) {
-    const sers = g.series.map((s, j) => serCategory(wb, s, idx + j, catRef, catLabels)).join("");
+    const sers = g.series.map((s, j) => serCategory(wb, s, idx + j, catRef, catLabels, catLevels)).join("");
     idx += g.series.length;
     const dir = g.kind === "bar" ? '<c:barDir val="bar"/>' : g.kind === "column" ? '<c:barDir val="col"/>' : "";
     const grp = `<c:grouping val="${model.percent ? "percentStacked" : model.stacked ? "stacked" : g.kind === "line" || g.kind === "area" ? "standard" : "clustered"}"/>`;
@@ -97,6 +105,7 @@ function comboBody(model: ChartModel, wb: Workbook, catRef: string | undefined, 
 export function chartXml(model: ChartModel, wb: Workbook): string {
   const catRef = model.categories?.ref;
   const catLabels = resolveLabels(wb, model.categories);
+  const catLevels = model.categoryLevels;
   const AX1 = 111111111;
   const AX2 = 222222222;
   const xDate = model.axes?.x?.date === true;
@@ -104,12 +113,12 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   const isCombo = ["column", "bar", "line", "area"].includes(model.kind) && model.series.some((s) => (s.type && s.type !== model.kind) || s.secondaryAxis);
   let body: string;
   if (isCombo) {
-    body = comboBody(model, wb, catRef, catLabels, dLbls);
+    body = comboBody(model, wb, catRef, catLabels, dLbls, catLevels);
   } else if (model.kind === "scatter" || model.kind === "bubble") {
     const sers = model.series.map((s, i) => serXY(wb, s, i)).join("");
     body = `<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:scatterChart>${valAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
   } else {
-    const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels)).join("");
+    const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
     const group = model.percent ? "percentStacked" : model.stacked ? "stacked" : model.kind === "line" || model.kind === "area" ? "standard" : "clustered";
     if (model.kind === "pie" || model.kind === "doughnut") {
       const rot = model.rotation != null ? `<c:firstSliceAng val="${((model.rotation % 360) + 360) % 360}"/>` : "";

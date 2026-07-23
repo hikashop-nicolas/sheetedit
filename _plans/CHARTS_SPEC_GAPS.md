@@ -28,8 +28,9 @@ less thing lost when a chart is edited.
 - [x] Per-series data labels + label position (c:dLbls at ser, c:dLblPos); showCatName/showSerName/
       showPercent. (Chart-level and per-series; rendered via the datalabels plugin.)
 - [x] ODS secondary axis (chart:attached-axis) read + write; ODS data labels (chart:data-label-*) read/write.
-- [x] dateAx (date axis) read + write (preserved; rendered as a category axis, no time scale yet);
-      multi-level categories (c:multiLvlStrRef) read to the innermost level (write flattens).
+- [x] dateAx (date axis) read + write; rendered on a proportional linear time axis (points spaced by
+      date, date-formatted ticks) for line/area, no date-adapter dependency. Multi-level categories
+      (c:multiLvlStrRef) read + preserved through edit/write (innermost level renders).
 - [x] Legend entry deletion (c:legendEntry delete) read/render/write; legend overlay preserved.
 - [x] Pie firstSliceAng (rotation) + pie explosion (c:explosion) read/render/write.
 
@@ -60,5 +61,5 @@ less thing lost when a chart is edited.
 ## Progress
 
 - (DONE) Tier 1 - all six items shipped, xlsx+ods round-trip tested, LibreOffice-validated (chart:percentage read), 100% stacked browser-verified. Insert dialog gained Stacked + 100% stacked options.
-- (DONE) Tier 2 - smooth lines, series markers, schemeClr/theme colour resolution, axis+label number formats (SSF), pie rotation, rich data labels (content + position, chart + per-series), pie explosion, legend-entry deletion + overlay, ODS secondary axis + data labels, dateAx (preserved, category render), multi-level categories (read innermost). xlsx round-trip tested; data-labels + explosion + smooth/marker browser-verified; LibreOffice-validated (pie + percentage labels survive the xlsx->ods convert). Caveats that remain: dateAx renders as a category axis (no time scale), and editing a multi-level-category chart flattens it to one level.
+- (DONE) Tier 2 - smooth lines, series markers, schemeClr/theme colour resolution, axis+label number formats (SSF), pie rotation, rich data labels (content + position, chart + per-series), pie explosion, legend-entry deletion + overlay, ODS secondary axis + data labels, proportional date axis (line/area), multi-level categories (read + preserved on write). xlsx round-trip tested; data-labels + explosion + smooth/marker + date-axis browser-verified; LibreOffice-validated (pie + percentage labels, and the date-axis line chart, survive the xlsx->ods convert). Both earlier caveats closed: date axes now render on a proportional time axis with date-formatted ticks, and editing a multi-level-category chart preserves all levels.
 - (next) Tier 3 - trendlines, error bars, stock/candlestick, ofPie, surface, 3D-on-write.
