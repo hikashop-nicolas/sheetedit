@@ -132,6 +132,7 @@ export function injectStyles(): void {
     .sheetedit-table td.has-spark input { position:relative; z-index:1; background:transparent; }
     .sheetedit-filterbtn { position:absolute; top:0; right:0; bottom:0; z-index:3; visibility:hidden; display:inline-flex; align-items:center; justify-content:center; width:17px; padding:0; border:0; border-left:1px solid #d4d4d8; background:#eef0f4; color:#555; cursor:pointer; }
     .sheetedit-filterbtn:hover { background:#e3e6ec; color:#111; }
+    .sheetedit-table td.has-filter { position:relative; }
     .sheetedit-table td.has-filter .sheetedit-filterbtn { visibility:visible; }
     .sheetedit-table td.sheetedit-filter-on .sheetedit-filterbtn { color:var(--sheetedit-accent, #6e7bff); background:#dfe3ff; }
     .sheetedit-filtermenu { min-width:190px; }
