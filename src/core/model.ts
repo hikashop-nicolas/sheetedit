@@ -77,6 +77,9 @@ export interface Cell {
   /** Phonetic guide (furigana) runs for a Japanese string cell, shown as ruby in the grid;
       the value stays the base text. Preserved untouched in the file's shared/inline string. */
   phonetic?: Phonetic[];
+  /** Rich text: per-run styling for a multi-format string cell. Rendered as styled spans; the
+      value stays the concatenated text. Preserved via the untouched shared/inline string. */
+  richRuns?: TextRun[];
   /** Serialization hint for `value`. */
   kind: CellKind;
   /** Formatted text for the grid (number format applied). Falls back to `value`. */
@@ -220,6 +223,9 @@ export interface StyleChange {
   /** Per-side borders to set; each specified side is turned on/off, others kept. */
   borderSides?: { top?: boolean; right?: boolean; bottom?: boolean; left?: boolean };
 }
+
+/** A styled run within a rich-text (multi-format) cell string. */
+export interface TextRun { text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; size?: number; color?: string; font?: string; }
 
 export const key = (row: number, col: number): string => `${row}:${col}`;
 

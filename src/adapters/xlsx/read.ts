@@ -21,6 +21,7 @@ function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: n
 export interface RichString {
   text: string; // base text (plain <t> and <r> runs)
   phonetic?: Phonetic[]; // <rPh> furigana runs, if any
+  runs?: import("../../core/model").TextRun[]; // per-run styling when the string is multi-format
 }
 
 // Parse a rich-text container (<si> in sharedStrings or <is> for an inline string) into its
@@ -29,16 +30,39 @@ export interface RichString {
 export function parseRichString(el: Element): RichString {
   let text = "";
   const phonetic: Phonetic[] = [];
+  const runs: import("../../core/model").TextRun[] = [];
+  let styledRuns = 0;
   for (const ch of Array.from(el.children)) {
-    if (ch.localName === "t") text += ch.textContent ?? "";
+    if (ch.localName === "t") { text += ch.textContent ?? ""; runs.push({ text: ch.textContent ?? "" }); }
     else if (ch.localName === "r") {
-      for (const rc of Array.from(ch.children)) if (rc.localName === "t") text += rc.textContent ?? "";
+      let rtext = "";
+      for (const rc of Array.from(ch.children)) if (rc.localName === "t") rtext += rc.textContent ?? "";
+      text += rtext;
+      const rPr = Array.from(ch.children).find((x) => x.localName === "rPr");
+      const run: import("../../core/model").TextRun = { text: rtext };
+      if (rPr) {
+        styledRuns++;
+        const has = (n: string): boolean => { const e = Array.from(rPr.children).find((x) => x.localName === n); return e != null && e.getAttribute("val") !== "0" && e.getAttribute("val") !== "false"; };
+        if (has("b")) run.bold = true;
+        if (has("i")) run.italic = true;
+        if (has("u")) run.underline = true;
+        if (has("strike")) run.strike = true;
+        const sz = Array.from(rPr.children).find((x) => x.localName === "sz")?.getAttribute("val"); if (sz) run.size = Number(sz);
+        const colEl = Array.from(rPr.children).find((x) => x.localName === "color");
+        const col = colEl && (argbToCss(colEl.getAttribute("rgb")) ?? undefined); if (col) run.color = col;
+        const font = Array.from(rPr.children).find((x) => x.localName === "rFont")?.getAttribute("val"); if (font) run.font = font;
+      }
+      runs.push(run);
     } else if (ch.localName === "rPh") {
       const rt = Array.from(ch.children).find((x) => x.localName === "t");
       phonetic.push({ sb: Number(ch.getAttribute("sb") || "0"), eb: Number(ch.getAttribute("eb") || "0"), reading: rt?.textContent ?? "" });
     }
   }
-  return phonetic.length ? { text, phonetic } : { text };
+  const out: RichString = { text };
+  if (phonetic.length) out.phonetic = phonetic;
+  // Only carry runs when there is real per-run formatting (a multi-format string).
+  if (styledRuns > 0 && runs.length > 1) out.runs = runs;
+  return out;
 }
 
 export function readSharedStrings(file: Uint8Array | undefined): RichString[] {
@@ -504,15 +528,18 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichStri
       let value = "";
       let kind: CellKind = "blank";
       let phonetic: Phonetic[] | undefined;
+      let richRuns: import("../../core/model").TextRun[] | undefined;
       if (t === "s") {
         const ss = shared[Number(vEl?.textContent ?? "0")] ?? { text: "" };
         value = ss.text;
         phonetic = ss.phonetic;
+        richRuns = ss.runs;
         kind = "s";
       } else if (t === "inlineStr") {
         const ss = isEl ? parseRichString(isEl) : { text: "" };
         value = ss.text;
         phonetic = ss.phonetic;
+        richRuns = ss.runs;
         kind = "s";
       } else if (t === "str") {
         value = vEl?.textContent ?? "";
@@ -548,6 +575,7 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichStri
         el: c,
         style: c.getAttribute("s") ?? undefined,
         phonetic,
+        richRuns,
       };
       // Legacy array formula: the top-left cell carries <f t="array" ref="A1:C3">.
       if (fEl?.getAttribute("t") === "array") cell.arrayRef = fEl.getAttribute("ref") ?? undefined;

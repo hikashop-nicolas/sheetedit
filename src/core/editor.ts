@@ -107,6 +107,13 @@ export function injectStyles(): void {
       overflow:hidden; pointer-events:none; line-height:1.3; color:#1a1a1a;
     }
     .sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
+    .sheetedit-table td.has-rich { position:relative; }
+    .sheetedit-table td.has-rich:not(:focus-within) input { color:transparent !important; }
+    .sheetedit-table td.has-rich .sheetedit-cellrich {
+      position:absolute; inset:0; padding:1px 8px; display:flex; align-items:center; white-space:pre;
+      overflow:hidden; pointer-events:none; color:#1a1a1a;
+    }
+    .sheetedit-table td.has-rich:focus-within .sheetedit-cellrich { display:none; }
     /* Hyperlink cells: link-coloured underlined text and a small open button top-right. */
     .sheetedit-table td.has-link { position:relative; }
     .sheetedit-table td.has-link input:not(:focus) { color:#2563eb; text-decoration:underline; }
@@ -1906,9 +1913,30 @@ export function createSheetEditor(
         }
       });
       td.appendChild(input);
-      // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
-      // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
-      if (cell?.phonetic?.length) {
+      // Rich text: a display overlay of per-run styled spans (the input keeps the plain text for
+      // editing; CSS hides the overlay while the cell is focused).
+      if (cell?.richRuns?.length) {
+        td.classList.add("has-rich");
+        const ov = document.createElement("div");
+        ov.className = "sheetedit-cellrich";
+        ov.setAttribute("aria-hidden", "true");
+        for (const run of cell.richRuns) {
+          const sp = document.createElement("span");
+          sp.textContent = run.text;
+          if (run.bold) sp.style.fontWeight = "700";
+          if (run.italic) sp.style.fontStyle = "italic";
+          const deco = `${run.underline ? "underline " : ""}${run.strike ? "line-through" : ""}`.trim();
+          if (deco) sp.style.textDecoration = deco;
+          if (run.size) sp.style.fontSize = `${run.size}pt`;
+          if (run.color) sp.style.color = run.color;
+          if (run.font) sp.style.fontFamily = run.font;
+          ov.appendChild(sp);
+        }
+        if (cell.cellStyle?.align) ov.style.textAlign = cell.cellStyle.align;
+        td.appendChild(ov);
+      } else if (cell?.phonetic?.length) {
+        // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
+        // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
         td.classList.add("has-ruby");
         td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
       } else if (cell?.cellStyle?.wrap && cell.value !== "") {
