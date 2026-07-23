@@ -391,6 +391,46 @@ export const ofPiePlugin = {
   },
 };
 
+interface MultiLevelChart { ctx: CanvasRenderingContext2D; scales?: { x?: { bottom: number; getPixelForValue: (i: number) => number } } }
+/** Draws the outer level(s) of a multi-level (tiered) category axis below the innermost labels
+    (which Chart.js already draws): each outer level is a row of grouped, centred labels boxed to
+    span the categories it covers. The levels come from the plugin options (innermost first). */
+export const multiLevelAxisPlugin = {
+  id: "sheeteditMultiLevel",
+  afterDraw(chart: MultiLevelChart, _args: unknown, opts: (string | number | null)[][] | undefined): void {
+    const levels = opts;
+    if (!levels || levels.length < 2) return;
+    const xs = chart.scales?.x;
+    if (!xs) return;
+    const { ctx } = chart;
+    const n = Math.max(...levels.map((l) => l.length));
+    const half = n > 1 ? Math.abs(xs.getPixelForValue(1) - xs.getPixelForValue(0)) / 2 : 20;
+    const rowH = 18;
+    let y = xs.bottom + 1;
+    ctx.save();
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (let L = 1; L < levels.length; L++) {
+      const level = levels[L]!;
+      const defs: number[] = [];
+      for (let i = 0; i < level.length; i++) if (level[i] != null && level[i] !== "") defs.push(i);
+      if (!defs.length) { y += rowH; continue; }
+      for (let g = 0; g < defs.length; g++) {
+        const a = defs[g]!, b = g + 1 < defs.length ? defs[g + 1]! - 1 : n - 1;
+        const left = xs.getPixelForValue(a) - half, right = xs.getPixelForValue(b) + half;
+        ctx.strokeStyle = "rgba(0,0,0,0.15)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(left, y, right - left, rowH);
+        ctx.fillStyle = "#555";
+        ctx.fillText(String(level[a]), (left + right) / 2, y + rowH / 2);
+      }
+      y += rowH;
+    }
+    ctx.restore();
+  },
+};
+
 // ---- Pseudo-3D (isometric extrusion), matching how Excel draws its "3-D" charts ----
 
 /** Multiply an #rrggbb colour by a factor (>1 lightens, <1 darkens); passes non-hex through. */

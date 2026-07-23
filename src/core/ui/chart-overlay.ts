@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, multiLevelAxisPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 import { registerDateAdapter } from "./date-adapter";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
@@ -46,6 +46,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(backgroundPlugin as unknown); // no-ops unless its plugin options carry a fill
     ChartJs.register(bar3DPlugin as unknown); // no-ops unless a dataset carries threeDBar
     ChartJs.register(pie3DPlugin as unknown); // no-ops unless a dataset carries threeDPie
+    ChartJs.register(multiLevelAxisPlugin as unknown); // no-ops unless its plugin options carry levels
     // Chart.js reads the date adapter from the module-level _adapters singleton, not off the ctor.
     registerDateAdapter((core as { _adapters?: { _date?: { override(a: unknown): void } } })._adapters); // enables the time scale for date axes
   });
@@ -179,6 +180,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   // transparent (scale/geometry carriers) and a plugin draws the extruded look.
   const threeDBar = model.threeD === true && model.kind === "column";
   const threeDPie = model.threeD === true && pieLike;
+  // Tiered category axis: draw the outer level(s) below the innermost labels (a plugin does it).
+  const multiLevel = !!model.categoryLevels && model.categoryLevels.length > 1 && !xDate && !pieLike && !isStock && !isSurface && model.kind !== "scatter" && model.kind !== "bubble" && model.kind !== "radar";
   if (threeDBar) datasets.forEach((d, i) => { d.threeDBar = palette(i, model.series[i]?.color); d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.datalabels = { display: false }; });
   if (threeDPie && datasets[0]) { const arr = Array.isArray(datasets[0].backgroundColor) ? (datasets[0].backgroundColor as string[]) : []; datasets[0].threeDPie = arr; datasets[0].backgroundColor = arr.map(() => "rgba(0,0,0,0)"); datasets[0].borderColor = "rgba(0,0,0,0)"; datasets[0].datalabels = { display: false }; }
   // Pie-of-pie / bar-of-pie: aggregate the last splitCount slices into "Other"; the plugin draws
@@ -233,8 +236,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      // Reserve a right strip for the of-pie secondary plot (the plugin draws into it).
-      ...(isOfPie ? { layout: { padding: { right: 130 } } } : {}),
+      // Reserve space for the of-pie secondary plot (right) and the tiered-axis rows (bottom).
+      ...((isOfPie || multiLevel) ? { layout: { padding: { ...(isOfPie ? { right: 130 } : {}), ...(multiLevel ? { bottom: (model.categoryLevels!.length - 1) * 20 } : {}) } } } : {}),
       indexAxis: model.kind === "bar" ? "y" : "x",
       spanGaps: model.blanksAs === "span",
       ...(model.kind === "doughnut" && model.holeSize != null ? { cutout: `${model.holeSize}%` } : {}),
@@ -257,6 +260,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
         datalabels: { display: false },
         // Background fills (drawn by the background plugin); absent -> plugin no-ops.
         ...(model.plotFill || model.areaFill ? { sheeteditBg: { plot: model.plotFill, area: model.areaFill } } : {}),
+        // Outer levels of a tiered category axis (drawn by the multi-level plugin).
+        ...(multiLevel ? { sheeteditMultiLevel: model.categoryLevels } : {}),
       },
       ...(scales ? { scales } : {}),
     },
