@@ -172,6 +172,46 @@ export function setXlsxRowHeight(sheet: Sheet, row: number, px: number): void {
   sheet.layoutDirty = true;
 }
 
+/** Find or create a <row r> element in ascending order. */
+function ensureRowEl(sheet: Sheet, row: number): Element | undefined {
+  const doc = sheet.doc, sd = sheet.sheetData;
+  if (!doc || !sd) return undefined;
+  for (const re of Array.from(sd.children)) if (re.localName === "row" && Number(re.getAttribute("r") || "0") === row) return re;
+  const rowEl = doc.createElementNS(doc.documentElement.namespaceURI || SS_MAIN, "row");
+  rowEl.setAttribute("r", String(row));
+  let next: Element | null = null;
+  for (const re of Array.from(sd.children)) if (re.localName === "row" && Number(re.getAttribute("r") || "0") > row) { next = re; break; }
+  sd.insertBefore(rowEl, next);
+  return rowEl;
+}
+
+/** Set/clear the hidden attribute on a row (used by filtering). */
+export function setXlsxRowHidden(sheet: Sheet, row: number, hidden: boolean): void {
+  const rowEl = ensureRowEl(sheet, row);
+  if (!rowEl) return;
+  if (hidden) rowEl.setAttribute("hidden", "1");
+  else rowEl.removeAttribute("hidden");
+  sheet.layoutDirty = true;
+}
+
+/** Set or remove the sheet-level <autoFilter ref>. */
+export function setXlsxAutoFilter(sheet: Sheet, ref: string | null): void {
+  const doc = sheet.doc;
+  if (!doc) return;
+  const ws = doc.documentElement;
+  let af = ws.getElementsByTagName("autoFilter")[0];
+  if (!ref) { if (af) af.parentNode?.removeChild(af); sheet.layoutDirty = true; return; }
+  if (!af) {
+    af = doc.createElementNS(ws.namespaceURI || SS_MAIN, "autoFilter");
+    // autoFilter must sit after sheetData (and mergeCells) per the schema; append near the end.
+    const sd = sheet.sheetData;
+    const merges = ws.getElementsByTagName("mergeCells")[0];
+    ws.insertBefore(af, (merges?.nextSibling ?? sd?.nextSibling) ?? null);
+  }
+  af.setAttribute("ref", ref);
+  sheet.layoutDirty = true;
+}
+
 // Add or remove a merged range (1-based, inclusive). The top-left cell shows through;
 // any cells the merge hides keep their data (so unmerging restores it). Updates the
 // worksheet's <mergeCells> element and the in-memory merge list.

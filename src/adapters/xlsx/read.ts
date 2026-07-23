@@ -3,6 +3,15 @@ import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, pars
 import { parseDxfs, readCondFormats } from "./condformat";
 import { readCharts } from "./chart-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
+
+/** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
+function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: number } | null {
+  const [a, b] = ref.replace(/\$/g, "").split(":");
+  const p1 = parseA1Ref(a ?? "");
+  const p2 = b ? parseA1Ref(b) : p1;
+  if (!p1 || !p2) return null;
+  return { r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
+}
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
 // ---------------------------------------------------------------------------
@@ -289,6 +298,13 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         }
         if (rh.size) sheet.rowHeights = rh;
         if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
+      }
+      // Autofilter range: <autoFilter ref="A1:D10"/>.
+      const afEl = doc.getElementsByTagName("autoFilter")[0];
+      const afRef = afEl?.getAttribute("ref");
+      if (afRef) {
+        const rng = parseRangeRef(afRef);
+        if (rng) sheet.autoFilter = rng;
       }
       // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
       // xSplit / ySplit are the counts of frozen leading columns / rows.

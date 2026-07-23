@@ -150,6 +150,13 @@ export interface Sheet {
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
+  /** Autofilter range (1-based inclusive; first row = header). Drives sort/filter UI. */
+  autoFilter?: { r1: number; c1: number; r2: number; c2: number };
+  /** Runtime: per-column (1-based) set of allowed display values; a column absent from the map
+      passes everything. Recomputed into filterHidden. */
+  filters?: Map<number, Set<string>>;
+  /** Runtime: rows hidden by the active filter (in addition to file-hidden rows). */
+  filterHidden?: Set<number>;
   // xlsx
   doc?: Document;
   sheetData?: Element;

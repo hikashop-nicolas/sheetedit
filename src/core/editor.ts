@@ -22,7 +22,7 @@ import { setupChartLayer } from "./ui/chart-overlay";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -118,6 +118,16 @@ export function injectStyles(): void {
     .sheetedit-table td.has-dv:hover .sheetedit-dvbtn, .sheetedit-table td.has-dv:focus-within .sheetedit-dvbtn, .sheetedit-table td.has-dv.sheetedit-sel .sheetedit-dvbtn { visibility:visible; }
     .sheetedit-table td.sheetedit-dv-invalid { box-shadow: inset 0 0 0 2px #e0533d; }
     .sheetedit-dvmenu { min-width:120px; max-height:240px; overflow-y:auto; }
+    .sheetedit-filterbtn { position:absolute; top:0; right:0; bottom:0; z-index:3; visibility:hidden; display:inline-flex; align-items:center; justify-content:center; width:17px; padding:0; border:0; border-left:1px solid #d4d4d8; background:#eef0f4; color:#555; cursor:pointer; }
+    .sheetedit-filterbtn:hover { background:#e3e6ec; color:#111; }
+    .sheetedit-table td.has-filter .sheetedit-filterbtn { visibility:visible; }
+    .sheetedit-table td.sheetedit-filter-on .sheetedit-filterbtn { color:var(--sheetedit-accent, #6e7bff); background:#dfe3ff; }
+    .sheetedit-filtermenu { min-width:190px; }
+    .sheetedit-pop-sep { height:1px; margin:4px 6px; background:var(--sheetedit-border, #3a3f47); }
+    .sheetedit-filter-list { max-height:220px; overflow-y:auto; padding:2px 0; }
+    .sheetedit-filter-opt { display:flex; align-items:center; gap:7px; padding:4px 11px; font-size:13px; cursor:pointer; }
+    .sheetedit-filter-opt:hover { background:var(--sheetedit-btn, #3a3f47); }
+    .sheetedit-filter-foot { display:flex; justify-content:flex-end; padding:6px 8px 4px; border-top:1px solid var(--sheetedit-border, #3a3f47); }
     /* Conditional-formatting data bar: a proportional bar behind the cell text. */
     .sheetedit-table td.has-cfbar { position:relative; }
     .sheetedit-cfbar { position:absolute; left:1px; top:2px; bottom:2px; z-index:0; border-radius:1px; opacity:.85; pointer-events:none; }
@@ -1518,11 +1528,12 @@ export function createSheetEditor(
   // Effective row height / column width: a hidden line collapses to zero; otherwise the
   // file's custom size, a wrap-grown height, or the default. Drive the size index and the DOM.
   const effRowH = (sheet: Sheet, r: number): number =>
-    sheet.hiddenRows?.has(r) ? 0 : Math.max(sheet.rowHeights?.get(r) ?? ROW_H, wrapH.get(r) ?? 0);
+    sheet.hiddenRows?.has(r) || sheet.filterHidden?.has(r) ? 0 : Math.max(sheet.rowHeights?.get(r) ?? ROW_H, wrapH.get(r) ?? 0);
   const effColW = (sheet: Sheet, c: number): number => (sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? COL_W));
+  const rowShown = (sheet: Sheet, r: number): boolean => !sheet.hiddenRows?.has(r) && !sheet.filterHidden?.has(r);
 
   const rebuildSizeIndexes = (sheet: Sheet) => {
-    heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? []), ...wrapH.keys()])].sort((a, b) => a - b);
+    heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? []), ...(sheet.filterHidden ?? []), ...wrapH.keys()])].sort((a, b) => a - b);
     heightPrefix = [0];
     for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (effRowH(sheet, r) - ROW_H));
     widthCols = [...new Set([...(sheet.colWidths?.keys() ?? []), ...(sheet.hiddenCols ?? [])])].sort((a, b) => a - b);
@@ -1587,6 +1598,10 @@ export function createSheetEditor(
   if (chartsOn) {
     const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
     toolbar.append(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
+  }
+  if (wb.kind === "xlsx") {
+    const FILTER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
+    toolbar.append(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
   }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
@@ -1707,6 +1722,22 @@ export function createSheetEditor(
         caret.addEventListener("mousedown", (e) => e.preventDefault());
         caret.addEventListener("click", (e) => { e.stopPropagation(); openDvMenu(td, r, c, dv); });
         td.appendChild(caret);
+      }
+      // Autofilter: a caret on each header-row cell that opens the sort/filter menu.
+      const af = sheet.autoFilter;
+      if (af && r === af.r1 && c >= af.c1 && c <= af.c2) {
+        td.classList.add("has-filter");
+        if (sheet.filters?.has(c)) td.classList.add("sheetedit-filter-on");
+        const fb = document.createElement("button");
+        fb.type = "button";
+        fb.className = "sheetedit-filterbtn";
+        fb.tabIndex = -1;
+        fb.title = t("filterToggle");
+        fb.setAttribute("aria-label", t("filterToggle"));
+        fb.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
+        fb.addEventListener("mousedown", (e) => e.preventDefault());
+        fb.addEventListener("click", (e) => { e.stopPropagation(); openFilterMenu(td, c); });
+        td.appendChild(fb);
       }
       // Conditional formatting: override fill/text/bold from the matched rule's dxf, or render a
       // colour-scale fill / data bar.
@@ -2044,12 +2075,12 @@ export function createSheetEditor(
     const fz = { fr, fc, headerH: fr > 0 ? head.offsetHeight || 0 : 0 };
 
     const cellCols = fc + (c2 - ec1 + 1) + 3; // rownum + frozen cols + spacer + window + spacer
-    for (let r = 1; r <= fr; r++) if (!sheet.hiddenRows?.has(r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
+    for (let r = 1; r <= fr; r++) if (rowShown(sheet, r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz)); // frozen rows
     const topSpacer = document.createElement("tr");
     topSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
     topSpacer.style.height = `${Math.max(0, yOfRow(er1) - yOfRow(fr + 1))}px`;
     tableEl.appendChild(topSpacer);
-    for (let r = er1; r <= r2; r++) if (!sheet.hiddenRows?.has(r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz));
+    for (let r = er1; r <= r2; r++) if (rowShown(sheet, r)) tableEl.appendChild(buildRow(sheet, r, ec1, c2, fz));
     const bottomSpacer = document.createElement("tr");
     bottomSpacer.appendChild(document.createElement("td")).colSpan = cellCols;
     bottomSpacer.style.height = `${Math.max(0, yOfRow(totalRows + 1) - yOfRow(r2 + 1))}px`;
@@ -2154,6 +2185,123 @@ export function createSheetEditor(
     const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
+
+  // ---- Sort & filter (autofilter) ----
+  const cellEditText = (sheet: Sheet, r: number, c: number): string => { const cell = getCell(sheet, r, c); return cell ? (cell.formula != null ? `=${cell.formula}` : cell.value) : ""; };
+  const cellText = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
+  // Distinct display values in a column's data rows (autofilter header row excluded).
+  const columnValues = (sheet: Sheet, col: number): string[] => {
+    const af = sheet.autoFilter; if (!af) return [];
+    const seen = new Set<string>();
+    for (let r = af.r1 + 1; r <= af.r2; r++) seen.add(cellText(sheet, r, col));
+    return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
+  // Recompute which data rows are hidden from the per-column value filters, write the row-hidden
+  // state, and re-render.
+  const recomputeFilter = (sheet: Sheet): void => {
+    const af = sheet.autoFilter; if (!af) return;
+    const hidden = new Set<number>();
+    for (let r = af.r1 + 1; r <= af.r2; r++) {
+      let show = true;
+      if (sheet.filters) for (const [col, allowed] of sheet.filters) if (!allowed.has(cellText(sheet, r, col))) { show = false; break; }
+      const wasHidden = sheet.filterHidden?.has(r) ?? false;
+      if (!show) hidden.add(r);
+      if (!show !== wasHidden && wb.kind === "xlsx") setXlsxRowHidden(sheet, r, !show);
+    }
+    sheet.filterHidden = hidden.size ? hidden : undefined;
+    mark();
+    renderGrid();
+  };
+  const cmpKey = (a: string, b: string): number => {
+    const na = Number(a), nb = Number(b), aNum = a !== "" && !isNaN(na), bNum = b !== "" && !isNaN(nb);
+    if (a === "" && b !== "") return 1; // blanks last
+    if (b === "" && a !== "") return -1;
+    if (aNum && bNum) return na - nb;
+    return a.localeCompare(b, undefined, { numeric: true });
+  };
+  // Sort the autofilter data rows by a column (values move; per-cell styles stay in place, and a
+  // formula in the sorted range moves as text without reference adjustment).
+  const sortByColumn = (sheet: Sheet, col: number, asc: boolean): void => {
+    const af = sheet.autoFilter; if (!af) return;
+    const r0 = af.r1 + 1;
+    if (af.r2 <= r0) return;
+    const cols: number[] = []; for (let c = af.c1; c <= af.c2; c++) cols.push(c);
+    const order: { key: string; texts: Map<number, string> }[] = [];
+    for (let r = r0; r <= af.r2; r++) { const texts = new Map<number, string>(); for (const c of cols) texts.set(c, cellEditText(sheet, r, c)); order.push({ key: cellText(sheet, r, col), texts }); }
+    order.sort((a, b) => cmpKey(a.key, b.key) * (asc ? 1 : -1));
+    const positions: { r: number; c: number }[] = [];
+    for (let r = r0; r <= af.r2; r++) for (const c of cols) positions.push({ r, c });
+    recordCells(positions, () => {
+      order.forEach((row, i) => { const tr = r0 + i; for (const c of cols) setCellInput(sheet, tr, c, row.texts.get(c) ?? ""); });
+    });
+    recalc(wb);
+    sheet.filters = undefined; sheet.filterHidden = undefined; // sort invalidates the value filter
+    mark();
+    renderGrid();
+  };
+
+  function openFilterMenu(td: HTMLElement, col: number): void {
+    const sheet = wb.sheets[active]!;
+    const menu = document.createElement("div");
+    menu.className = "sheetedit-pop sheetedit-filtermenu";
+    const btn = (label: string, fn: () => void): void => { const b = document.createElement("button"); b.type = "button"; b.className = "sheetedit-pop-item"; b.textContent = label; b.addEventListener("click", () => { menu.remove(); fn(); }); menu.appendChild(b); };
+    btn(t("filterSortAsc"), () => sortByColumn(sheet, col, true));
+    btn(t("filterSortDesc"), () => sortByColumn(sheet, col, false));
+    const sep = document.createElement("div"); sep.className = "sheetedit-pop-sep"; menu.appendChild(sep);
+    const values = columnValues(sheet, col);
+    const active0 = sheet.filters?.get(col);
+    const list = document.createElement("div"); list.className = "sheetedit-filter-list";
+    const boxes: HTMLInputElement[] = [];
+    const allWrap = document.createElement("label"); allWrap.className = "sheetedit-filter-opt";
+    const allCb = document.createElement("input"); allCb.type = "checkbox"; allCb.checked = !active0;
+    allCb.addEventListener("change", () => boxes.forEach((b) => { b.checked = allCb.checked; }));
+    allWrap.append(allCb, Object.assign(document.createElement("span"), { textContent: t("filterSelectAll") }));
+    list.appendChild(allWrap);
+    for (const v of values) {
+      const l = document.createElement("label"); l.className = "sheetedit-filter-opt";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !active0 || active0.has(v);
+      boxes.push(cb);
+      l.append(cb, Object.assign(document.createElement("span"), { textContent: v === "" ? t("filterBlanks") : v }));
+      list.appendChild(l);
+    }
+    menu.appendChild(list);
+    const foot = document.createElement("div"); foot.className = "sheetedit-filter-foot";
+    const ok = document.createElement("button"); ok.type = "button"; ok.className = "sheetedit-chart-btn primary"; ok.textContent = t("chartApply");
+    ok.addEventListener("click", () => {
+      menu.remove();
+      const allowed = new Set<string>(); values.forEach((v, i) => { if (boxes[i]!.checked) allowed.add(v); });
+      sheet.filters ??= new Map();
+      if (allowed.size === values.length) sheet.filters.delete(col); else sheet.filters.set(col, allowed);
+      if (!sheet.filters.size) sheet.filters = undefined;
+      recomputeFilter(sheet);
+    });
+    foot.appendChild(ok);
+    menu.appendChild(foot);
+    wrap.appendChild(menu);
+    const rect = td.getBoundingClientRect();
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 6)}px`;
+    menu.style.top = `${rect.bottom + 2}px`;
+    const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
+
+  // Toggle the autofilter over the current selection (or the used range), or clear it.
+  const toggleAutoFilter = (): void => {
+    const sheet = wb.sheets[active]!;
+    if (wb.kind !== "xlsx") return;
+    if (sheet.autoFilter) {
+      if (wb.kind === "xlsx") setXlsxAutoFilter(sheet, null);
+      if (sheet.filterHidden) for (const r of sheet.filterHidden) setXlsxRowHidden(sheet, r, false);
+      sheet.autoFilter = undefined; sheet.filters = undefined; sheet.filterHidden = undefined;
+    } else {
+      const s = getSelRect();
+      const range = (s.r2 > s.r1 || s.c2 > s.c1) ? s : { r1: 1, c1: 1, r2: Math.max(1, sheet.maxRow), c2: Math.max(1, sheet.maxCol) };
+      sheet.autoFilter = range;
+      setXlsxAutoFilter(sheet, `${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`);
+    }
+    mark();
+    renderGrid();
+  };
 
   // Comment popover: shown while hovering a cell that carries notes / threaded comments.
   let commentPop: HTMLElement | null = null;
