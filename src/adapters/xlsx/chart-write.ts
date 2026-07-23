@@ -173,7 +173,10 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   } else {
     const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels, catLevels)).join("");
     const group = model.percent ? "percentStacked" : model.stacked ? "stacked" : model.kind === "line" || model.kind === "area" ? "standard" : "clustered";
-    if (model.kind === "pie" || model.kind === "doughnut") {
+    if (model.kind === "pie" && model.ofPie) {
+      const o = model.ofPie;
+      body = `<c:ofPieChart><c:ofPieType val="${o.type}"/><c:varyColors val="1"/>${sers}${dLbls}<c:gapWidth val="${o.gapWidth ?? 100}"/><c:splitType val="pos"/><c:splitPos val="${o.splitCount ?? 2}"/><c:secondPieSize val="${o.secondSize ?? 75}"/><c:serLines/></c:ofPieChart>`;
+    } else if (model.kind === "pie" || model.kind === "doughnut") {
       const rot = model.rotation != null ? `<c:firstSliceAng val="${((model.rotation % 360) + 360) % 360}"/>` : "";
       body = `<c:${model.kind}Chart><c:varyColors val="1"/>${sers}${dLbls}${rot}${model.kind === "doughnut" ? `<c:holeSize val="${model.holeSize ?? 50}"/>` : ""}</c:${model.kind}Chart>`;
     } else if (model.kind === "radar") {

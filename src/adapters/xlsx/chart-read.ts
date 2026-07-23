@@ -127,6 +127,7 @@ const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
   { local: "lineChart", kind: "line" }, { local: "line3DChart", kind: "line" },
   { local: "areaChart", kind: "area" }, { local: "area3DChart", kind: "area" },
   { local: "pieChart", kind: "pie" }, { local: "pie3DChart", kind: "pie" },
+  { local: "ofPieChart", kind: "pie" },
   { local: "doughnutChart", kind: "doughnut" },
   { local: "scatterChart", kind: "scatter" }, { local: "bubbleChart", kind: "bubble" },
   { local: "radarChart", kind: "radar" },
@@ -251,6 +252,13 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     overlap: numAttr(barEl, "overlap"),
     rotation: numAttr(pieEl, "firstSliceAng"),
     threeD: (kind !== "surface" && /3DChart$/.test(el0.localName)) || undefined,
+    ofPie: ((): ChartModel["ofPie"] => {
+      const op = typeEls.find((e) => e.localName === "ofPieChart");
+      if (!op) return undefined;
+      const type = attr(kid(op, "ofPieType"), "val") === "bar" ? "bar" : "pie";
+      const splitType = attr(kid(op, "splitType"), "val");
+      return { type, splitCount: splitType === "pos" ? numAttr(op, "splitPos") : undefined, secondSize: numAttr(op, "secondPieSize"), gapWidth: numAttr(op, "gapWidth") };
+    })(),
     title: titleText(chart),
     legend: { show: !!legendEl, pos: LEGEND_POS[attr(kid(legendEl, "legendPos"), "val") ?? "r"] ?? "right" },
     categories,

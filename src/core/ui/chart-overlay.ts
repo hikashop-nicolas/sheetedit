@@ -1,7 +1,7 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { errorBarsPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { errorBarsPlugin, ofPiePlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -38,6 +38,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(errorBarsPlugin as unknown); // no-ops unless a dataset carries error bars
     ChartJs.register(stockPlugin as unknown); // no-ops unless datasets carry stock roles
     ChartJs.register(surfacePlugin as unknown); // no-ops unless datasets carry surface rows
+    ChartJs.register(ofPiePlugin as unknown); // no-ops unless a dataset carries an ofPie config
   });
   await loading;
   return ChartJs!;
@@ -161,6 +162,24 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   // Surface: no 2D equivalent, so render a heatmap (series = rows, categories = columns, value = colour).
   const isSurface = model.kind === "surface";
   if (isSurface) datasets.forEach((d, i) => { d.backgroundColor = "rgba(0,0,0,0)"; d.borderColor = "rgba(0,0,0,0)"; d.surfaceRow = i; d.surfaceName = nameOf(wb, model.series[i].name); d.datalabels = { display: false }; });
+  // Pie-of-pie / bar-of-pie: aggregate the last splitCount slices into "Other"; the plugin draws
+  // the breakout as a small secondary pie or bar.
+  const isOfPie = pieLike && !!model.ofPie && model.series.length >= 1;
+  let ofPieLabels: string[] | undefined;
+  if (isOfPie) {
+    const vals = numbers(wb, model.series[0].values).map((v) => v ?? 0);
+    const k = Math.min(Math.max(1, model.ofPie!.splitCount ?? 2), Math.max(1, vals.length - 1));
+    const primN = vals.length - k;
+    const other = vals.slice(primN).reduce((t, v) => t + v, 0);
+    const secondary = vals.slice(primN).map((v, j) => ({ label: String(cats[primN + j] ?? ""), value: v, color: CHART_PALETTE[(primN + 1 + j) % CHART_PALETTE.length] }));
+    const ds = datasets[0];
+    ds.data = [...vals.slice(0, primN), other];
+    ds.backgroundColor = [...Array.from({ length: primN }, (_, j) => CHART_PALETTE[j % CHART_PALETTE.length]), "#9c9c9c"];
+    ds.borderColor = "#fff";
+    ds.ofPie = { type: model.ofPie!.type, secondary };
+    datasets.length = 1;
+    ofPieLabels = [...cats.slice(0, primN).map(String), "Other"];
+  }
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
   const yFmt = model.axes?.y?.numFmt;
   const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
@@ -177,11 +196,13 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   if (isSurface && scales) scales.y = { display: false }; // the heatmap draws its own rows
   return {
     type,
-    data: { labels: cats.length && !xDate ? cats : undefined, datasets },
+    data: { labels: isOfPie ? ofPieLabels : (cats.length && !xDate ? cats : undefined), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      // Reserve a right strip for the of-pie secondary plot (the plugin draws into it).
+      ...(isOfPie ? { layout: { padding: { right: 130 } } } : {}),
       indexAxis: model.kind === "bar" ? "y" : "x",
       spanGaps: model.blanksAs === "span",
       ...(model.kind === "doughnut" && model.holeSize != null ? { cutout: `${model.holeSize}%` } : {}),

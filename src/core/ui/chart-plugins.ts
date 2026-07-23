@@ -327,3 +327,53 @@ export const surfacePlugin = {
     ctx.restore();
   },
 };
+
+interface OfPieSec { label: string; value: number; color: string }
+interface Arc { x: number; y: number; startAngle: number; endAngle: number; outerRadius: number }
+interface OfPieChart {
+  ctx: CanvasRenderingContext2D; width: number;
+  chartArea: { left: number; right: number; top: number; bottom: number };
+  data: { datasets: { ofPie?: { type: "pie" | "bar"; secondary: OfPieSec[] } }[] };
+  getDatasetMeta: (i: number) => { data: Arc[] };
+}
+
+/** Draws the secondary plot of a pie-of-pie / bar-of-pie: the "Other" slice's breakdown as a small
+    pie or stacked bar in the right strip (reserved via a static layout padding on the config), with
+    a connector to the Other slice. */
+export const ofPiePlugin = {
+  id: "sheeteditOfPie",
+  afterDatasetsDraw(chart: OfPieChart): void {
+    const ds = chart.data.datasets[0];
+    if (!ds?.ofPie) return;
+    const arcs = chart.getDatasetMeta(0).data;
+    if (!arcs.length) return;
+    const other = arcs[arcs.length - 1];
+    const { ctx, chartArea } = chart;
+    const stripL = chartArea.right + 10, stripR = chart.width - 10;
+    const cx = (stripL + stripR) / 2, cy = (chartArea.top + chartArea.bottom) / 2;
+    const R = Math.max(20, Math.min((stripR - stripL) / 2, (chartArea.bottom - chartArea.top) / 2) * 0.8);
+    const sec = ds.ofPie.secondary;
+    const total = sec.reduce((t, s) => t + s.value, 0) || 1;
+    ctx.save();
+    // connector from the Other slice's outer edge to the secondary plot
+    const oa = (other.startAngle + other.endAngle) / 2;
+    ctx.strokeStyle = "#bbb"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(other.x + Math.cos(oa) * other.outerRadius, other.y + Math.sin(oa) * other.outerRadius); ctx.lineTo(cx - R, cy); ctx.stroke();
+    ctx.font = "10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (ds.ofPie.type === "bar") {
+      const bw = Math.min(44, (stripR - stripL) * 0.55), bh = R * 2;
+      let yy = cy - bh / 2;
+      for (const s of sec) { const h = bh * (s.value / total); ctx.fillStyle = s.color; ctx.fillRect(cx - bw / 2, yy, bw, h); if (h > 12) { ctx.fillStyle = "#fff"; ctx.fillText(s.label, cx, yy + h / 2); } yy += h; }
+    } else {
+      let a0 = -Math.PI / 2;
+      for (const s of sec) {
+        const a1 = a0 + Math.PI * 2 * (s.value / total);
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a0, a1); ctx.closePath();
+        ctx.fillStyle = s.color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
+        if (a1 - a0 > 0.35) { ctx.fillStyle = "#fff"; ctx.fillText(s.label, cx + Math.cos((a0 + a1) / 2) * R * 0.6, cy + Math.sin((a0 + a1) / 2) * R * 0.6); }
+        a0 = a1;
+      }
+    }
+    ctx.restore();
+  },
+};

@@ -226,6 +226,19 @@ describe("xlsx chart writer", () => {
     expect(re.threeD).toBe(true);
   });
 
+  it("pie-of-pie round-trips as an ofPieChart with its split settings", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
+    const m = buildChart("Sheet1", "pie", rect, { firstRowHeader: true, firstColLabels: true }, "of", defaultAnchor(rect));
+    m.ofPie = { type: "bar", splitCount: 3, secondSize: 70, gapWidth: 120 };
+    (wb.sheets[0].charts ??= []).push(m);
+    const out = writeWorkbook(wb);
+    expect(new TextDecoder().decode(unzipSync(out)["xl/charts/chart1.xml"])).toContain("c:ofPieChart");
+    const re = readWorkbook(out).sheets[0].charts![0];
+    expect(re.kind).toBe("pie");
+    expect(re.ofPie).toEqual({ type: "bar", splitCount: 3, secondSize: 70, gapWidth: 120 });
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
