@@ -23,7 +23,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1613,6 +1613,8 @@ export function createSheetEditor(
     toolbar.append(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
     const DV_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h4M11 9l1 1 1.5-1.5"/></svg>`;
     toolbar.append(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
+    const NOTE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`;
+    toolbar.append(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
   }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
@@ -2370,6 +2372,16 @@ export function createSheetEditor(
       const range = String(v.range).trim();
       if (!values.length && !range) setXlsxDataValidation(sheet, ranges, null);
       else setXlsxDataValidation(sheet, ranges, { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank });
+      mark(); renderGrid();
+    });
+  };
+
+  const openNoteDialog = (): void => {
+    const s = getSelRect(); const r = s.r1, c = s.c1; const sheet = wb.sheets[active]!;
+    const cur = getCell(sheet, r, c)?.comments?.map((cm) => cm.text).join("\n") ?? "";
+    formDialog(t("noteEdit"), [{ key: "text", label: t("noteText"), type: "text", value: cur }], (v) => {
+      const text = String(v.text).trim();
+      setXlsxComment(wb, sheet, r, c, text || null);
       mark(); renderGrid();
     });
   };

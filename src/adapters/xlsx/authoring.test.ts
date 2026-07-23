@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
-import { setXlsxDataValidation, setXlsxHyperlink } from "./write";
+import { setXlsxComment, setXlsxDataValidation, setXlsxHyperlink, writeXlsx } from "./write";
 import { serializeXml } from "../../core/model";
 
 function base(): ReturnType<typeof readWorkbook> {
@@ -42,5 +42,21 @@ describe("authoring writers", () => {
     setXlsxHyperlink(wb, sheet, 1, 1, null);
     xml = new TextDecoder().decode(serializeXml(sheet.doc!));
     expect(xml).not.toContain('ref="A1"');
+  });
+
+  it("authors a comment that round-trips (parts + rel + content type)", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    setXlsxComment(wb, sheet, 2, 3, "Please review", "Ada");
+    writeXlsx(wb); // serialize sheet.doc (legacyDrawing) into wb.files
+    const re = readWorkbook(zipSync(wb.files));
+    const cell = re.sheets[0].cells.get("2:3");
+    expect(cell?.comments?.[0]).toEqual({ author: "Ada", text: "Please review" });
+    // parts + registration exist
+    expect(Object.keys(wb.files).some((f) => /comments\d+\.xml$/.test(f))).toBe(true);
+    expect(Object.keys(wb.files).some((f) => /vmlDrawing\d+\.vml$/.test(f))).toBe(true);
+    expect(new TextDecoder().decode(wb.files["[Content_Types].xml"])).toContain("comments+xml");
+    const srels = new TextDecoder().decode(wb.files["xl/worksheets/_rels/sheet1.xml.rels"]);
+    expect(srels).toMatch(/relationships\/comments/);
+    expect(srels).toMatch(/vmlDrawing/);
   });
 });

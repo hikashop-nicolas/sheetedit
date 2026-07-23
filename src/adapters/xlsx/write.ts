@@ -297,6 +297,115 @@ function addExternalRel(wb: Workbook, sheet: Sheet, target: string): string {
   return id;
 }
 
+const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+/** Add a rel to a .rels file (creating it), returning the id; reuses an existing rel to the same
+    target+type. */
+function addRel(wb: Workbook, relsPath: string, type: string, target: string): string {
+  let doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
+  if (!doc) doc = parseXmlOpt(enc(`<Relationships xmlns="${REL_NS}"></Relationships>`))!;
+  for (const r of Array.from(doc.getElementsByTagName("Relationship"))) if (r.getAttribute("Type") === type && r.getAttribute("Target") === target) return r.getAttribute("Id")!;
+  const ids = new Set(Array.from(doc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
+  let n = 1; while (ids.has(`rId${n}`)) n++;
+  const id = `rId${n}`;
+  const rel = doc.createElementNS(REL_NS, "Relationship");
+  rel.setAttribute("Id", id); rel.setAttribute("Type", type); rel.setAttribute("Target", target);
+  doc.documentElement.appendChild(rel);
+  wb.files[relsPath] = serializeXml(doc);
+  return id;
+}
+
+const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
+function addContentType(wb: Workbook, opts: { override?: [string, string]; default?: [string, string] }): void {
+  const doc = parseXmlOpt(wb.files["[Content_Types].xml"]);
+  if (!doc || doc.documentElement.localName !== "Types") return;
+  if (opts.override) {
+    const [part, ct] = opts.override;
+    if (!Array.from(doc.getElementsByTagName("Override")).some((o) => o.getAttribute("PartName") === part)) {
+      const ov = doc.createElementNS(CT_NS, "Override"); ov.setAttribute("PartName", part); ov.setAttribute("ContentType", ct); doc.documentElement.appendChild(ov);
+    }
+  }
+  if (opts.default) {
+    const [ext, ct] = opts.default;
+    if (!Array.from(doc.getElementsByTagName("Default")).some((d) => d.getAttribute("Extension") === ext)) {
+      const de = doc.createElementNS(CT_NS, "Default"); de.setAttribute("Extension", ext); de.setAttribute("ContentType", ct); doc.documentElement.insertBefore(de, doc.documentElement.firstChild);
+    }
+  }
+  wb.files["[Content_Types].xml"] = serializeXml(doc);
+}
+
+/** Add, edit or remove a legacy comment (note) on a cell. Writes the sheet's comments part (and a
+    minimal VML drawing + legacyDrawing so Excel shows the marker); updates cell.comments so the
+    hover popover renders it. */
+export function setXlsxComment(wb: Workbook, sheet: Sheet, r: number, c: number, text: string | null, author = "Author"): void {
+  const cell = ensureCell(sheet, r, c);
+  const ref = `${colToLetters(c)}${r}`;
+  const sheetRels = (sheet.path ?? "").replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  // Find (or create) this sheet's comments part.
+  let commentsPath: string | undefined;
+  const relsDoc = wb.files[sheetRels] ? parseXmlOpt(wb.files[sheetRels]) : undefined;
+  if (relsDoc) for (const rel of Array.from(relsDoc.getElementsByTagName("Relationship"))) if (/\/comments$/i.test(rel.getAttribute("Type") ?? "")) {
+    const parts: string[] = []; for (const seg of `xl/worksheets/${rel.getAttribute("Target")}`.split("/")) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); }
+    commentsPath = parts.join("/");
+  }
+  if (!commentsPath) {
+    let n = 1; while (wb.files[`xl/comments${n}.xml`]) n++;
+    commentsPath = `xl/comments${n}.xml`;
+    wb.files[commentsPath] = enc(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<comments xmlns="${SS_MAIN}"><authors></authors><commentList></commentList></comments>`);
+    addRel(wb, sheetRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments", `../comments${n}.xml`);
+    addContentType(wb, { override: [`/${commentsPath}`, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"] });
+  }
+  const cdoc = parseXmlOpt(wb.files[commentsPath])!;
+  const cns = cdoc.documentElement.namespaceURI || SS_MAIN;
+  // Author id.
+  let authors = cdoc.getElementsByTagName("authors")[0]!;
+  let authorId = Array.from(authors.getElementsByTagName("author")).findIndex((a) => a.textContent === author);
+  if (authorId < 0 && text != null) { const a = cdoc.createElementNS(cns, "author"); a.textContent = author; authors.appendChild(a); authorId = authors.getElementsByTagName("author").length - 1; }
+  const list = cdoc.getElementsByTagName("commentList")[0]!;
+  for (const cm of Array.from(list.getElementsByTagName("comment"))) if (cm.getAttribute("ref") === ref) cm.parentNode?.removeChild(cm);
+  if (text != null) {
+    const cm = cdoc.createElementNS(cns, "comment"); cm.setAttribute("ref", ref); cm.setAttribute("authorId", String(Math.max(0, authorId)));
+    const t = cdoc.createElementNS(cns, "text"); const rr = cdoc.createElementNS(cns, "r"); const tt = cdoc.createElementNS(cns, "t"); tt.textContent = text;
+    rr.appendChild(tt); t.appendChild(rr); cm.appendChild(t); list.appendChild(cm);
+    cell.comments = [{ author, text }];
+  } else delete cell.comments;
+  wb.files[commentsPath] = serializeXml(cdoc);
+  // A minimal VML drawing so Excel renders the note marker (append one shape per comment).
+  ensureVmlComment(wb, sheet, sheetRels, r, c, text != null);
+  sheet.layoutDirty = true;
+}
+
+function ensureVmlComment(wb: Workbook, sheet: Sheet, sheetRels: string, r: number, c: number, present: boolean): void {
+  if (!present) return; // removal leaves the (harmless) shape; Excel hides notes with no comment
+  const doc = sheet.doc, ws = doc?.documentElement;
+  let vmlPath: string | undefined;
+  const relsDoc = wb.files[sheetRels] ? parseXmlOpt(wb.files[sheetRels]) : undefined;
+  if (relsDoc) for (const rel of Array.from(relsDoc.getElementsByTagName("Relationship"))) if (/vmlDrawing/i.test(rel.getAttribute("Type") ?? "")) {
+    const parts: string[] = []; for (const seg of `xl/worksheets/${rel.getAttribute("Target")}`.split("/")) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); }
+    vmlPath = parts.join("/");
+  }
+  const header = `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="1"/></o:shapelayout><v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>`;
+  const shape = (row: number, col: number, id: number): string => `<v:shape id="_x0000_s${1024 + id}" type="#_x0000_t202" style='position:absolute;margin-left:60pt;margin-top:1pt;width:108pt;height:60pt;z-index:${id};visibility:hidden' fillcolor="#ffffe1" o:insetmode="auto"><v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/><v:path o:connecttype="none"/><v:textbox style='mso-direction-alt:auto'><div style='text-align:left'></div></v:textbox><x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>${col + 1}, 15, ${row}, 2, ${col + 3}, 15, ${row + 4}, 4</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>${row}</x:Row><x:Column>${col}</x:Column></x:ClientData></v:shape>`;
+  if (!vmlPath) {
+    let n = 1; while (wb.files[`xl/drawings/vmlDrawing${n}.vml`]) n++;
+    vmlPath = `xl/drawings/vmlDrawing${n}.vml`;
+    wb.files[vmlPath] = enc(`${header}${shape(r - 1, c - 1, 1)}</xml>`);
+    const rid = addRel(wb, sheetRels, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing", `../drawings/vmlDrawing${n}.vml`);
+    addContentType(wb, { default: ["vml", "application/vnd.openxmlformats-officedocument.vmlDrawing"] });
+    if (doc && ws && !ws.getElementsByTagName("legacyDrawing").length) {
+      if (!ws.getAttribute("xmlns:r")) ws.setAttribute("xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+      const ld = doc.createElementNS(ws.namespaceURI || SS_MAIN, "legacyDrawing"); ld.setAttribute("r:id", rid); insertWsChild(ws, ld);
+    }
+  } else {
+    // Append another shape to the existing VML if this cell has none yet.
+    const cur = new TextDecoder().decode(wb.files[vmlPath]!);
+    if (!cur.includes(`<x:Row>${r - 1}</x:Row><x:Column>${c - 1}</x:Column>`)) {
+      const count = (cur.match(/<v:shape /g) || []).length;
+      wb.files[vmlPath] = enc(cur.replace(/<\/xml>\s*$/, `${shape(r - 1, c - 1, count + 1)}</xml>`));
+    }
+  }
+}
+
 // Add or remove a merged range (1-based, inclusive). The top-left cell shows through;
 // any cells the merge hides keep their data (so unmerging restores it). Updates the
 // worksheet's <mergeCells> element and the in-memory merge list.
