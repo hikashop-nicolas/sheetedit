@@ -19,6 +19,7 @@ import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { setupChartLayer } from "./ui/chart-overlay";
+import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
@@ -1583,6 +1584,12 @@ export function createSheetEditor(
         onEdit: () => { mark(); },
       })
     : { refresh: () => undefined, update: () => undefined, select: () => undefined, boxRect: () => null, teardown: () => undefined };
+  const imageLayer = setupImageLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+  });
   const chartUi = chartsOn
     ? setupChartUi({
         wrap,
@@ -2419,6 +2426,7 @@ export function createSheetEditor(
     gridScroll.scrollTop = keepTop; // now the spacers exist, so the browser keeps it
     gridScroll.scrollLeft = keepLeft;
     chartLayer.refresh();
+    imageLayer.refresh();
   };
 
   const switchSheet = (i: number): void => {
@@ -2596,6 +2604,7 @@ export function createSheetEditor(
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
       chartLayer.teardown();
+      imageLayer.teardown();
       chartUi.teardown();
       closeLineMenu();
       borderPop?.remove();

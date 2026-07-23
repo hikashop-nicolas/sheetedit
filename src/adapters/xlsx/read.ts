@@ -2,6 +2,7 @@ import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../..
 import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt, shiftFormula } from "../../core/model";
 import { parseDxfs, readCondFormats } from "./condformat";
 import { readCharts } from "./chart-read";
+import { readImages } from "./image-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
@@ -336,6 +337,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readCondFormats(sheet, doc, dxfs, theme);
       readComments(sheet, files, path);
       readCharts(sheet, files, path, themeMap);
+      readImages(sheet, files, path);
     }
     wb.sheets.push(sheet);
   }

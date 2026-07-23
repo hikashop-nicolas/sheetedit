@@ -13,14 +13,14 @@ const textOf = (el: Element | undefined): string => el?.textContent ?? "";
 const attr = (el: Element | undefined, name: string): string | null => el?.getAttribute(name) ?? null;
 
 /** Resolve a package part path relative to a base directory, collapsing "../" and "./". */
-function resolvePart(base: string, target: string): string {
+export function resolvePart(base: string, target: string): string {
   if (target.startsWith("/")) return target.slice(1);
   const parts: string[] = [];
   for (const seg of `${base}/${target}`.split("/")) { if (seg === "..") parts.pop(); else if (seg && seg !== ".") parts.push(seg); }
   return parts.join("/");
 }
 
-function relMap(files: Record<string, Uint8Array>, relsPath: string): { byId: Map<string, string>; byType: { id: string; type: string; target: string }[] } {
+export function relMap(files: Record<string, Uint8Array>, relsPath: string): { byId: Map<string, string>; byType: { id: string; type: string; target: string }[] } {
   const byId = new Map<string, string>();
   const byType: { id: string; type: string; target: string }[] = [];
   const doc = files[relsPath] ? parseXmlOpt(files[relsPath]) : undefined;
@@ -328,7 +328,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   return model;
 }
 
-function anchorOf(anchorEl: Element): ChartAnchor | null {
+export function anchorOf(anchorEl: Element): ChartAnchor | null {
   const from = kid(anchorEl, "from");
   if (from) {
     const to = kid(anchorEl, "to");

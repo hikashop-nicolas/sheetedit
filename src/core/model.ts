@@ -147,6 +147,8 @@ export interface Sheet {
   condFormats?: CondFormat[];
   /** Charts anchored on this sheet (rendered as an overlay; created/edited ones are written back). */
   charts?: import("./chart-model").ChartModel[];
+  /** Embedded pictures anchored on this sheet (rendered on an overlay; preserved on save). */
+  images?: { anchor: import("./chart-model").ChartAnchor; dataUri: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
