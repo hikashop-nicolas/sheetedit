@@ -22,6 +22,10 @@ export interface ChartSeries {
   xValues?: ChartRef;
   sizes?: ChartRef;
   color?: string;
+  /** Combo charts: this series renders as a different kind from the chart's base kind. */
+  type?: ChartKind;
+  /** Plot this series against a secondary (right-hand) value axis. */
+  secondaryAxis?: boolean;
 }
 
 /** A two-cell anchor in 1-based grid coordinates; offsets are pixels within the from/to cell. */
@@ -44,6 +48,8 @@ export interface ChartModel {
   stacked?: boolean;
   title?: string;
   legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right" };
+  /** Show the value on each data point. */
+  dataLabels?: boolean;
   /** Shared category (x) labels; not used for scatter/bubble. */
   categories?: ChartRef;
   series: ChartSeries[];

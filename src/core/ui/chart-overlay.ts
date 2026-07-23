@@ -21,13 +21,16 @@ export interface ChartLayerDeps {
   onEdit?: (chart: ChartModel) => void;
 }
 
-export type ChartCtor = new (ctx: CanvasRenderingContext2D, cfg: unknown) => { update(): void; destroy(): void; data: unknown; options: unknown };
+export type ChartCtor = (new (ctx: CanvasRenderingContext2D, cfg: unknown) => { update(): void; destroy(): void; data: unknown; options: unknown }) & { register(p: unknown): void };
 let ChartJs: ChartCtor | null = null;
 let loading: Promise<void> | null = null;
-/** Lazy-load Chart.js; resolves to the Chart constructor (shared by the overlay and previews). */
+/** Lazy-load Chart.js and the data-labels plugin; resolves to the Chart constructor. */
 export async function loadChartJs(): Promise<ChartCtor> {
   if (ChartJs) return ChartJs;
-  loading ??= import("chart.js/auto").then((m) => { ChartJs = (m.default ?? (m as { Chart: ChartCtor }).Chart) as ChartCtor; });
+  loading ??= Promise.all([import("chart.js/auto"), import("chartjs-plugin-datalabels")]).then(([m, dl]) => {
+    ChartJs = (m.default ?? (m as { Chart: ChartCtor }).Chart) as ChartCtor;
+    ChartJs.register((dl.default ?? dl) as unknown); // registered globally; per-chart display is opt-in
+  });
   await loading;
   return ChartJs!;
 }
@@ -41,11 +44,13 @@ const nameOf = seriesName;
 export function chartConfig(model: ChartModel, wb: Workbook): unknown {
   return toConfig(model, wb);
 }
+const mapKind = (k: ChartModel["kind"]): string => (k === "column" || k === "bar" ? "bar" : k === "area" ? "line" : k);
 function toConfig(model: ChartModel, wb: Workbook): unknown {
-  const type = model.kind === "column" || model.kind === "bar" ? "bar" : model.kind === "area" ? "line" : model.kind;
+  const type = mapKind(model.kind);
   const cats = labels(wb, model.categories);
   const palette = (i: number, c?: string): string => c ?? CHART_PALETTE[i % CHART_PALETTE.length];
   const pieLike = model.kind === "pie" || model.kind === "doughnut";
+  const hasSecondary = model.series.some((s) => s.secondaryAxis);
   const datasets = model.series.map((s, i) => {
     const base: Record<string, unknown> = { label: nameOf(wb, s.name), borderColor: palette(i, s.color), backgroundColor: palette(i, s.color) };
     if (model.kind === "scatter" || model.kind === "bubble") {
@@ -53,7 +58,10 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       base.data = ys.map((y, j) => ({ x: xs[j] ?? j, y: y ?? 0, r: model.kind === "bubble" ? (rs[j] ?? 5) : undefined }));
     } else {
       base.data = numbers(wb, s.values).map((v) => v ?? 0);
-      if (model.kind === "area") base.fill = true;
+      const effKind = s.type ?? model.kind;
+      if (effKind === "area") base.fill = true;
+      if (s.type && mapKind(s.type) !== type) base.type = mapKind(s.type); // combo: per-series type override
+      if (s.secondaryAxis) base.yAxisID = "y1";
       // Pie / doughnut: colour each slice from the palette, not one colour for the whole series.
       if (pieLike) { base.backgroundColor = (base.data as number[]).map((_, j) => CHART_PALETTE[j % CHART_PALETTE.length]); base.borderColor = "#fff"; }
     }
@@ -63,9 +71,10 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const axisTitle = (t?: string): object => (t ? { title: { display: true, text: t } } : {});
   const xt = axisTitle(model.axes?.x?.title);
   const yt = axisTitle(model.axes?.y?.title);
-  const scales = model.kind === "bar" ? { x: { ...stacked, beginAtZero: true, ...yt }, y: { ...stacked, ...xt } }
+  const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stacked, beginAtZero: true, ...yt }, y: { ...stacked, ...xt } }
     : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stacked, ...xt }, y: { ...stacked, beginAtZero: model.kind !== "line", ...yt } }
     : undefined;
+  if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
   return {
     type,
     data: { labels: cats.length ? cats : undefined, datasets },
@@ -77,6 +86,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       plugins: {
         legend: { display: model.legend?.show ?? true, position: model.legend?.pos ?? "top" },
         title: { display: !!model.title, text: model.title },
+        // The plugin is registered globally, so charts default it off; opt in per chart.
+        datalabels: model.dataLabels ? { anchor: pieLike ? "center" : "end", align: pieLike ? "center" : "top", color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: (v: unknown) => (typeof v === "object" && v ? (v as { y?: number }).y ?? "" : v) } : { display: false },
       },
       ...(scales ? { scales } : {}),
     },

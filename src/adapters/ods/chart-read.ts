@@ -1,5 +1,5 @@
 import { parseXmlOpt, type Sheet, type Workbook } from "../../core/model";
-import type { ChartAnchor, ChartKind, ChartModel, ChartRef } from "../../core/chart-model";
+import type { ChartAnchor, ChartKind, ChartModel, ChartRef, ChartSeries } from "../../core/chart-model";
 
 // Read ODS charts: each is an embedded OpenDocument object (its own content.xml with chart:chart)
 // referenced from a draw:frame in the sheet's table. We resolve the object, parse the chart into
@@ -113,7 +113,11 @@ function parseOdsChart(objectDoc: Document, anchor: ChartAnchor, id: string, obj
   if (!plot) return null;
   const series = kids(plot, "series").map((s) => {
     const nameRef = asRef(A(s, "label-cell-address"));
-    return { name: nameRef, values: asRef(A(s, "values-cell-range-address")) ?? { cache: [] }, xValues: undefined };
+    const sCls = (A(s, "class") || "").replace(/^chart:/, "");
+    const sKind = sCls ? CLASS_KIND[sCls] : undefined;
+    const out: ChartSeries = { name: nameRef, values: asRef(A(s, "values-cell-range-address")) ?? { cache: [] }, xValues: undefined };
+    if (sKind && sKind !== kind) out.type = sKind; // combo: series overrides the chart class
+    return out;
   });
   const catsEl = kid(plot, "categories");
   const categories = catsEl ? asRef(A(catsEl, "cell-range-address")) : undefined;

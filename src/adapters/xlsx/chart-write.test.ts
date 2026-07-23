@@ -50,6 +50,29 @@ describe("xlsx chart writer", () => {
     expect(re[0].anchor.toRow).toBe(model.anchor.toRow);
   });
 
+  it("data labels round-trip", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "d1", defaultAnchor(rect));
+    m.dataLabels = true;
+    (wb.sheets[0].charts ??= []).push(m);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].charts![0].dataLabels).toBe(true);
+  });
+
+  it("a combo (column + line on a secondary axis) round-trips", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "cbo", defaultAnchor(rect));
+    m.series[1].type = "line";
+    m.series[1].secondaryAxis = true;
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.kind).toBe("column"); // base kind from the first type element
+    const lineSeries = re.series.find((s) => s.type === "line");
+    expect(lineSeries).toBeTruthy();
+    expect(lineSeries!.secondaryAxis).toBe(true);
+  });
+
   it("changing a chart's type and re-saving keeps a single chart of the new kind", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };

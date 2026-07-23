@@ -81,7 +81,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
     const wb = deps.getWorkbook();
     const sheetName = deps.activeSheetName();
     let kind: ChartKind = "column";
-    const state = { firstRowHeader: true, firstColLabels: true, showLegend: true, title: "" };
+    const state = { firstRowHeader: true, firstColLabels: true, showLegend: true, dataLabels: false, comboLine: false, comboSecondary: false, title: "" };
 
     const modal = document.createElement("div");
     modal.className = "sheetedit-chart-modal";
@@ -122,7 +122,8 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
 
     const checks = document.createElement("div");
     checks.className = "sheetedit-chart-checks";
-    const mkCheck = (label: string, key: "firstRowHeader" | "firstColLabels" | "showLegend"): HTMLLabelElement => {
+    type BoolKey = "firstRowHeader" | "firstColLabels" | "showLegend" | "dataLabels" | "comboLine" | "comboSecondary";
+    const mkCheck = (label: string, key: BoolKey): HTMLLabelElement => {
       const l = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
@@ -133,7 +134,7 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       l.append(cb, sp);
       return l;
     };
-    checks.append(mkCheck(t("chartFirstRow"), "firstRowHeader"), mkCheck(t("chartFirstCol"), "firstColLabels"), mkCheck(t("chartLegend"), "showLegend"));
+    checks.append(mkCheck(t("chartFirstRow"), "firstRowHeader"), mkCheck(t("chartFirstCol"), "firstColLabels"), mkCheck(t("chartLegend"), "showLegend"), mkCheck(t("chartDataLabels"), "dataLabels"), mkCheck(t("chartComboLine"), "comboLine"), mkCheck(t("chartComboSecondary"), "comboSecondary"));
 
     const preview = document.createElement("div");
     preview.className = "sheetedit-chart-preview";
@@ -161,6 +162,8 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       const model = buildChart(parsed.sheet, kind, parsed.rect, { firstRowHeader: state.firstRowHeader, firstColLabels: state.firstColLabels }, "preview", defaultAnchor(parsed.rect));
       model.title = state.title || undefined;
       model.legend = { show: state.showLegend, pos: "bottom" };
+      model.dataLabels = state.dataLabels;
+      if (["column","bar","line","area"].includes(model.kind) && model.series.length >= 2) { const last = model.series[model.series.length - 1]; if (state.comboLine) last.type = "line"; if (state.comboSecondary) last.secondaryAxis = true; }
       return model;
     }
     function redraw(): void {
@@ -181,6 +184,8 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
       const model = buildChart(parsed.sheet, kind, parsed.rect, { firstRowHeader: state.firstRowHeader, firstColLabels: state.firstColLabels }, uniqueId(), defaultAnchor(parsed.rect));
       model.title = state.title || undefined;
       model.legend = { show: state.showLegend, pos: "bottom" };
+      model.dataLabels = state.dataLabels;
+      if (["column","bar","line","area"].includes(model.kind) && model.series.length >= 2) { const last = model.series[model.series.length - 1]; if (state.comboLine) last.type = "line"; if (state.comboSecondary) last.secondaryAxis = true; }
       close();
       deps.onCreate(model);
     });
@@ -193,9 +198,16 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
   editbar.hidden = true;
   const typeSel = document.createElement("select");
   for (const { kind, key } of KINDS) { const o = document.createElement("option"); o.value = kind; o.textContent = t(key); typeSel.appendChild(o); }
+  const labelsToggle = document.createElement("label");
+  labelsToggle.style.cssText = "display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;";
+  const labelsCb = document.createElement("input");
+  labelsCb.type = "checkbox";
+  const labelsTxt = document.createElement("span");
+  labelsTxt.textContent = t("chartDataLabels");
+  labelsToggle.append(labelsCb, labelsTxt);
   const delBtn = document.createElement("button");
   delBtn.textContent = t("chartDelete");
-  editbar.append(typeSel, delBtn);
+  editbar.append(typeSel, labelsToggle, delBtn);
   deps.wrap.appendChild(editbar);
   let editing: ChartModel | null = null;
 
@@ -213,10 +225,11 @@ export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void;
     editbar.style.top = `${(above >= gr.top ? above : r.top + 4) - wr.top}px`;
   };
   typeSel.addEventListener("change", () => { if (editing) { editing.kind = typeSel.value as ChartKind; editing.dirty = true; deps.onChange(editing); } });
+  labelsCb.addEventListener("change", () => { if (editing) { editing.dataLabels = labelsCb.checked; editing.dirty = true; deps.onChange(editing); } });
   delBtn.addEventListener("click", () => { if (editing) { const m = editing; hideEdit(); deps.onDelete(m); } });
   deps.gridScroll.addEventListener("scroll", positionEditbar, { passive: true });
 
-  function showEdit(model: ChartModel): void { editing = model; typeSel.value = model.kind; positionEditbar(); }
+  function showEdit(model: ChartModel): void { editing = model; typeSel.value = model.kind; labelsCb.checked = !!model.dataLabels; positionEditbar(); }
   function hideEdit(): void { editing = null; editbar.hidden = true; }
 
   return { openInsert, showEdit, hideEdit, teardown() { editbar.remove(); deps.gridScroll.removeEventListener("scroll", positionEditbar); } };

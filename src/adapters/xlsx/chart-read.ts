@@ -89,28 +89,44 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const chart = kid(space, "chart");
   const plot = chart && kid(chart, "plotArea");
   if (!plot) return null;
-  const typed = CHART_ELEMS.map((c) => ({ ...c, el: kid(plot, c.local) })).find((c) => c.el);
-  if (!typed || !typed.el) return null;
-  const el = typed.el;
-  let kind = typed.kind;
-  if (typed.local.startsWith("bar")) kind = attr(kid(el, "barDir"), "val") === "bar" ? "bar" : "column";
-  const grouping = attr(kid(el, "grouping"), "val");
+  // A combo chart has several chart-type elements (e.g. barChart + lineChart) in one plotArea.
+  const typeEls = Array.from(plot.children).filter((e) => CHART_ELEMS.some((c) => c.local === e.localName));
+  if (!typeEls.length) return null;
+  const kindOf = (e: Element): ChartKind => {
+    const base = CHART_ELEMS.find((c) => c.local === e.localName)!.kind;
+    return e.localName.startsWith("bar") ? (attr(kid(e, "barDir"), "val") === "bar" ? "bar" : "column") : base;
+  };
+  // Secondary value axis: a second valAx, or one anchored on the right.
+  const valAxes = kids(plot, "valAx").map((ax) => ({ id: attr(kid(ax, "axId"), "val"), pos: attr(kid(ax, "axPos"), "val") }));
+  const secondaryValId = valAxes.length > 1 ? (valAxes.find((a) => a.pos === "r")?.id ?? valAxes[1].id) : null;
+
+  const kind = kindOf(typeEls[0]);
+  const grouping = attr(kid(typeEls[0], "grouping"), "val");
   const stacked = grouping === "stacked" || grouping === "percentStacked";
-
-  const sers = kids(el, "ser");
-  const series: ChartSeries[] = sers.map((ser) => {
-    const nameRef = refOf(kid(ser, "tx"));
-    const s: ChartSeries = {
-      name: nameRef?.ref ? nameRef : (nameRef?.cache ? String(nameRef.cache[0] ?? "") : undefined),
-      values: refOf(kid(ser, "val")) ?? refOf(kid(ser, "yVal")) ?? { cache: [] },
-      color: colorOf(ser),
-    };
-    if (kind === "scatter" || kind === "bubble") { s.xValues = refOf(kid(ser, "xVal")); s.values = refOf(kid(ser, "yVal")) ?? s.values; }
-    if (kind === "bubble") s.sizes = refOf(kid(ser, "bubbleSize"));
-    return s;
+  let categories: ChartRef | undefined;
+  const collected: { idx: number; s: ChartSeries }[] = [];
+  const el0 = typeEls[0]; // for data-label detection
+  typeEls.forEach((el, ti) => {
+    const k = kindOf(el);
+    const axIds = kids(el, "axId").map((a) => attr(a, "val"));
+    const isSecondary = !!secondaryValId && axIds[axIds.length - 1] === secondaryValId;
+    for (const ser of kids(el, "ser")) {
+      const nameRef = refOf(kid(ser, "tx"));
+      const s: ChartSeries = {
+        name: nameRef?.ref ? nameRef : (nameRef?.cache ? String(nameRef.cache[0] ?? "") : undefined),
+        values: refOf(kid(ser, "val")) ?? refOf(kid(ser, "yVal")) ?? { cache: [] },
+        color: colorOf(ser),
+      };
+      if (k === "scatter" || k === "bubble") { s.xValues = refOf(kid(ser, "xVal")); s.values = refOf(kid(ser, "yVal")) ?? s.values; }
+      if (k === "bubble") s.sizes = refOf(kid(ser, "bubbleSize"));
+      if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
+      if (isSecondary) s.secondaryAxis = true;
+      if (!categories) categories = refOf(kid(ser, "cat"));
+      collected.push({ idx: Number(attr(kid(ser, "idx"), "val") || String(collected.length)), s });
+    }
   });
-
-  const categories = sers.length ? refOf(kid(sers[0], "cat")) : undefined;
+  const series = collected.sort((a, b) => a.idx - b.idx).map((x) => x.s);
+  const el = el0;
   const legendEl = kid(chart, "legend");
   const model: ChartModel = {
     id,
@@ -126,6 +142,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const catAxTitle = titleText(kid(plot, "catAx") ?? space);
   const valAxTitle = titleText(kid(plot, "valAx") ?? space);
   if (catAxTitle || valAxTitle) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: valAxTitle ? { title: valAxTitle } : undefined };
+  if (descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
   return model;
 }
 

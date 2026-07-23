@@ -49,7 +49,8 @@ function chartContent(model: ChartModel, wb: Workbook): string {
   const series = model.series.map((s) => {
     const val = toOdsRef(s.values.ref);
     const lbl = toOdsRef(nameRefOf(s.name)?.ref);
-    return `<chart:series chart:style-name="ch-auto"${val ? ` chart:values-cell-range-address="${val}"` : ""}${lbl ? ` chart:label-cell-address="${lbl}"` : ""} chart:class="chart:${cls}"><chart:data-point chart:repeated="${resolveNumbers(wb, s.values).length}"/></chart:series>`;
+    const scls = KIND_CLASS[s.type ?? model.kind] ?? cls; // combo: per-series class
+    return `<chart:series chart:style-name="ch-auto"${val ? ` chart:values-cell-range-address="${val}"` : ""}${lbl ? ` chart:label-cell-address="${lbl}"` : ""} chart:class="chart:${scls}"><chart:data-point chart:repeated="${resolveNumbers(wb, s.values).length}"/></chart:series>`;
   }).join("");
   const cats = catRef ? `<chart:categories table:cell-range-address="${catRef}"/>` : "";
   // A minimal internal data table (fallback data). Categories in the first column, one column per series.
