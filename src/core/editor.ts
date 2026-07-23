@@ -18,6 +18,7 @@ import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
+import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
@@ -119,6 +120,9 @@ export function injectStyles(): void {
     .sheetedit-table td.has-dv:hover .sheetedit-dvbtn, .sheetedit-table td.has-dv:focus-within .sheetedit-dvbtn, .sheetedit-table td.has-dv.sheetedit-sel .sheetedit-dvbtn { visibility:visible; }
     .sheetedit-table td.sheetedit-dv-invalid { box-shadow: inset 0 0 0 2px #e0533d; }
     .sheetedit-dvmenu { min-width:120px; max-height:240px; overflow-y:auto; }
+    .sheetedit-table td.has-spark { position:relative; overflow:hidden; }
+    .sheetedit-spark { position:absolute; left:2px; top:2px; width:calc(100% - 4px); height:calc(100% - 4px); z-index:0; pointer-events:none; }
+    .sheetedit-table td.has-spark input { position:relative; z-index:1; background:transparent; }
     .sheetedit-filterbtn { position:absolute; top:0; right:0; bottom:0; z-index:3; visibility:hidden; display:inline-flex; align-items:center; justify-content:center; width:17px; padding:0; border:0; border-left:1px solid #d4d4d8; background:#eef0f4; color:#555; cursor:pointer; }
     .sheetedit-filterbtn:hover { background:#e3e6ec; color:#111; }
     .sheetedit-table td.has-filter .sheetedit-filterbtn { visibility:visible; }
@@ -411,6 +415,7 @@ export function createSheetEditor(
 
   let active = 0;
   let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
+  let sparkAt = new Map<string, NonNullable<Sheet["sparklines"]>[number]>(); // host cell -> sparkline, per render
   let inputs = new Map<string, HTMLInputElement>();
   let tds = new Map<string, HTMLElement>();
   // Extra rows/columns the user added beyond the sheet's used extent (per active sheet).
@@ -1682,6 +1687,35 @@ export function createSheetEditor(
     }
   };
 
+  // Draw a mini line / column / win-loss sparkline into a cell-sized canvas.
+  const drawSparkline = (cv: HTMLCanvasElement, type: "line" | "column" | "stacked", color: string, valuesRaw: number[]): void => {
+    const w = cv.clientWidth || 60, h = cv.clientHeight || 18;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    const ctx = cv.getContext("2d"); if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    const vals = valuesRaw.filter((v) => !isNaN(v));
+    if (!vals.length) return;
+    const pad = 1;
+    if (type === "stacked") { // win/loss: equal up/down bars from the middle
+      const n = valuesRaw.length, bw = (w - pad * 2) / n, mid = h / 2;
+      valuesRaw.forEach((v, i) => { if (isNaN(v) || v === 0) return; const x = pad + i * bw; ctx.fillStyle = v > 0 ? color : "#d1493f"; const bh = h * 0.32; ctx.fillRect(x + bw * 0.15, v > 0 ? mid - bh : mid, bw * 0.7, bh); });
+      return;
+    }
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+    const yOf = (v: number): number => h - pad - ((v - lo) / span) * (h - pad * 2);
+    const n = valuesRaw.length, step = n > 1 ? (w - pad * 2) / (n - 1) : 0;
+    if (type === "column") {
+      const bw = (w - pad * 2) / n; ctx.fillStyle = color;
+      valuesRaw.forEach((v, i) => { if (isNaN(v)) return; const x = pad + i * bw; const y = yOf(v); ctx.fillRect(x + bw * 0.15, y, bw * 0.7, h - pad - y); });
+    } else {
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.lineJoin = "round"; ctx.beginPath();
+      let started = false;
+      valuesRaw.forEach((v, i) => { if (isNaN(v)) return; const x = pad + i * step, y = yOf(v); if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; } });
+      ctx.stroke();
+    }
+  };
+
   // Build one data cell's <td> (input, styles, listeners). Extracted from buildRow so a
   // frozen column can reuse it outside the horizontal window loop.
   const buildCell = (sheet: Sheet, r: number, c: number): HTMLTableCellElement => {
@@ -1770,6 +1804,16 @@ export function createSheetEditor(
           bar.style.background = cfv.bar.color;
           td.insertBefore(bar, td.firstChild);
         }
+      }
+      // Sparkline: a mini line/column/win-loss chart drawn into the host cell.
+      const spk = sparkAt.get(key(r, c));
+      if (spk) {
+        td.classList.add("has-spark");
+        const cv = document.createElement("canvas");
+        cv.className = "sheetedit-spark";
+        const vals = resolveNumbers(wb, { ref: spk.dataRef }).map((v) => (v == null ? NaN : v));
+        requestAnimationFrame(() => drawSparkline(cv, spk.type, spk.color, vals));
+        td.insertBefore(cv, td.firstChild);
       }
       // Comments / notes: a corner marker with a hover popover.
       if (cell?.comments?.length) {
@@ -2500,6 +2544,8 @@ export function createSheetEditor(
     renderedRows = totalRows;
     renderedCols = totalCols;
     condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet) : new Map();
+    sparkAt = new Map();
+    for (const sp of sheet.sparklines ?? []) sparkAt.set(key(sp.host.r, sp.host.c), sp);
     computeWrapHeights(sheet); // measure wrap cells so rows grow to fit
     rebuildSizeIndexes(sheet);
 
