@@ -157,6 +157,9 @@ export interface ChartModel {
   /** Background fills (c:spPr solidFill): the plot area and the whole chart area. */
   plotFill?: string;
   areaFill?: string;
+  /** Base series palette read from the chart's colours part (colors1.xml) or the theme accents;
+      used for series/slices without an explicit colour. Read-only rendering aid. */
+  palette?: string[];
   /** A 3D chart (bar3DChart / pie3DChart / etc.): rendered flat, but re-emitted 3D on write. */
   threeD?: boolean;
   /** Pie-of-pie / bar-of-pie (c:ofPieChart): the last `splitCount` slices break out into a

@@ -359,6 +359,24 @@ function anchorOf(anchorEl: Element): ChartAnchor | null {
   return null;
 }
 
+/** The chart's colour-style part (colors1.xml) base colours, resolved via the theme; falls back to
+    the theme accent colours. Used as the default series palette when series have no explicit colour. */
+function readPalette(files: Record<string, Uint8Array>, chartPath: string, theme: Record<string, string>): string[] | undefined {
+  const relsPath = chartPath.replace(/charts\/(chart[^/]+\.xml)$/i, "charts/_rels/$1.rels");
+  const csRel = relMap(files, relsPath).byType.find((r) => /chartColorStyle|colors/i.test(r.type) || /colors\d+\.xml$/i.test(r.target));
+  if (csRel) {
+    const csPath = resolvePart(chartPath.replace(/\/[^/]+$/, ""), csRel.target);
+    const doc = files[csPath] ? parseXmlOpt(files[csPath]) : undefined;
+    if (doc) {
+      const colors = Array.from(doc.documentElement.children).filter((e) => e.localName === "srgbClr" || e.localName === "schemeClr");
+      const out = colors.map((clr) => (clr.localName === "srgbClr" ? `#${clr.getAttribute("val")}` : theme[clr.getAttribute("val") ?? ""])).filter(Boolean) as string[];
+      if (out.length) return out;
+    }
+  }
+  const accents = ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"].map((k) => theme[k]).filter(Boolean) as string[];
+  return accents.length ? accents : undefined;
+}
+
 /** Populate sheet.charts from the worksheet's drawing + chart parts. */
 export function readCharts(sheet: Sheet, files: Record<string, Uint8Array>, path: string, theme: Record<string, string> = {}): void {
   const relsPath = path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
@@ -381,7 +399,7 @@ export function readCharts(sheet: Sheet, files: Record<string, Uint8Array>, path
       const anchor = anchorOf(anchorEl);
       if (!chartDoc || !anchor) continue;
       const model = parseChart(chartDoc, anchor, `chart-${out.length + 1}`, { partPath: chartPath, drawingPath: drawPath }, theme);
-      if (model) out.push(model);
+      if (model) { const pal = readPalette(files, chartPath, theme); if (pal) model.palette = pal; out.push(model); }
     }
   }
   if (out.length) sheet.charts = out;

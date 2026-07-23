@@ -61,7 +61,9 @@ const mapKind = (k: ChartModel["kind"]): string => (k === "column" || k === "bar
 function toConfig(model: ChartModel, wb: Workbook): unknown {
   const type = mapKind(model.kind);
   const cats = labels(wb, model.categories);
-  const palette = (i: number, c?: string): string => c ?? CHART_PALETTE[i % CHART_PALETTE.length];
+  // The chart's own palette (colors1.xml / theme accents) when present, else the built-in default.
+  const PAL = model.palette?.length ? model.palette : CHART_PALETTE;
+  const palette = (i: number, c?: string): string => c ?? PAL[i % PAL.length];
   const pieLike = model.kind === "pie" || model.kind === "doughnut";
   const hasSecondary = model.series.some((s) => s.secondaryAxis);
   // Date (category) axis for line/area: plot values against a timestamp on a linear scale with
@@ -88,7 +90,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const rawBySeries = model.kind === "scatter" || model.kind === "bubble" ? [] : model.series.map((s) => numbers(wb, s.values));
   const totals: number[] = [];
   if (model.percent) for (let j = 0; j < Math.max(0, ...rawBySeries.map((a) => a.length)); j++) totals[j] = rawBySeries.reduce((t, a) => t + (a[j] ?? 0), 0);
-  const perPoint = (s: typeof model.series[number], j: number): string => s.pointColors?.[j] ?? CHART_PALETTE[j % CHART_PALETTE.length];
+  const perPoint = (s: typeof model.series[number], j: number): string => s.pointColors?.[j] ?? PAL[j % PAL.length];
   // Effective data-label spec for a series: its own, else the chart's, else the simple toggle.
   const labelSpecOf = (s: typeof model.series[number]): ChartDataLabels | undefined => s.labels ?? model.labels ?? (model.dataLabels ? { value: true } : undefined);
   const yFmtG = model.axes?.y?.numFmt;
@@ -178,10 +180,10 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     const k = Math.min(Math.max(1, model.ofPie!.splitCount ?? 2), Math.max(1, vals.length - 1));
     const primN = vals.length - k;
     const other = vals.slice(primN).reduce((t, v) => t + v, 0);
-    const secondary = vals.slice(primN).map((v, j) => ({ label: String(cats[primN + j] ?? ""), value: v, color: CHART_PALETTE[(primN + 1 + j) % CHART_PALETTE.length] }));
+    const secondary = vals.slice(primN).map((v, j) => ({ label: String(cats[primN + j] ?? ""), value: v, color: PAL[(primN + 1 + j) % PAL.length] }));
     const ds = datasets[0];
     ds.data = [...vals.slice(0, primN), other];
-    ds.backgroundColor = [...Array.from({ length: primN }, (_, j) => CHART_PALETTE[j % CHART_PALETTE.length]), "#9c9c9c"];
+    ds.backgroundColor = [...Array.from({ length: primN }, (_, j) => PAL[j % PAL.length]), "#9c9c9c"];
     ds.borderColor = "#fff";
     ds.ofPie = { type: model.ofPie!.type, secondary };
     datasets.length = 1;

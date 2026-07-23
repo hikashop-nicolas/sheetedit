@@ -80,6 +80,17 @@ describe("xlsx chart reader", () => {
     expect(wb.sheets[0].charts![0].categories).toEqual({ ref: "Sheet1!$A$2:$B$3", cache: ["Jan", "Feb"] });
   });
 
+  it("reads a base palette from the chart's colours part", () => {
+    const cs = `<cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="${A}" meth="cycle" id="10"><a:srgbClr val="112233"/><a:schemeClr val="accent1"/><cs:variation/></cs:colorStyle>`;
+    const theme = `<a:theme xmlns:a="${A}"><a:themeElements><a:clrScheme name="x"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="222222"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="AABBCC"/></a:accent1></a:clrScheme></a:themeElements></a:theme>`;
+    const base = new Map(Object.entries(unzipSync(xlsx())));
+    base.set("xl/theme/theme1.xml", strToU8(theme));
+    base.set("xl/charts/colors1.xml", strToU8(cs));
+    base.set("xl/charts/_rels/chart1.xml.rels", strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/relationships/chartColorStyle" Target="colors1.xml"/></Relationships>`));
+    const wb = readWorkbook(zipSync(Object.fromEntries(base)));
+    expect(wb.sheets[0].charts![0].palette).toEqual(["#112233", "#aabbcc"]);
+  });
+
 
   it("parses a bar chart with two series, categories, title and legend", () => {
     const wb = readWorkbook(xlsx());
