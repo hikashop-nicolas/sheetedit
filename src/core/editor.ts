@@ -1028,39 +1028,44 @@ export function createSheetEditor(
   // Power Query panel: only when the workbook carries a DataMashup payload. Refresh writes
   // the result through the model (undo-recorded when the target sheet is active) and the
   // table part's @ref is resized by applyQueryResult.
-  if (wb.kind === "xlsx" && workbookHasQueries(wb.files)) {
+  if (wb.kind === "xlsx") {
     // Files attached for File.Contents, shared between the quick-refresh panel and the editor.
     const pqFiles: Record<string, Uint8Array> = {};
-    const panel = setupQueryPanel({
-      wrap,
-      wb,
-      attachedFiles: pqFiles,
-      apply: (target, result, opts) => {
-        const run = () => applyQueryResult(wb, target, result);
-        // On-open auto-refresh is silent: no undo step and no dirty mark (it wasn't a user edit).
-        if (!opts?.silent && target.sheetIndex === active) recordCells(touchedPositions(target, result), run);
-        else run();
-        recalc(wb);
-        if (!opts?.silent) mark();
-        renderGrid();
-        return { rows: result.rows.length };
-      },
-      markEdited: () => mark(),
-    });
-    // "Refresh data when opening the file": auto-refresh the flagged queries now.
-    void panel.runOnLoad();
-    const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
-    const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
-    toolbar.append(qBtn);
+    // The quick-refresh panel + on-open auto-refresh only make sense once queries exist.
+    if (workbookHasQueries(wb.files)) {
+      const panel = setupQueryPanel({
+        wrap,
+        wb,
+        attachedFiles: pqFiles,
+        apply: (target, result, opts) => {
+          const run = () => applyQueryResult(wb, target, result);
+          // On-open auto-refresh is silent: no undo step and no dirty mark (it wasn't a user edit).
+          if (!opts?.silent && target.sheetIndex === active) recordCells(touchedPositions(target, result), run);
+          else run();
+          recalc(wb);
+          if (!opts?.silent) mark();
+          renderGrid();
+          return { rows: result.rows.length };
+        },
+        markEdited: () => mark(),
+      });
+      // "Refresh data when opening the file": auto-refresh the flagged queries now.
+      void panel.runOnLoad();
+      const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
+      const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
+      toolbar.append(qBtn);
+    }
 
-    // Full Power Query editor (Applied Steps + live preview). Reads/writes Section1.m via qdeff.
+    // Full Power Query editor (Applied Steps + live preview). Always available for xlsx so the
+    // first query can be authored in a query-less workbook; the save path bootstraps the payload.
+    const newGuid = (): string => { try { return `{${crypto.randomUUID().toUpperCase()}}`; } catch { return "{00000000-0000-0000-0000-000000000000}"; } };
     const editor = setupQueryEditor({
       wrap,
       wb,
       attachedFiles: pqFiles,
       save: (newM) => {
         void import("mlang/qdeff").then(({ writeWorkbookSectionM }) => {
-          wb.files = writeWorkbookSectionM(wb.files, newM);
+          wb.files = writeWorkbookSectionM(wb.files, newM, newGuid());
           mark();
         });
       },
@@ -1081,7 +1086,8 @@ export function createSheetEditor(
     const eBtn = tbIcon(EDIT_ICON, t("queryEdit"), () => {
       void import("mlang/qdeff").then(({ readWorkbookQueries }) => {
         const q = readWorkbookQueries(wb.files);
-        if (q) editor.open(q.mashup.sectionM);
+        // No queries yet: open an empty section so the editor's Get Data can add the first one.
+        editor.open(q ? q.mashup.sectionM : "section Section1;\r\n");
       });
     });
     toolbar.append(eBtn);
