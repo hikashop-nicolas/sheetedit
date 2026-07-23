@@ -1,5 +1,5 @@
-import type { Cell, Sheet, Workbook } from "../../core/model";
-import { colToLetters, firstByLocal, removeByLocal, serializeXml } from "../../core/model";
+import type { Cell, DataValidation, Sheet, Workbook } from "../../core/model";
+import { colToLetters, ensureCell, firstByLocal, parseXmlOpt, removeByLocal, serializeXml } from "../../core/model";
 import { SS_MAIN, ensureXlsxCellEl } from "./shared";
 import { writeXlsxCharts } from "./chart-write";
 import { setXlsxCellNumFmt } from "./styles";
@@ -210,6 +210,91 @@ export function setXlsxAutoFilter(sheet: Sheet, ref: string | null): void {
   }
   af.setAttribute("ref", ref);
   sheet.layoutDirty = true;
+}
+
+const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+/** Insert a worksheet child before the first "later" element (pageMargins, drawing, ...), keeping
+    a roughly schema-valid order; else append. */
+function insertWsChild(ws: Element, el: Element): void {
+  const later = new Set(["sheetCalcPr", "printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks", "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing", "drawingHF", "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"]);
+  let before: ChildNode | null = null;
+  for (const ch of Array.from(ws.children)) if (later.has(ch.localName)) { before = ch; break; }
+  ws.insertBefore(el, before);
+}
+
+/** Add or remove a list data validation over the given ranges (1-based inclusive). */
+export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: number; r2: number; c2: number }[], spec: { values?: string[]; rangeRef?: string; allowBlank?: boolean } | null): void {
+  const doc = sheet.doc, ws = doc?.documentElement;
+  const ns = ws?.namespaceURI || SS_MAIN;
+  const sqref = ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ");
+  if (doc && ws) {
+    let dvs = ws.getElementsByTagName("dataValidations")[0];
+    if (dvs) for (const dv of Array.from(dvs.getElementsByTagName("dataValidation"))) if (dv.getAttribute("sqref") === sqref) dv.parentNode?.removeChild(dv);
+    if (spec) {
+      if (!dvs) { dvs = doc.createElementNS(ns, "dataValidations"); insertWsChild(ws, dvs); }
+      const dv = doc.createElementNS(ns, "dataValidation");
+      dv.setAttribute("type", "list");
+      dv.setAttribute("allowBlank", spec.allowBlank ? "1" : "0");
+      dv.setAttribute("showInputMessage", "1");
+      dv.setAttribute("showErrorMessage", "1");
+      dv.setAttribute("sqref", sqref);
+      const f1 = doc.createElementNS(ns, "formula1");
+      f1.textContent = spec.rangeRef ? spec.rangeRef : `"${(spec.values ?? []).join(",")}"`;
+      dv.appendChild(f1);
+      dvs.appendChild(dv);
+      dvs.setAttribute("count", String(dvs.getElementsByTagName("dataValidation").length));
+    } else if (dvs && !dvs.getElementsByTagName("dataValidation").length) dvs.parentNode?.removeChild(dvs);
+  }
+  // Keep the in-memory validations (drive the dropdown) in sync.
+  sheet.validations = (sheet.validations ?? []).filter((v) => v.ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ") !== sqref);
+  if (spec) { const v: DataValidation = { ranges, allowBlank: spec.allowBlank }; if (spec.rangeRef) v.rangeRef = spec.rangeRef; else v.values = spec.values; sheet.validations.push(v); }
+  sheet.layoutDirty = true;
+}
+
+/** Set or remove a hyperlink on a cell. External links get a TargetMode="External" sheet rel;
+    internal links use @location. */
+export function setXlsxHyperlink(wb: Workbook, sheet: Sheet, r: number, c: number, link: { href: string; internal?: boolean; tip?: string } | null): void {
+  const cell = ensureCell(sheet, r, c);
+  if (link) cell.link = link; else delete cell.link;
+  const doc = sheet.doc, ws = doc?.documentElement;
+  if (!doc || !ws) { sheet.layoutDirty = true; return; }
+  const ns = ws.namespaceURI || SS_MAIN;
+  const ref = `${colToLetters(c)}${r}`;
+  let hls = ws.getElementsByTagName("hyperlinks")[0];
+  if (hls) for (const h of Array.from(hls.getElementsByTagName("hyperlink"))) if (h.getAttribute("ref") === ref) h.parentNode?.removeChild(h);
+  if (link) {
+    if (!hls) { hls = doc.createElementNS(ns, "hyperlinks"); insertWsChild(ws, hls); }
+    const h = doc.createElementNS(ns, "hyperlink");
+    h.setAttribute("ref", ref);
+    if (link.internal) {
+      h.setAttribute("location", link.href);
+    } else {
+      const rid = addExternalRel(wb, sheet, link.href);
+      if (!ws.getAttribute("xmlns:r")) ws.setAttribute("xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+      h.setAttribute("r:id", rid);
+    }
+    if (link.tip) h.setAttribute("tooltip", link.tip);
+    hls.appendChild(h);
+  } else if (hls && !hls.getElementsByTagName("hyperlink").length) hls.parentNode?.removeChild(hls);
+  sheet.layoutDirty = true;
+}
+
+/** Add an external (TargetMode="External") relationship to the sheet's rels part, returning its id. */
+function addExternalRel(wb: Workbook, sheet: Sheet, target: string): string {
+  const relsPath = (sheet.path ?? "").replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  let doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
+  if (!doc) doc = parseXmlOpt(new TextEncoder().encode(`<Relationships xmlns="${REL_NS}"></Relationships>`))!;
+  const ids = new Set(Array.from(doc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
+  let n = 1; while (ids.has(`rId${n}`)) n++;
+  const id = `rId${n}`;
+  const rel = doc.createElementNS(REL_NS, "Relationship");
+  rel.setAttribute("Id", id);
+  rel.setAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink");
+  rel.setAttribute("Target", target);
+  rel.setAttribute("TargetMode", "External");
+  doc.documentElement.appendChild(rel);
+  wb.files[relsPath] = serializeXml(doc);
+  return id;
 }
 
 // Add or remove a merged range (1-based, inclusive). The top-left cell shows through;

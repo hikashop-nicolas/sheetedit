@@ -23,7 +23,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1609,6 +1609,10 @@ export function createSheetEditor(
   if (wb.kind === "xlsx") {
     const FILTER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
     toolbar.append(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
+    const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
+    toolbar.append(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
+    const DV_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h4M11 9l1 1 1.5-1.5"/></svg>`;
+    toolbar.append(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
   }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
@@ -2308,6 +2312,66 @@ export function createSheetEditor(
     }
     mark();
     renderGrid();
+  };
+
+  // A small modal form (text/checkbox fields) used by the link / data-validation authoring dialogs.
+  function formDialog(title: string, fields: { key: string; label: string; type: "text" | "checkbox"; value?: string | boolean }[], onOk: (vals: Record<string, string | boolean>) => void): void {
+    const modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
+    const card = document.createElement("div");
+    card.style.cssText = "width:min(420px,94%);background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
+    const h = document.createElement("h3"); h.textContent = title; h.style.cssText = "margin:0 0 12px;font-size:15px"; card.appendChild(h);
+    const inputs: Record<string, HTMLInputElement> = {};
+    for (const f of fields) {
+      const lbl = document.createElement("label");
+      lbl.style.cssText = "display:flex;" + (f.type === "checkbox" ? "align-items:center;gap:7px;" : "flex-direction:column;gap:4px;") + "margin-bottom:10px;font-size:13px";
+      const inp = document.createElement("input"); inp.type = f.type;
+      if (f.type === "checkbox") inp.checked = !!f.value; else { inp.value = (f.value as string) ?? ""; inp.style.cssText = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:6px 8px"; }
+      const sp = document.createElement("span"); sp.textContent = f.label; sp.style.color = "var(--sheetedit-muted,#aab2bf)";
+      if (f.type === "checkbox") lbl.append(inp, sp); else lbl.append(sp, inp);
+      card.appendChild(lbl); inputs[f.key] = inp;
+    }
+    const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:6px";
+    const btn = (label: string, primary: boolean): HTMLButtonElement => { const b = document.createElement("button"); b.textContent = label; b.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;" + (primary ? "background:var(--sheetedit-accent,#6e7bff);border-color:var(--sheetedit-accent,#6e7bff);color:#fff" : "background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)"); return b; };
+    const cancel = btn(t("chartCancel"), false), ok = btn(t("chartApply"), true);
+    const close = (): void => modal.remove();
+    cancel.addEventListener("click", close);
+    ok.addEventListener("click", () => { const vals: Record<string, string | boolean> = {}; for (const f of fields) vals[f.key] = f.type === "checkbox" ? inputs[f.key]!.checked : inputs[f.key]!.value; close(); onOk(vals); });
+    actions.append(cancel, ok); card.appendChild(actions);
+    modal.appendChild(card); wrap.appendChild(modal);
+    modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
+    const firstText = fields.find((f) => f.type !== "checkbox");
+    if (firstText) inputs[firstText.key]!.focus();
+  }
+
+  const openLinkDialog = (): void => {
+    const s = getSelRect(); const r = s.r1, c = s.c1; const sheet = wb.sheets[active]!;
+    const cur = getCell(sheet, r, c)?.link;
+    formDialog(t("linkEdit"), [
+      { key: "href", label: t("linkTarget"), type: "text", value: cur?.href ?? "" },
+      { key: "tip", label: t("linkTip"), type: "text", value: cur?.tip ?? "" },
+      { key: "internal", label: t("linkInternal"), type: "checkbox", value: !!cur?.internal },
+    ], (v) => {
+      const href = String(v.href).trim();
+      setXlsxHyperlink(wb, sheet, r, c, href ? { href, internal: !!v.internal, tip: String(v.tip).trim() || undefined } : null);
+      mark(); renderGrid();
+    });
+  };
+
+  const openDvDialog = (): void => {
+    const s = getSelRect(); const sheet = wb.sheets[active]!;
+    const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    formDialog(t("dvEdit"), [
+      { key: "values", label: t("dvList"), type: "text", value: "" },
+      { key: "range", label: t("dvRange"), type: "text", value: "" },
+      { key: "blank", label: t("dvAllowBlank"), type: "checkbox", value: true },
+    ], (v) => {
+      const values = String(v.values).split(",").map((x) => x.trim()).filter(Boolean);
+      const range = String(v.range).trim();
+      if (!values.length && !range) setXlsxDataValidation(sheet, ranges, null);
+      else setXlsxDataValidation(sheet, ranges, { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank });
+      mark(); renderGrid();
+    });
   };
 
   // Comment popover: shown while hovering a cell that carries notes / threaded comments.
