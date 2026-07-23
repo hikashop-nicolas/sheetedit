@@ -1,5 +1,5 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
-import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
+import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 import { errorBarsPlugin, ofPiePlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 
@@ -182,12 +182,25 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   }
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
   const yFmt = model.axes?.y?.numFmt;
-  const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
-  const axisOpts = (title?: string, min?: number, max?: number, fmt?: string): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...ticksFmt(fmt) });
+  // A ChartTextStyle -> Chart.js { font, color } fragment.
+  const cjFont = (s?: ChartTextStyle): { font?: object; color?: string } => {
+    if (!s) return {};
+    const font: Record<string, unknown> = {};
+    if (s.size != null) font.size = s.size;
+    if (s.bold) font.weight = "bold";
+    if (s.italic) font.style = "italic";
+    if (s.font) font.family = s.font;
+    return { ...(Object.keys(font).length ? { font } : {}), ...(s.color ? { color: s.color } : {}) };
+  };
+  const ticksOpt = (fmt?: string, style?: ChartTextStyle): object => {
+    const ticks = { ...(fmt ? { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } : {}), ...cjFont(style) };
+    return Object.keys(ticks).length ? { ticks } : {};
+  };
+  const axisOpts = (title?: string, min?: number, max?: number, fmt?: string, labelStyle?: ChartTextStyle, titleStyle?: ChartTextStyle): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title, ...cjFont(titleStyle) } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...ticksOpt(fmt, labelStyle) });
   const xa = xDate
-    ? { type: "linear", ticks: { callback: (v: unknown) => fmtDate(Number(v)) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title } } : {}) }
-    : axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt);
-  const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt);
+    ? { type: "linear", ticks: { callback: (v: unknown) => fmtDate(Number(v)), ...cjFont(model.axes?.x?.labelStyle) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title, ...cjFont(model.axes?.x?.titleStyle) } } : {}) }
+    : axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt, model.axes?.x?.labelStyle, model.axes?.x?.titleStyle);
+  const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt, model.axes?.y?.labelStyle, model.axes?.y?.titleStyle);
   const catLinear = model.kind === "column" || model.kind === "line" || model.kind === "area" || model.kind === "stock" || model.kind === "surface";
   const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stackOpt, beginAtZero: true, ...ya }, y: { ...stackOpt, ...xa } }
     : catLinear ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line" && model.kind !== "stock", ...ya } }
@@ -212,9 +225,12 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
           display: isStock || isSurface ? false : (model.legend?.show ?? true),
           position: model.legend?.pos ?? "top",
           // Hide deleted legend entries (by slice index for pie-like, else by dataset index).
-          ...(model.legend?.deleted?.length ? { labels: { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } } : {}),
+          labels: {
+            ...(model.legend?.deleted?.length ? { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } : {}),
+            ...cjFont(model.legendStyle),
+          },
         },
-        title: { display: !!model.title, text: model.title },
+        title: { display: !!model.title, text: model.title, ...cjFont(model.titleStyle) },
         // Registered globally but off by default; each dataset opts in via its own datalabels config.
         datalabels: { display: false },
       },

@@ -239,6 +239,29 @@ describe("xlsx chart writer", () => {
     expect(re.ofPie).toEqual({ type: "bar", splitCount: 3, secondSize: 70, gapWidth: 120 });
   });
 
+  it("text styling round-trips (title, legend, axis labels + titles)", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "ts", defaultAnchor(rect));
+    m.title = "Sales";
+    m.titleStyle = { size: 16, bold: true, color: "#ff0000", font: "Calibri" };
+    m.legend = { show: true, pos: "bottom" };
+    m.legendStyle = { size: 9, italic: true };
+    m.axes = {
+      x: { title: "Quarter", titleStyle: { bold: true }, labelStyle: { size: 8 } },
+      y: { title: "Units", labelStyle: { color: "#0000ff" } },
+    };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.titleStyle).toEqual({ size: 16, bold: true, color: "#ff0000", font: "Calibri" });
+    expect(re.legendStyle).toEqual({ size: 9, italic: true });
+    expect(re.axes?.x?.title).toBe("Quarter");
+    expect(re.axes?.x?.titleStyle).toEqual({ bold: true });
+    expect(re.axes?.x?.labelStyle).toEqual({ size: 8 });
+    expect(re.axes?.y?.title).toBe("Units");
+    expect(re.axes?.y?.labelStyle).toEqual({ color: "#0000ff" });
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

@@ -9,6 +9,15 @@ export interface ChartRef {
   cache?: (string | number | null)[];
 }
 
+/** Text run styling (a:defRPr / a:rPr): point size, colour, bold/italic, typeface. */
+export interface ChartTextStyle {
+  size?: number;
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  font?: string;
+}
+
 export interface ChartAxis {
   title?: string;
   min?: number;
@@ -17,6 +26,9 @@ export interface ChartAxis {
   numFmt?: string;
   /** The category axis is a date axis (c:dateAx). Rendered as a category axis; preserved on write. */
   date?: boolean;
+  /** Font/colour of the tick labels (c:txPr) and of the axis title. */
+  labelStyle?: ChartTextStyle;
+  titleStyle?: ChartTextStyle;
 }
 
 /** Data-label content + placement (c:dLbls: showVal/showCatName/showSerName/showPercent + dLblPos). */
@@ -121,7 +133,11 @@ export interface ChartModel {
   /** Pie/doughnut first-slice angle (degrees clockwise from top), from c:firstSliceAng. */
   rotation?: number;
   title?: string;
+  /** Font/colour of the chart title (c:title txPr / rich run). */
+  titleStyle?: ChartTextStyle;
   legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right"; deleted?: number[]; overlay?: boolean };
+  /** Font/colour of the legend labels (c:legend txPr). */
+  legendStyle?: ChartTextStyle;
   /** Show the value on each data point (the simple UI toggle). */
   dataLabels?: boolean;
   /** Chart-level data labels (content + position); richer than the dataLabels toggle. */

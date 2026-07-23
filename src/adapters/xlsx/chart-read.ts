@@ -1,5 +1,5 @@
 import { parseXmlOpt, type Sheet } from "../../core/model";
-import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartErrorBars, type ChartKind, type ChartModel, type ChartRef, type ChartSeries, type ChartTrendline } from "../../core/chart-model";
+import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartErrorBars, type ChartKind, type ChartModel, type ChartRef, type ChartSeries, type ChartTextStyle, type ChartTrendline } from "../../core/chart-model";
 
 // Read the charts anchored on a worksheet: sheet rels -> drawingN.xml (the anchors) -> chartN.xml
 // (the DrawingML chart) -> ChartModel. Namespace-prefix-agnostic (elements are matched by local
@@ -157,6 +157,22 @@ function applyLum(hex: string, mod: number, off: number): string {
   return `#${[0, 2, 4].map((i) => ch(i).toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** Text styling (a:rPr on a run, or a:defRPr in a txPr) within a title/txPr container. */
+function readTextStyle(container: Element | undefined, theme: Record<string, string>): ChartTextStyle | undefined {
+  if (!container) return undefined;
+  const rpr = descend(container, "rPr")[0] ?? descend(container, "defRPr")[0];
+  if (!rpr) return undefined;
+  const out: ChartTextStyle = {};
+  const sz = attr(rpr, "sz"); if (sz != null) out.size = Number(sz) / 100;
+  if (attr(rpr, "b") === "1") out.bold = true;
+  if (attr(rpr, "i") === "1") out.italic = true;
+  const fill = kid(rpr, "solidFill");
+  const clr = fill ? (descend(fill, "srgbClr")[0] ?? descend(fill, "schemeClr")[0]) : undefined;
+  if (clr) { const hex = clr.localName === "srgbClr" ? `#${clr.getAttribute("val")}` : theme[clr.getAttribute("val") ?? ""]; if (hex) out.color = hex; }
+  const tf = descend(rpr, "latin")[0]?.getAttribute("typeface"); if (tf) out.font = tf;
+  return Object.keys(out).length ? out : undefined;
+}
+
 function titleText(chart: Element): string | undefined {
   const title = kid(chart, "title");
   if (!title) return undefined;
@@ -251,6 +267,8 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     gapWidth: numAttr(barEl, "gapWidth"),
     overlap: numAttr(barEl, "overlap"),
     rotation: numAttr(pieEl, "firstSliceAng"),
+    titleStyle: readTextStyle(kid(chart, "title"), theme),
+    legendStyle: readTextStyle(kid(legendEl, "txPr"), theme),
     threeD: (kind !== "surface" && /3DChart$/.test(el0.localName)) || undefined,
     ofPie: ((): ChartModel["ofPie"] => {
       const op = typeEls.find((e) => e.localName === "ofPieChart");
@@ -284,7 +302,18 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const yb = bounds(kid(plot, "valAx"));
   const yFmt = attr(kid(kid(plot, "valAx"), "numFmt"), "formatCode") ?? undefined;
   const xDate = !!kid(plot, "dateAx");
-  if (catAxTitle || valAxTitle || yb || yFmt || xDate) model.axes = { x: (catAxTitle || xDate) ? { title: catAxTitle, date: xDate || undefined } : undefined, y: (valAxTitle || yb || yFmt) ? { title: valAxTitle, min: yb?.min, max: yb?.max, numFmt: yFmt } : undefined };
+  const catAxEl = kid(plot, "catAx") ?? kid(plot, "dateAx");
+  const valAxEl = kid(plot, "valAx");
+  const xLabelStyle = readTextStyle(kid(catAxEl, "txPr"), theme);
+  const xTitleStyle = readTextStyle(kid(catAxEl, "title"), theme);
+  const yLabelStyle = readTextStyle(kid(valAxEl, "txPr"), theme);
+  const yTitleStyle = readTextStyle(kid(valAxEl, "title"), theme);
+  const anyX = catAxTitle || xDate || xLabelStyle || xTitleStyle;
+  const anyY = valAxTitle || yb || yFmt || yLabelStyle || yTitleStyle;
+  if (anyX || anyY) model.axes = {
+    x: anyX ? { title: catAxTitle, date: xDate || undefined, labelStyle: xLabelStyle, titleStyle: xTitleStyle } : undefined,
+    y: anyY ? { title: valAxTitle, min: yb?.min, max: yb?.max, numFmt: yFmt, labelStyle: yLabelStyle, titleStyle: yTitleStyle } : undefined,
+  };
   const chartLabels = readDLbls(el);
   if (chartLabels) model.labels = chartLabels;
   if (chartLabels?.value || descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
