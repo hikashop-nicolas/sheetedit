@@ -15,6 +15,8 @@ export function setupFloatBar(deps: {
   selRect: () => DOMRect | null;
   curStyle: () => CellStyle | undefined;
   applyStyle: (change: StyleChange) => void;
+  /** Sparkline actions: shown only when the focused single cell hosts a sparkline. */
+  spark?: { has: () => boolean; edit: () => void; remove: () => void };
 }): { teardown(): void } {
   const coarse = typeof window.matchMedia === "function" && window.matchMedia("(hover: none), (pointer: coarse)").matches;
   if (coarse) return { teardown: () => undefined };
@@ -77,6 +79,25 @@ export function setupFloatBar(deps: {
     alignBtn(ICON.center, t("alignCentre"), "center"),
     alignBtn(ICON.right, t("alignRight"), "right"),
   );
+
+  // Sparkline actions live behind a divider and only appear when the focused cell hosts one.
+  let sparkGroup: HTMLElement[] = [];
+  if (deps.spark) {
+    const sp = deps.spark;
+    const iconBtn = (svg: string, title: string, run: () => void): HTMLButtonElement => {
+      const b = tbIcon(svg, title, run);
+      b.addEventListener("mousedown", (e) => e.preventDefault());
+      return b;
+    };
+    const sep = document.createElement("span");
+    sep.className = "sheetedit-floatbar-sep";
+    const SPARK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11l3-4 3 2 3-5 3 3"/></svg>`;
+    const TRASH_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M5 4l.6 9a1 1 0 0 0 1 .9h2.8a1 1 0 0 0 1-.9L11 4"/></svg>`;
+    const edit = iconBtn(SPARK_ICON, t("sparkEdit"), () => sp.edit());
+    const del = iconBtn(TRASH_ICON, t("sparkDelete"), () => sp.remove());
+    sparkGroup = [sep, edit, del];
+    bar.append(sep, edit, del);
+  }
   deps.wrap.appendChild(bar);
 
   const hide = () => {
@@ -89,6 +110,8 @@ export function setupFloatBar(deps: {
     }, 350);
   };
   const showAt = (rect: DOMRect) => {
+    const showSpark = !!deps.spark?.has();
+    for (const el of sparkGroup) el.hidden = !showSpark;
     bar.hidden = false;
     const grid = deps.bounds();
     const bw = bar.offsetWidth || 200;

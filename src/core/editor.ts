@@ -291,6 +291,7 @@ export function injectStyles(): void {
     .sheetedit-fmtmenu .sheetedit-btn { text-align:left; justify-content:flex-start; }
     .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
     .sheetedit-floatbar[hidden] { display:none; }
+    .sheetedit-floatbar-sep { width:1px; align-self:stretch; margin:2px 3px; background:var(--sheetedit-border, #1c1f24); }
     .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
     .sheetedit-tab {
@@ -2473,13 +2474,29 @@ export function createSheetEditor(
     });
   };
 
+  // The sparkline hosted by the single focused cell, if any (drives the float-bar actions).
+  const focusedSparkline = (): { r: number; c: number } | null => {
+    const s = getSelRect();
+    if (s.r1 !== s.r2 || s.c1 !== s.c2) return null;
+    const sheet = wb.sheets[active]!;
+    return sheet.sparklines?.some((sp) => sp.host.r === s.r1 && sp.host.c === s.c1) ? { r: s.r1, c: s.c1 } : null;
+  };
+  const deleteFocusedSparkline = (): void => {
+    const h = focusedSparkline();
+    if (!h) return;
+    setXlsxSparkline(wb.sheets[active]!, h, null);
+    mark(); renderGrid();
+  };
+
   const openSparkDialog = (): void => {
     const s = getSelRect(); const sheet = wb.sheets[active]!;
-    const dataRange = `${colToLetters(s.c1)}${s.r1}:${colToLetters(s.c2)}${s.r2}`;
-    // Default location: one cell past the selection (right of a row, below a column).
+    // Editing: the single focused cell already hosts a sparkline -> prefill from it.
+    const single = s.r1 === s.r2 && s.c1 === s.c2;
+    const cur = single ? sheet.sparklines?.find((sp) => sp.host.r === s.r1 && sp.host.c === s.c1) : undefined;
+    // Creating: default location is one cell past the selection (right of a row, below a column).
     const wide = s.c2 - s.c1 >= s.r2 - s.r1;
-    const host = wide ? { r: s.r1, c: s.c2 + 1 } : { r: s.r2 + 1, c: s.c1 };
-    const cur = sheet.sparklines?.find((sp) => sp.host.r === host.r && sp.host.c === host.c);
+    const host = cur ? cur.host : wide ? { r: s.r1, c: s.c2 + 1 } : { r: s.r2 + 1, c: s.c1 };
+    const dataRange = cur ? cur.dataRef : `${colToLetters(s.c1)}${s.r1}:${colToLetters(s.c2)}${s.r2}`;
     formDialog(t("sparkEdit"), [
       { key: "data", label: t("sparkData"), type: "text", value: dataRange },
       { key: "loc", label: t("sparkLoc"), type: "text", value: `${colToLetters(host.c)}${host.r}` },
@@ -2765,7 +2782,14 @@ export function createSheetEditor(
     return new DOMRect(a.left, a.top, b.right - a.left, b.bottom - a.top);
   };
   const floatBar = wb.kind === "xlsx" || wb.kind === "ods"
-    ? setupFloatBar({ wrap, bounds: () => gridScroll.getBoundingClientRect(), selRect: selRectNow, curStyle, applyStyle })
+    ? setupFloatBar({
+        wrap,
+        bounds: () => gridScroll.getBoundingClientRect(),
+        selRect: selRectNow,
+        curStyle,
+        applyStyle,
+        spark: wb.kind === "xlsx" ? { has: () => !!focusedSparkline(), edit: () => openSparkDialog(), remove: () => deleteFocusedSparkline() } : undefined,
+      })
     : { teardown: () => undefined };
 
   renderTabs();
