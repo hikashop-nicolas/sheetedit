@@ -65,6 +65,22 @@ export function applyTint(hex: string, tint: number): string {
 export const findByLocal = (doc: Document, local: string): Element | undefined =>
   Array.from(doc.getElementsByTagName("*")).find((e) => e.localName === local);
 
+/** theme1.xml <clrScheme> -> a name->CSS map (accent1, dk1, lt1, ... plus tx1/bg1 aliases), for
+    resolving DrawingML <a:schemeClr val="accentN"/> references in charts. */
+export function readThemeMap(file: Uint8Array | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  const doc = file ? parseXmlOpt(file) : undefined;
+  const scheme = doc && findByLocal(doc, "clrScheme");
+  if (scheme) for (const el of Array.from(scheme.children)) {
+    const c = el.firstElementChild;
+    const css = c && (c.localName === "srgbClr" ? argbToCss(c.getAttribute("val")) : argbToCss(c.getAttribute("lastClr")));
+    if (el.localName && css) out[el.localName] = css;
+  }
+  // Chart schemeClr often uses tx1/bg1/tx2/bg2 aliases for dk1/lt1/dk2/lt2.
+  out.tx1 ??= out.dk1; out.bg1 ??= out.lt1; out.tx2 ??= out.dk2; out.bg2 ??= out.lt2;
+  return out;
+}
+
 // theme1.xml <clrScheme> -> array indexed by a <color theme="N"> index.
 export function readTheme(file: Uint8Array | undefined): string[] {
   const fallback = ["#ffffff", "#000000", "#e7e6e6", "#44546a", "#4472c4", "#ed7d31", "#a5a5a5", "#ffc000", "#5b9bd5", "#70ad47", "#0563c1", "#954f72"];
@@ -215,6 +231,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
   const theme = readTheme(files["xl/theme/theme1.xml"]);
+  const themeMap = readThemeMap(files["xl/theme/theme1.xml"]);
   wb.stylesDoc = files["xl/styles.xml"] ? parseXmlOpt(files["xl/styles.xml"]) : undefined;
   const styles = readXlsxStyles(wb.stylesDoc, theme);
   const dxfs = parseDxfs(wb.stylesDoc, theme);
@@ -302,7 +319,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readDataValidations(sheet, doc);
       readCondFormats(sheet, doc, dxfs, theme);
       readComments(sheet, files, path);
-      readCharts(sheet, files, path);
+      readCharts(sheet, files, path, themeMap);
     }
     wb.sheets.push(sheet);
   }

@@ -13,6 +13,8 @@ export interface ChartAxis {
   title?: string;
   min?: number;
   max?: number;
+  /** Number format code for the axis tick labels (e.g. "0.0%", "#,##0"). */
+  numFmt?: string;
 }
 
 export interface ChartSeries {
@@ -24,6 +26,10 @@ export interface ChartSeries {
   color?: string;
   /** Per-point colours (pie/doughnut slices, bar bars) from c:dPt; undefined = use the palette. */
   pointColors?: (string | undefined)[];
+  /** Smoothed line (c:smooth) for line/scatter series. */
+  smooth?: boolean;
+  /** Marker (c:marker) on a line/scatter series: symbol name + size (px). */
+  marker?: { symbol?: string; size?: number };
   /** Combo charts: this series renders as a different kind from the chart's base kind. */
   type?: ChartKind;
   /** Plot this series against a secondary (right-hand) value axis. */
@@ -56,6 +62,8 @@ export interface ChartModel {
   holeSize?: number;
   gapWidth?: number;
   overlap?: number;
+  /** Pie/doughnut first-slice angle (degrees clockwise from top), from c:firstSliceAng. */
+  rotation?: number;
   title?: string;
   legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right" };
   /** Show the value on each data point. */

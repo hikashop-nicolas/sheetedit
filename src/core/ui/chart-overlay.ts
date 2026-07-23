@@ -1,6 +1,9 @@
-import { type Sheet, type Workbook } from "../model";
+import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
+
+// DrawingML / ODF marker symbols -> Chart.js point styles.
+const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
 
 // The chart layer: floats a Chart.js canvas over the grid for every chart on the active sheet,
 // anchored to cells and kept glued while scrolling. The layer sits over the data area (below the
@@ -64,12 +67,16 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     if (model.kind === "scatter" || model.kind === "bubble") {
       const xs = numbers(wb, s.xValues); const ys = numbers(wb, s.values); const rs = s.sizes ? numbers(wb, s.sizes) : [];
       base.data = ys.map((y, j) => ({ x: xs[j] ?? j, y: y ?? 0, r: model.kind === "bubble" ? (rs[j] ?? 5) : undefined }));
+      if (s.smooth) { base.tension = 0.4; base.showLine = true; }
+      if (s.marker) { const st = MARKER_STYLE[s.marker.symbol ?? "circle"] ?? "circle"; base.pointStyle = st; base.pointRadius = s.marker.size ? s.marker.size / 2 : 4; }
     } else {
       base.data = rawBySeries[i].map((v, j) => (model.percent ? (totals[j] ? (v ?? 0) / totals[j] * 100 : 0) : blank(v)));
       const effKind = s.type ?? model.kind;
       if (effKind === "area") base.fill = true;
       if (s.type && mapKind(s.type) !== type) base.type = mapKind(s.type); // combo: per-series type override
       if (s.secondaryAxis) base.yAxisID = "y1";
+      if (s.smooth) base.tension = 0.4;
+      if (s.marker) { const st = MARKER_STYLE[s.marker.symbol ?? "circle"] ?? "circle"; base.pointStyle = st; base.pointRadius = st === false || s.marker.symbol === "none" ? 0 : (s.marker.size ? s.marker.size / 2 : 3); }
       // Per-point colours: pie/doughnut slices always; a series with its own dPt colours otherwise.
       if (pieLike) { base.backgroundColor = (base.data as number[]).map((_, j) => perPoint(s, j)); base.borderColor = "#fff"; }
       else if (s.pointColors) base.backgroundColor = (base.data as number[]).map((_, j) => perPoint(s, j));
@@ -79,9 +86,11 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     return base;
   });
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
-  const axisOpts = (title?: string, min?: number, max?: number): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}) });
-  const xa = axisOpts(model.axes?.x?.title);
-  const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max);
+  const yFmt = model.axes?.y?.numFmt;
+  const ticksFmt = (fmt?: string): object => (fmt ? { ticks: { callback: (v: unknown) => formatNumber(fmt, String(v)) ?? v } } : {});
+  const axisOpts = (title?: string, min?: number, max?: number, fmt?: string): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...ticksFmt(fmt) });
+  const xa = axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt);
+  const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt);
   const scales: Record<string, unknown> | undefined = model.kind === "bar" ? { x: { ...stackOpt, beginAtZero: true, ...ya }, y: { ...stackOpt, ...xa } }
     : model.kind === "column" || model.kind === "line" || model.kind === "area" ? { x: { ...stackOpt, ...xa }, y: { ...stackOpt, beginAtZero: model.kind !== "line", ...ya } }
     : undefined;
@@ -96,11 +105,12 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       indexAxis: model.kind === "bar" ? "y" : "x",
       spanGaps: model.blanksAs === "span",
       ...(model.kind === "doughnut" && model.holeSize != null ? { cutout: `${model.holeSize}%` } : {}),
+      ...(pieLike && model.rotation != null ? { rotation: model.rotation } : {}),
       plugins: {
         legend: { display: model.legend?.show ?? true, position: model.legend?.pos ?? "top" },
         title: { display: !!model.title, text: model.title },
         // The plugin is registered globally, so charts default it off; opt in per chart.
-        datalabels: model.dataLabels ? { anchor: pieLike ? "center" : "end", align: pieLike ? "center" : "top", color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: (v: unknown) => (typeof v === "object" && v ? (v as { y?: number }).y ?? "" : v) } : { display: false },
+        datalabels: model.dataLabels ? { anchor: pieLike ? "center" : "end", align: pieLike ? "center" : "top", color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: (v: unknown) => { const n = typeof v === "object" && v ? (v as { y?: number }).y ?? "" : v; return yFmt != null ? (formatNumber(yFmt, String(n)) ?? n) : n; } } : { display: false },
       },
       ...(scales ? { scales } : {}),
     },

@@ -21,16 +21,16 @@ less thing lost when a chart is edited.
 
 ### Tier 2 - moderate
 
-- [ ] Smooth lines (c:smooth) read/render/write.
-- [ ] Series markers (c:marker symbol/size) on line/scatter read/render/write.
-- [ ] Series theme colours (schemeClr) + gradient/pattern fills -> a resolved CSS colour (approx).
-- [ ] Number formats on value axis + data labels (use the source cell number format / c:numFmt via SSF).
+- [x] Smooth lines (c:smooth) read/render/write.
+- [x] Series markers (c:marker symbol/size) on line/scatter read/render/write.
+- [x] Series theme colours (schemeClr) + gradient/pattern fills -> a resolved CSS colour (approx).
+- [x] Number formats on value axis + data labels (use the source cell number format / c:numFmt via SSF).
 - [ ] Per-series and per-point data labels + label position (c:dLbls at ser/dPt, c:dLblPos); showCatName/
       showSerName/showPercent.
 - [ ] ODS secondary axis (chart:attached-axis) read; ODS data labels (chart:data-label-*) read/write.
 - [ ] dateAx (date axis) read + a time scale; multi-level categories (c:multiLvlStrRef).
 - [ ] Legend entry deletion (c:legendEntry delete); legend overlay.
-- [ ] Pie firstSliceAng (rotation), pie explosion (c:explosion).
+- [x] Pie firstSliceAng (rotation); pie explosion (c:explosion) still pending.
 
 ### Tier 3 - needs a plugin or custom draw
 
@@ -59,4 +59,4 @@ less thing lost when a chart is edited.
 ## Progress
 
 - (DONE) Tier 1 - all six items shipped, xlsx+ods round-trip tested, LibreOffice-validated (chart:percentage read), 100% stacked browser-verified. Insert dialog gained Stacked + 100% stacked options.
-- (next) Tier 2
+- (PARTIAL) Tier 2 - smooth lines, series markers, schemeClr/theme colour resolution, axis+label number formats (SSF), pie firstSliceAng rotation all shipped; xlsx round-trip tested, smooth+marker+axis-% browser-verified. Remaining: per-series/per-point data labels + position, ODS secondary axis + data labels, dateAx + multi-level categories, legend entry deletion, pie explosion.

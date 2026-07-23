@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 
 const C = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -41,7 +41,26 @@ function xlsx(): Uint8Array {
   });
 }
 
+function xlsxSchemeColor(): Uint8Array {
+  const chart = `<?xml version="1.0"?><c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>` +
+    `<c:ser><c:idx val="0"/><c:order val="0"/><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></c:spPr>` +
+    `<c:val><c:numRef><c:f>Sheet1!$B$2:$B$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>` +
+    `</c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+  const theme = `<a:theme xmlns:a="${A}"><a:themeElements><a:clrScheme name="x"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="222222"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="C0504D"/></a:accent1></a:clrScheme></a:themeElements></a:theme>`;
+  const base = new Map(Object.entries(unzipSync(xlsx())));
+  base.set("xl/theme/theme1.xml", strToU8(theme));
+  base.set("xl/drawings/drawing1.xml", strToU8(drawingXml()));
+  base.set("xl/charts/chart1.xml", strToU8(chart));
+  return zipSync(Object.fromEntries(base));
+}
+
 describe("xlsx chart reader", () => {
+  it("resolves a schemeClr series colour via the theme", () => {
+    const wb = readWorkbook(xlsxSchemeColor());
+    expect(wb.sheets[0].charts![0].series[0].color).toBe("#c0504d");
+  });
+
+
   it("parses a bar chart with two series, categories, title and legend", () => {
     const wb = readWorkbook(xlsx());
     const charts = wb.sheets[0].charts!;

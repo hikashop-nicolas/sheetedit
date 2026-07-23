@@ -19,6 +19,7 @@ const strRef = (ref: string | undefined, cache: string[]): string => `<c:strRef>
 const numRef = (ref: string | undefined, cache: (number | null)[]): string => `<c:numRef><c:f>${esc(ref ?? "")}</c:f>${numCache(cache)}</c:numRef>`;
 
 const fillPr = (hex: string): string => `<c:spPr><a:solidFill><a:srgbClr val="${hex.replace("#", "")}"/></a:solidFill></c:spPr>`;
+const markerXml = (m?: { symbol?: string; size?: number }): string => (m ? `<c:marker><c:symbol val="${m.symbol ?? "circle"}"/>${m.size != null ? `<c:size val="${m.size}"/>` : ""}</c:marker>` : "");
 function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | undefined, catLabels: string[]): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
@@ -26,7 +27,7 @@ function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | u
   const spPr = s.color ? fillPr(s.color) : "";
   const dpts = (s.pointColors ?? []).map((c, j) => (c ? `<c:dPt><c:idx val="${j}"/><c:bubble3D val="0"/>${fillPr(c)}</c:dPt>` : "")).join("");
   const cat = catRef ? `<c:cat>${strRef(catRef, catLabels)}</c:cat>` : "";
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${dpts}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val></c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dpts}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
 }
 function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
@@ -34,13 +35,14 @@ function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const x = `<c:xVal>${numRef(s.xValues?.ref, resolveNumbers(wb, s.xValues))}</c:xVal>`;
   const y = `<c:yVal>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:yVal>`;
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${x}${y}<c:smooth val="0"/></c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
 }
 
 const catAx = (id: number, cross: number, pos: string, del = false): string => `<c:catAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="${del ? 1 : 0}"/><c:axPos val="${pos}"/><c:crossAx val="${cross}"/></c:catAx>`;
-const valAx = (id: number, cross: number, pos: string, crossesMax = false, bounds?: { min?: number; max?: number }): string => {
+const valAx = (id: number, cross: number, pos: string, crossesMax = false, bounds?: { min?: number; max?: number; numFmt?: string }): string => {
   const scale = `<c:orientation val="minMax"/>${bounds?.max != null ? `<c:max val="${bounds.max}"/>` : ""}${bounds?.min != null ? `<c:min val="${bounds.min}"/>` : ""}`;
-  return `<c:valAx><c:axId val="${id}"/><c:scaling>${scale}</c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>${crossesMax ? '<c:crosses val="max"/>' : ""}<c:crossAx val="${cross}"/></c:valAx>`;
+  const fmt = bounds?.numFmt ? `<c:numFmt formatCode="${esc(bounds.numFmt)}" sourceLinked="0"/>` : "";
+  return `<c:valAx><c:axId val="${id}"/><c:scaling>${scale}</c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>${fmt}${crossesMax ? '<c:crosses val="max"/>' : ""}<c:crossAx val="${cross}"/></c:valAx>`;
 };
 const localOf = (k: string): string => (k === "column" || k === "bar" ? "barChart" : k === "line" ? "lineChart" : "areaChart");
 
@@ -89,7 +91,8 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
     const sers = model.series.map((s, i) => serCategory(wb, s, i, catRef, catLabels)).join("");
     const group = model.percent ? "percentStacked" : model.stacked ? "stacked" : model.kind === "line" || model.kind === "area" ? "standard" : "clustered";
     if (model.kind === "pie" || model.kind === "doughnut") {
-      body = `<c:${model.kind}Chart><c:varyColors val="1"/>${sers}${dLbls}${model.kind === "doughnut" ? `<c:holeSize val="${model.holeSize ?? 50}"/>` : ""}</c:${model.kind}Chart>`;
+      const rot = model.rotation != null ? `<c:firstSliceAng val="${((model.rotation % 360) + 360) % 360}"/>` : "";
+      body = `<c:${model.kind}Chart><c:varyColors val="1"/>${sers}${dLbls}${rot}${model.kind === "doughnut" ? `<c:holeSize val="${model.holeSize ?? 50}"/>` : ""}</c:${model.kind}Chart>`;
     } else if (model.kind === "radar") {
       body = `<c:radarChart><c:radarStyle val="marker"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:radarChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
     } else if (model.kind === "line") {

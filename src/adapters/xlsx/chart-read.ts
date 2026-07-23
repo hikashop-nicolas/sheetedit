@@ -68,11 +68,26 @@ const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
   { local: "radarChart", kind: "radar" },
 ];
 
-/** The solid fill colour of an element's OWN spPr (not a descendant's), as CSS. */
-function colorOf(el: Element): string | undefined {
+/** The fill colour of an element's OWN spPr (not a descendant's), as CSS. Resolves srgbClr,
+    schemeClr (via the theme), and the first gradient stop; applies a lumMod/lumOff tint. */
+function colorOf(el: Element, theme: Record<string, string> = {}): string | undefined {
   const spPr = kid(el, "spPr");
-  const srgb = spPr && descend(spPr, "srgbClr")[0];
-  return srgb ? `#${srgb.getAttribute("val")}` : undefined;
+  if (!spPr) return undefined;
+  const fill = kid(spPr, "solidFill") ?? kid(spPr, "gradFill");
+  if (!fill) return undefined;
+  const clr = descend(fill, "srgbClr")[0] ?? descend(fill, "schemeClr")[0];
+  if (!clr) return undefined;
+  let hex = clr.localName === "srgbClr" ? `#${clr.getAttribute("val")}` : theme[clr.getAttribute("val") ?? ""];
+  if (!hex) return undefined;
+  // Apply a luminance modulation/offset tint if present (common on theme colours).
+  const lm = descend(clr, "lumMod")[0]; const lo = descend(clr, "lumOff")[0];
+  if (lm || lo) hex = applyLum(hex, lm ? Number(lm.getAttribute("val")) / 100000 : 1, lo ? Number(lo.getAttribute("val")) / 100000 : 0);
+  return hex;
+}
+function applyLum(hex: string, mod: number, off: number): string {
+  const h = hex.replace("#", "");
+  const ch = (i: number): number => Math.max(0, Math.min(255, Math.round(parseInt(h.slice(i, i + 2), 16) * mod + off * 255)));
+  return `#${[0, 2, 4].map((i) => ch(i).toString(16).padStart(2, "0")).join("")}`;
 }
 
 function titleText(chart: Element): string | undefined {
@@ -86,7 +101,7 @@ function titleText(chart: Element): string | undefined {
 
 const LEGEND_POS: Record<string, "top" | "bottom" | "left" | "right"> = { t: "top", b: "bottom", l: "left", r: "right", tr: "right" };
 
-function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, original: ChartModel["original"]): ChartModel | null {
+function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, original: ChartModel["original"], theme: Record<string, string>): ChartModel | null {
   const space = chartDoc.documentElement;
   const chart = kid(space, "chart");
   const plot = chart && kid(chart, "plotArea");
@@ -118,14 +133,17 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       const s: ChartSeries = {
         name: nameRef?.ref ? nameRef : (nameRef?.cache ? String(nameRef.cache[0] ?? "") : undefined),
         values: refOf(kid(ser, "val")) ?? refOf(kid(ser, "yVal")) ?? { cache: [] },
-        color: colorOf(ser),
+        color: colorOf(ser, theme),
       };
       if (k === "scatter" || k === "bubble") { s.xValues = refOf(kid(ser, "xVal")); s.values = refOf(kid(ser, "yVal")) ?? s.values; }
       if (k === "bubble") s.sizes = refOf(kid(ser, "bubbleSize"));
+      if (attr(kid(ser, "smooth"), "val") === "1") s.smooth = true;
+      const mk = kid(ser, "marker");
+      if (mk) { const sym = attr(kid(mk, "symbol"), "val"); const sz = attr(kid(mk, "size"), "val"); if (sym || sz) s.marker = { symbol: sym ?? undefined, size: sz != null ? Number(sz) : undefined }; }
       const dpts = kids(ser, "dPt");
       if (dpts.length) {
         const pc: (string | undefined)[] = [];
-        for (const dp of dpts) { const col = colorOf(dp); if (col) pc[Number(attr(kid(dp, "idx"), "val") || "0")] = col; }
+        for (const dp of dpts) { const col = colorOf(dp, theme); if (col) pc[Number(attr(kid(dp, "idx"), "val") || "0")] = col; }
         if (pc.some(Boolean)) s.pointColors = pc;
       }
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
@@ -138,6 +156,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   const el = el0;
   const doughEl = typeEls.find((e) => e.localName === "doughnutChart");
   const barEl = typeEls.find((e) => e.localName === "barChart" || e.localName === "bar3DChart");
+  const pieEl = typeEls.find((e) => e.localName === "pieChart" || e.localName === "doughnutChart");
   const numAttr = (e: Element | undefined, name: string): number | undefined => { const v = attr(kid(e, name), "val"); return v != null ? Number(v) : undefined; };
   const legendEl = kid(chart, "legend");
   const model: ChartModel = {
@@ -149,6 +168,7 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     holeSize: numAttr(doughEl, "holeSize"),
     gapWidth: numAttr(barEl, "gapWidth"),
     overlap: numAttr(barEl, "overlap"),
+    rotation: numAttr(pieEl, "firstSliceAng"),
     title: titleText(chart),
     legend: { show: !!legendEl, pos: LEGEND_POS[attr(kid(legendEl, "legendPos"), "val") ?? "r"] ?? "right" },
     categories,
@@ -166,7 +186,8 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     return mn != null || mx != null ? { min: mn != null ? Number(mn) : undefined, max: mx != null ? Number(mx) : undefined } : undefined;
   };
   const yb = bounds(kid(plot, "valAx"));
-  if (catAxTitle || valAxTitle || yb) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: (valAxTitle || yb) ? { title: valAxTitle, min: yb?.min, max: yb?.max } : undefined };
+  const yFmt = attr(kid(kid(plot, "valAx"), "numFmt"), "formatCode") ?? undefined;
+  if (catAxTitle || valAxTitle || yb || yFmt) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: (valAxTitle || yb || yFmt) ? { title: valAxTitle, min: yb?.min, max: yb?.max, numFmt: yFmt } : undefined };
   if (descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
   return model;
 }
@@ -203,7 +224,7 @@ function anchorOf(anchorEl: Element): ChartAnchor | null {
 }
 
 /** Populate sheet.charts from the worksheet's drawing + chart parts. */
-export function readCharts(sheet: Sheet, files: Record<string, Uint8Array>, path: string): void {
+export function readCharts(sheet: Sheet, files: Record<string, Uint8Array>, path: string, theme: Record<string, string> = {}): void {
   const relsPath = path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
   const { byType } = relMap(files, relsPath);
   const drawings = byType.filter((r) => /drawing/i.test(r.type) && /drawings\//i.test(r.target)).map((r) => resolvePart("xl/worksheets", r.target));
@@ -223,7 +244,7 @@ export function readCharts(sheet: Sheet, files: Record<string, Uint8Array>, path
       const chartDoc = files[chartPath] ? parseXmlOpt(files[chartPath]) : undefined;
       const anchor = anchorOf(anchorEl);
       if (!chartDoc || !anchor) continue;
-      const model = parseChart(chartDoc, anchor, `chart-${out.length + 1}`, { partPath: chartPath, drawingPath: drawPath });
+      const model = parseChart(chartDoc, anchor, `chart-${out.length + 1}`, { partPath: chartPath, drawingPath: drawPath }, theme);
       if (model) out.push(model);
     }
   }

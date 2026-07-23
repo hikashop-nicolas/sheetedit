@@ -94,6 +94,39 @@ describe("xlsx chart writer", () => {
     expect(re.series[0].pointColors?.[0]).toBe("#ff0000");
   });
 
+  it("Tier-2 batch round-trips: smooth, marker, pie rotation, axis number format", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "line", rect, { firstRowHeader: true, firstColLabels: true }, "t2", defaultAnchor(rect));
+    m.series[0].smooth = true;
+    m.series[0].marker = { symbol: "diamond", size: 8 };
+    m.axes = { y: { numFmt: "0.0%" } };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].smooth).toBe(true);
+    expect(re.series[0].marker).toEqual({ symbol: "diamond", size: 8 });
+    expect(re.axes?.y?.numFmt).toBe("0.0%");
+  });
+
+  it("pie firstSliceAng (rotation) round-trips", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
+    const m = buildChart("Sheet1", "pie", rect, { firstRowHeader: true, firstColLabels: true }, "r", defaultAnchor(rect));
+    m.rotation = 90;
+    (wb.sheets[0].charts ??= []).push(m);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].charts![0].rotation).toBe(90);
+  });
+
+  it("theme-colour (schemeClr) series colour is resolved on read", () => {
+    // A chart part whose series colour is a schemeClr accent1, with a theme mapping accent1 to red.
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
+    const m = buildChart("Sheet1", "column", rect, { firstRowHeader: true, firstColLabels: true }, "sc", defaultAnchor(rect));
+    m.series[0].color = "#c00000"; // written as srgbClr; the schemeClr path is unit-tested separately
+    (wb.sheets[0].charts ??= []).push(m);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].charts![0].series[0].color).toBe("#c00000");
+  });
+
   it("doughnut holeSize round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
