@@ -294,6 +294,68 @@ export function setXlsxCondFormat(wb: Workbook, sheet: Sheet, ranges: { r1: numb
   sheet.layoutDirty = true;
 }
 
+// x14 sparklines live in the worksheet extLst under a fixed-uri <ext>. These namespaces + uri are
+// the ones Excel emits; the reader matches by local name, so exact prefixes are not load-bearing.
+const X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+const XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
+const SPARK_EXT_URI = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
+
+type SparkSpec = { type: "line" | "column" | "stacked"; color: string; dataRef: string };
+
+/** Add, replace, or (spec === null) remove the sparkline whose location is the host cell. */
+export function setXlsxSparkline(sheet: Sheet, host: { r: number; c: number }, spec: SparkSpec | null): void {
+  const doc = sheet.doc, ws = doc?.documentElement;
+  const hostRef = `${colToLetters(host.c)}${host.r}`;
+  sheet.sparklines = (sheet.sparklines ?? []).filter((s) => !(s.host.r === host.r && s.host.c === host.c));
+  if (spec) sheet.sparklines.push({ type: spec.type, color: spec.color, host: { r: host.r, c: host.c }, dataRef: spec.dataRef });
+  if (!sheet.sparklines.length) sheet.sparklines = undefined;
+  if (!doc || !ws) return;
+  const ns = ws.namespaceURI || SS_MAIN;
+  const x14 = (name: string): Element => doc.createElementNS(X14_NS, `x14:${name}`);
+  const xm = (name: string, text: string): Element => { const e = doc.createElementNS(XM_NS, `xm:${name}`); e.textContent = text; return e; };
+
+  // Locate (or, when adding, create) extLst > ext[sparkline] > x14:sparklineGroups.
+  let extLst = firstByLocal(ws, "extLst");
+  let ext = extLst && Array.from(extLst.children).find((e) => e.localName === "ext" && e.getAttribute("uri") === SPARK_EXT_URI);
+  let groups = ext && Array.from(ext.children).find((e) => e.localName === "sparklineGroups");
+
+  // Drop any existing sparkline (and its now-empty group) for this host.
+  if (groups) {
+    for (const g of Array.from(groups.children)) {
+      const spks = Array.from(g.getElementsByTagName("*")).filter((e) => e.localName === "sparkline");
+      for (const sp of spks) {
+        const sq = Array.from(sp.children).find((c) => c.localName === "sqref");
+        if ((sq?.textContent ?? "").trim().replace(/\$/g, "") === hostRef) sp.parentNode?.removeChild(sp);
+      }
+      if (!Array.from(g.getElementsByTagName("*")).some((e) => e.localName === "sparkline")) g.parentNode?.removeChild(g);
+    }
+  }
+
+  if (spec) {
+    if (!extLst) { extLst = doc.createElementNS(ns, "extLst"); insertWsChild(ws, extLst); }
+    if (!ext) { ext = doc.createElementNS(ns, "ext"); ext.setAttribute("uri", SPARK_EXT_URI); extLst.appendChild(ext); }
+    if (!groups) { groups = x14("sparklineGroups"); ext.appendChild(groups); }
+    const group = x14("sparklineGroup");
+    if (spec.type !== "line") group.setAttribute("type", spec.type === "stacked" ? "stacked" : "column");
+    group.setAttribute("displayEmptyCellsAs", "gap");
+    const cs = x14("colorSeries"); cs.setAttribute("rgb", `FF${spec.color.replace("#", "")}`); group.appendChild(cs);
+    if (spec.type === "stacked") { const cn = x14("colorNegative"); cn.setAttribute("rgb", "FFD00000"); group.appendChild(cn); }
+    const spks = x14("sparklines");
+    const spk = x14("sparkline");
+    spk.appendChild(xm("f", spec.dataRef));
+    spk.appendChild(xm("sqref", hostRef));
+    spks.appendChild(spk);
+    group.appendChild(spks);
+    groups.appendChild(group);
+  } else {
+    // Removal cleanup: drop empty containers so we do not leave an empty extLst behind.
+    if (groups && !groups.children.length) groups.parentNode?.removeChild(groups);
+    if (ext && !ext.children.length) ext.parentNode?.removeChild(ext);
+    if (extLst && !extLst.children.length) extLst.parentNode?.removeChild(extLst);
+  }
+  sheet.layoutDirty = true;
+}
+
 /** Add or remove a list data validation over the given ranges (1-based inclusive). */
 export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: number; r2: number; c2: number }[], spec: { values?: string[]; rangeRef?: string; allowBlank?: boolean } | null): void {
   const doc = sheet.doc, ws = doc?.documentElement;

@@ -24,7 +24,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden } from "../adapters/xlsx";
+import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1629,6 +1629,8 @@ export function createSheetEditor(
     toolbar.append(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
     const CF_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`;
     toolbar.append(tbIcon(CF_ICON, t("cfEdit"), () => openCfDialog()));
+    const SPARK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11l3-4 3 2 3-5 3 3"/></svg>`;
+    toolbar.append(tbIcon(SPARK_ICON, t("sparkEdit"), () => openSparkDialog()));
   }
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
@@ -2467,6 +2469,28 @@ export function createSheetEditor(
       if (kind === "colorScale") setXlsxCondFormat(wb, sheet, ranges, { kind: "colorScale", colors: ["#f8696b", "#ffeb84", "#63be7b"] });
       else if (kind === "dataBar") setXlsxCondFormat(wb, sheet, ranges, { kind: "dataBar", color: color || "#638ec6" });
       else setXlsxCondFormat(wb, sheet, ranges, { kind: "cellIs", operator: String(v.operator), value: String(v.value), fill: color });
+      mark(); renderGrid();
+    });
+  };
+
+  const openSparkDialog = (): void => {
+    const s = getSelRect(); const sheet = wb.sheets[active]!;
+    const dataRange = `${colToLetters(s.c1)}${s.r1}:${colToLetters(s.c2)}${s.r2}`;
+    // Default location: one cell past the selection (right of a row, below a column).
+    const wide = s.c2 - s.c1 >= s.r2 - s.r1;
+    const host = wide ? { r: s.r1, c: s.c2 + 1 } : { r: s.r2 + 1, c: s.c1 };
+    const cur = sheet.sparklines?.find((sp) => sp.host.r === host.r && sp.host.c === host.c);
+    formDialog(t("sparkEdit"), [
+      { key: "data", label: t("sparkData"), type: "text", value: dataRange },
+      { key: "loc", label: t("sparkLoc"), type: "text", value: `${colToLetters(host.c)}${host.r}` },
+      { key: "type", label: t("sparkType"), type: "select", value: cur?.type ?? "line", options: [{ value: "line", label: t("sparkLine") }, { value: "column", label: t("sparkColumn") }, { value: "stacked", label: t("sparkWinLoss") }] },
+      { key: "color", label: t("sparkColour"), type: "color", value: cur?.color ?? "#376092" },
+    ], (v) => {
+      const loc = parseA1Ref(String(v.loc).trim().replace(/\$/g, ""));
+      const data = String(v.data).trim();
+      if (!loc || !data) return;
+      const dataRef = data.includes("!") ? data : `${sheet.name}!${data}`;
+      setXlsxSparkline(sheet, { r: loc.row, c: loc.col }, { type: String(v.type) as "line" | "column" | "stacked", color: String(v.color), dataRef });
       mark(); renderGrid();
     });
   };
