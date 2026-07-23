@@ -1,5 +1,5 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
-import { CHART_PALETTE, type ChartModel } from "../chart-model";
+import { CHART_PALETTE, type ChartDataLabels, type ChartModel } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
@@ -62,6 +62,34 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   const totals: number[] = [];
   if (model.percent) for (let j = 0; j < Math.max(0, ...rawBySeries.map((a) => a.length)); j++) totals[j] = rawBySeries.reduce((t, a) => t + (a[j] ?? 0), 0);
   const perPoint = (s: typeof model.series[number], j: number): string => s.pointColors?.[j] ?? CHART_PALETTE[j % CHART_PALETTE.length];
+  // Effective data-label spec for a series: its own, else the chart's, else the simple toggle.
+  const labelSpecOf = (s: typeof model.series[number]): ChartDataLabels | undefined => s.labels ?? model.labels ?? (model.dataLabels ? { value: true } : undefined);
+  const yFmtG = model.axes?.y?.numFmt;
+  const fmtVal = (n: unknown): unknown => (yFmtG != null ? (formatNumber(yFmtG, String(n)) ?? n) : n);
+  const posMap = (position: string | undefined): { anchor: string; align: string } => {
+    switch (position) {
+      case "ctr": case "bestFit": return { anchor: "center", align: "center" };
+      case "inEnd": return { anchor: "end", align: "start" };
+      case "inBase": return { anchor: "start", align: "end" };
+      case "outEnd": return { anchor: "end", align: "end" };
+      case "t": return { anchor: "end", align: "top" };
+      case "b": return { anchor: "start", align: "bottom" };
+      case "l": return { anchor: "start", align: "left" };
+      case "r": return { anchor: "end", align: "right" };
+      default: return pieLike ? { anchor: "center", align: "center" } : { anchor: "end", align: "top" };
+    }
+  };
+  const yOf = (v: unknown): number => (typeof v === "object" && v ? ((v as { y?: number }).y ?? 0) : ((v as number) ?? 0));
+  const makeFormatter = (spec: ChartDataLabels) => (val: unknown, ctx: { chart: { data: { labels?: unknown[] } }; dataset: { label?: string; data: unknown[] }; dataIndex: number }): string => {
+    const y = yOf(val);
+    const parts: string[] = [];
+    if (spec.category) parts.push(String(ctx.chart.data.labels?.[ctx.dataIndex] ?? ""));
+    if (spec.seriesName) parts.push(String(ctx.dataset.label ?? ""));
+    if (spec.value) parts.push(String(fmtVal(y)));
+    if (spec.percent) { const tot = ctx.dataset.data.reduce((t: number, x) => t + yOf(x), 0); parts.push(tot ? `${(y / tot * 100).toFixed(1)}%` : ""); }
+    if (!parts.length) parts.push(String(fmtVal(y)));
+    return parts.filter((p) => p !== "").join(spec.category || spec.seriesName ? "\n" : " ");
+  };
   const datasets = model.series.map((s, i) => {
     const base: Record<string, unknown> = { label: nameOf(wb, s.name), borderColor: palette(i, s.color), backgroundColor: palette(i, s.color) };
     if (model.kind === "scatter" || model.kind === "bubble") {
@@ -82,7 +110,13 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       else if (s.pointColors) base.backgroundColor = (base.data as number[]).map((_, j) => perPoint(s, j));
       // Bar spacing from the file's gapWidth (approximate mapping to Chart.js categoryPercentage).
       if ((model.kind === "column" || model.kind === "bar") && model.gapWidth != null) base.categoryPercentage = Math.max(0.1, Math.min(1, 1 / (1 + model.gapWidth / 100)));
+      // Pie/doughnut slice explosion -> per-arc pixel offset.
+      if (pieLike && s.explosion) base.offset = s.explosion.map((e) => (e ? Math.round(e * 0.6) : 0));
     }
+    // Per-dataset data labels (content + position); the global plugin default is off.
+    const spec = labelSpecOf(s);
+    if (spec) { const pm = posMap(spec.position); base.datalabels = { display: true, anchor: pm.anchor, align: pm.align, color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: makeFormatter(spec) }; }
+    else base.datalabels = { display: false };
     return base;
   });
   const stackOpt = model.stacked || model.percent ? { stacked: true } : {};
@@ -107,10 +141,15 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
       ...(model.kind === "doughnut" && model.holeSize != null ? { cutout: `${model.holeSize}%` } : {}),
       ...(pieLike && model.rotation != null ? { rotation: model.rotation } : {}),
       plugins: {
-        legend: { display: model.legend?.show ?? true, position: model.legend?.pos ?? "top" },
+        legend: {
+          display: model.legend?.show ?? true,
+          position: model.legend?.pos ?? "top",
+          // Hide deleted legend entries (by slice index for pie-like, else by dataset index).
+          ...(model.legend?.deleted?.length ? { labels: { filter: (item: { index: number; datasetIndex: number }) => !model.legend!.deleted!.includes(pieLike ? item.index : item.datasetIndex) } } : {}),
+        },
         title: { display: !!model.title, text: model.title },
-        // The plugin is registered globally, so charts default it off; opt in per chart.
-        datalabels: model.dataLabels ? { anchor: pieLike ? "center" : "end", align: pieLike ? "center" : "top", color: pieLike ? "#fff" : "#444", font: { size: 10 }, formatter: (v: unknown) => { const n = typeof v === "object" && v ? (v as { y?: number }).y ?? "" : v; return yFmt != null ? (formatNumber(yFmt, String(n)) ?? n) : n; } } : { display: false },
+        // Registered globally but off by default; each dataset opts in via its own datalabels config.
+        datalabels: { display: false },
       },
       ...(scales ? { scales } : {}),
     },

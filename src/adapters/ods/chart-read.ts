@@ -117,19 +117,32 @@ function parseOdsChart(objectDoc: Document, anchor: ChartAnchor, id: string, obj
   const props = styleProps.get(A(plot, "style-name") ?? A(chart, "style-name") ?? "");
   let stacked = false;
   let percent = false;
+  let labels: ChartModel["labels"];
   if (props) {
     const v = A(props, "vertical");
     if (cls === "bar" && v === "false") kind = "bar"; // horizontal bars
     else if (cls === "bar" && v === "true") kind = "column";
     if (A(props, "stacked") === "true") stacked = true;
     if (A(props, "percentage") === "true") { stacked = true; percent = true; }
+    const num = A(props, "data-label-number");
+    const txt = A(props, "data-label-text");
+    const spec: ChartModel["labels"] = {};
+    if (num === "value" || num === "value-and-percentage") spec!.value = true;
+    if (num === "percentage" || num === "value-and-percentage") spec!.percent = true;
+    if (txt === "true") spec!.category = true;
+    if (Object.keys(spec!).length) labels = spec;
   }
+  // Axes: a secondary value axis is a second chart:axis of dimension "y"; series attach to one by name.
+  const yAxisNames = kids(plot, "axis").filter((ax) => A(ax, "dimension") === "y").map((ax) => A(ax, "name"));
+  const primaryY = yAxisNames[0] ?? null;
   const series = kids(plot, "series").map((s) => {
     const nameRef = asRef(A(s, "label-cell-address"));
     const sCls = (A(s, "class") || "").replace(/^chart:/, "");
     const sKind = sCls ? CLASS_KIND[sCls] : undefined;
     const out: ChartSeries = { name: nameRef, values: asRef(A(s, "values-cell-range-address")) ?? { cache: [] }, xValues: undefined };
     if (sKind && sKind !== kind) out.type = sKind; // combo: series overrides the chart class
+    const attached = A(s, "attached-axis");
+    if (attached && primaryY && attached !== primaryY) out.secondaryAxis = true;
     return out;
   });
   const catsEl = kid(plot, "categories");
@@ -145,6 +158,8 @@ function parseOdsChart(objectDoc: Document, anchor: ChartAnchor, id: string, obj
     percent: percent || undefined,
     title,
     legend: { show: !!legendEl, pos: posMap[A(legendEl ?? chart, "legend-position") ?? "end"] ?? "right" },
+    dataLabels: labels?.value || undefined,
+    labels,
     categories,
     series,
     anchor,

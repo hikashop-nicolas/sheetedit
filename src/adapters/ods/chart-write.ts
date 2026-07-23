@@ -46,11 +46,14 @@ function chartContent(model: ChartModel, wb: Workbook): string {
   const title = model.title ? `<chart:title><text:p>${esc(model.title)}</text:p></chart:title>` : "";
   const legend = model.legend?.show ? `<chart:legend chart:legend-position="${({ top: "top", bottom: "bottom", left: "start", right: "end" } as Record<string, string>)[model.legend.pos] ?? "end"}"/>` : "";
   const catRef = toOdsRef(model.categories?.ref);
+  const needSecondary = model.series.some((s) => s.secondaryAxis);
+  const axesXml = needSecondary ? `<chart:axis chart:dimension="x" chart:name="primary-x"/><chart:axis chart:dimension="y" chart:name="primary-y"/><chart:axis chart:dimension="y" chart:name="secondary-y"/>` : "";
   const series = model.series.map((s) => {
     const val = toOdsRef(s.values.ref);
     const lbl = toOdsRef(nameRefOf(s.name)?.ref);
     const scls = KIND_CLASS[s.type ?? model.kind] ?? cls; // combo: per-series class
-    return `<chart:series chart:style-name="ch-auto"${val ? ` chart:values-cell-range-address="${val}"` : ""}${lbl ? ` chart:label-cell-address="${lbl}"` : ""} chart:class="chart:${scls}"><chart:data-point chart:repeated="${resolveNumbers(wb, s.values).length}"/></chart:series>`;
+    const axis = s.secondaryAxis ? ` chart:attached-axis="secondary-y"` : "";
+    return `<chart:series chart:style-name="ch-auto"${val ? ` chart:values-cell-range-address="${val}"` : ""}${lbl ? ` chart:label-cell-address="${lbl}"` : ""} chart:class="chart:${scls}"${axis}><chart:data-point chart:repeated="${resolveNumbers(wb, s.values).length}"/></chart:series>`;
   }).join("");
   const cats = catRef ? `<chart:categories table:cell-range-address="${catRef}"/>` : "";
   // A minimal internal data table (fallback data). Categories in the first column, one column per series.
@@ -59,13 +62,15 @@ function chartContent(model: ChartModel, wb: Workbook): string {
   const headerRow = `<table:table-row><table:table-cell/>${model.series.map((s) => `<table:table-cell office:value-type="string"><text:p>${esc(seriesName(wb, s.name) ?? "")}</text:p></table:table-cell>`).join("")}</table:table-row>`;
   const bodyRows = labels.map((lab, r) => `<table:table-row><table:table-cell office:value-type="string"><text:p>${esc(lab)}</text:p></table:table-cell>${cols.map((col) => { const v = col[r]; return v == null ? "<table:table-cell/>" : `<table:table-cell office:value-type="float" office:value="${v}"><text:p>${v}</text:p></table:table-cell>`; }).join("")}</table:table-row>`).join("");
   const localTable = `<table:table table:name="local-table"><table:table-header-columns/><table:table-columns/><table:table-header-rows>${headerRow}</table:table-header-rows><table:table-rows>${bodyRows}</table:table-rows></table:table>`;
-  // Plot-area style: bar orientation (vertical for column, horizontal for bar) + stacked/percentage.
-  const props = `${cls === "bar" ? ` chart:vertical="${model.kind === "bar" ? "false" : "true"}"` : ""}${model.stacked ? ` chart:stacked="true"` : ""}${model.percent ? ` chart:percentage="true"` : ""}`;
+  // Plot-area style: bar orientation (vertical for column, horizontal for bar) + stacked/percentage + labels.
+  const lspec = model.labels ?? (model.dataLabels ? { value: true } : undefined);
+  const labelProps = lspec ? ` chart:data-label-number="${lspec.value && lspec.percent ? "value-and-percentage" : lspec.percent ? "percentage" : lspec.value ? "value" : "none"}"${lspec.category ? ` chart:data-label-text="true"` : ""}` : "";
+  const props = `${cls === "bar" ? ` chart:vertical="${model.kind === "bar" ? "false" : "true"}"` : ""}${model.stacked ? ` chart:stacked="true"` : ""}${model.percent ? ` chart:percentage="true"` : ""}${labelProps}`;
   const autoStyles = props ? `<office:automatic-styles><style:style style:name="plotstyle" style:family="chart"><style:chart-properties${props}/></style:style></office:automatic-styles>` : "";
   const plotStyle = props ? ` chart:style-name="plotstyle"` : "";
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<office:document-content xmlns:office="${OFFICE}" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" xmlns:table="${TABLE}" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0">` +
-    `${autoStyles}<office:body><office:chart><chart:chart chart:class="chart:${cls}">${title}${legend}<chart:plot-area${plotStyle}>${series}${cats}</chart:plot-area>${localTable}</chart:chart></office:chart></office:body></office:document-content>`;
+    `${autoStyles}<office:body><office:chart><chart:chart chart:class="chart:${cls}">${title}${legend}<chart:plot-area${plotStyle}>${axesXml}${series}${cats}</chart:plot-area>${localTable}</chart:chart></office:chart></office:body></office:document-content>`;
 }
 
 const OBJ_STYLES = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles xmlns:office="${OFFICE}"><office:styles/><office:automatic-styles/><office:master-styles/></office:document-styles>`;

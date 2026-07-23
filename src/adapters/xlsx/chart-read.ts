@@ -1,5 +1,5 @@
 import { parseXmlOpt, type Sheet } from "../../core/model";
-import { emuToPx, type ChartAnchor, type ChartKind, type ChartModel, type ChartRef, type ChartSeries } from "../../core/chart-model";
+import { emuToPx, type ChartAnchor, type ChartDataLabels, type ChartKind, type ChartModel, type ChartRef, type ChartSeries } from "../../core/chart-model";
 
 // Read the charts anchored on a worksheet: sheet rels -> drawingN.xml (the anchors) -> chartN.xml
 // (the DrawingML chart) -> ChartModel. Namespace-prefix-agnostic (elements are matched by local
@@ -54,8 +54,32 @@ function refOf(container: Element | undefined): ChartRef | undefined {
     const cacheEl = kid(numRef, "numCache") ?? kid(numRef, "strCache");
     return { ref: f || undefined, cache: cacheEl ? ptsOf(cacheEl) : undefined };
   }
+  // Multi-level categories (c:multiLvlStrRef): render the innermost level; write flattens it.
+  const multi = kid(container, "multiLvlStrRef");
+  if (multi) {
+    const f = textOf(kid(multi, "f")).trim();
+    const cacheEl = kid(multi, "multiLvlStrCache");
+    const lvl = cacheEl ? kids(cacheEl, "lvl")[0] : undefined;
+    return { ref: f || undefined, cache: lvl ? ptsOf(lvl) : undefined };
+  }
   const lit = kid(container, "v");
   return lit ? { cache: [textOf(lit)] } : undefined;
+}
+
+/** A c:dLbls (chart-level or per-series) -> the content/position flags that are set. */
+function readDLbls(parent: Element | undefined): ChartDataLabels | undefined {
+  const d = kid(parent, "dLbls");
+  if (!d) return undefined;
+  const on = (n: string): boolean => attr(kid(d, n), "val") === "1";
+  const spec: ChartDataLabels = {};
+  if (on("showVal")) spec.value = true;
+  if (on("showCatName")) spec.category = true;
+  if (on("showSerName")) spec.seriesName = true;
+  if (on("showPercent")) spec.percent = true;
+  if (on("showLegendKey")) spec.legendKey = true;
+  const pos = attr(kid(d, "dLblPos"), "val");
+  if (pos) spec.position = pos;
+  return Object.keys(spec).length ? spec : undefined;
 }
 
 const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
@@ -143,9 +167,16 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       const dpts = kids(ser, "dPt");
       if (dpts.length) {
         const pc: (string | undefined)[] = [];
-        for (const dp of dpts) { const col = colorOf(dp, theme); if (col) pc[Number(attr(kid(dp, "idx"), "val") || "0")] = col; }
+        const expl: (number | undefined)[] = [];
+        for (const dp of dpts) {
+          const j = Number(attr(kid(dp, "idx"), "val") || "0");
+          const col = colorOf(dp, theme); if (col) pc[j] = col;
+          const e = attr(kid(dp, "explosion"), "val"); if (e != null) expl[j] = Number(e);
+        }
         if (pc.some(Boolean)) s.pointColors = pc;
+        if (expl.some((v) => v != null)) s.explosion = expl;
       }
+      const sl = readDLbls(ser); if (sl) s.labels = sl;
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));
@@ -176,6 +207,11 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     anchor,
     original,
   };
+  if (legendEl) {
+    const del = kids(legendEl, "legendEntry").filter((le) => attr(kid(le, "delete"), "val") === "1").map((le) => Number(attr(kid(le, "idx"), "val") || "0"));
+    if (del.length) model.legend!.deleted = del;
+    if (attr(kid(legendEl, "overlay"), "val") === "1") model.legend!.overlay = true;
+  }
   const catAxTitle = titleText(kid(plot, "catAx") ?? space);
   const valAxTitle = titleText(kid(plot, "valAx") ?? space);
   const bounds = (ax: Element | undefined): { min?: number; max?: number } | undefined => {
@@ -187,8 +223,11 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
   };
   const yb = bounds(kid(plot, "valAx"));
   const yFmt = attr(kid(kid(plot, "valAx"), "numFmt"), "formatCode") ?? undefined;
-  if (catAxTitle || valAxTitle || yb || yFmt) model.axes = { x: catAxTitle ? { title: catAxTitle } : undefined, y: (valAxTitle || yb || yFmt) ? { title: valAxTitle, min: yb?.min, max: yb?.max, numFmt: yFmt } : undefined };
-  if (descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
+  const xDate = !!kid(plot, "dateAx");
+  if (catAxTitle || valAxTitle || yb || yFmt || xDate) model.axes = { x: (catAxTitle || xDate) ? { title: catAxTitle, date: xDate || undefined } : undefined, y: (valAxTitle || yb || yFmt) ? { title: valAxTitle, min: yb?.min, max: yb?.max, numFmt: yFmt } : undefined };
+  const chartLabels = readDLbls(el);
+  if (chartLabels) model.labels = chartLabels;
+  if (chartLabels?.value || descend(el, "showVal").some((v) => attr(v, "val") === "1")) model.dataLabels = true;
   return model;
 }
 

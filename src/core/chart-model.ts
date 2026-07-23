@@ -15,6 +15,24 @@ export interface ChartAxis {
   max?: number;
   /** Number format code for the axis tick labels (e.g. "0.0%", "#,##0"). */
   numFmt?: string;
+  /** The category axis is a date axis (c:dateAx). Rendered as a category axis; preserved on write. */
+  date?: boolean;
+}
+
+/** Data-label content + placement (c:dLbls: showVal/showCatName/showSerName/showPercent + dLblPos). */
+export interface ChartDataLabels {
+  /** Show the numeric value (showVal). */
+  value?: boolean;
+  /** Show the category name (showCatName). */
+  category?: boolean;
+  /** Show the series name (showSerName). */
+  seriesName?: boolean;
+  /** Show the value as a percentage of its category/total (showPercent). */
+  percent?: boolean;
+  /** Show the legend key swatch (showLegendKey). */
+  legendKey?: boolean;
+  /** Label position (c:dLblPos): ctr, inEnd, inBase, outEnd, bestFit, l, r, t, b. */
+  position?: string;
 }
 
 export interface ChartSeries {
@@ -34,6 +52,10 @@ export interface ChartSeries {
   type?: ChartKind;
   /** Plot this series against a secondary (right-hand) value axis. */
   secondaryAxis?: boolean;
+  /** Per-series data labels (c:dLbls on the series); overrides the chart-level labels. */
+  labels?: ChartDataLabels;
+  /** Per-point pie/doughnut slice explosion (c:dPt c:explosion), as a % of the radius. */
+  explosion?: (number | undefined)[];
 }
 
 /** A two-cell anchor in 1-based grid coordinates; offsets are pixels within the from/to cell. */
@@ -65,9 +87,11 @@ export interface ChartModel {
   /** Pie/doughnut first-slice angle (degrees clockwise from top), from c:firstSliceAng. */
   rotation?: number;
   title?: string;
-  legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right" };
-  /** Show the value on each data point. */
+  legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right"; deleted?: number[]; overlay?: boolean };
+  /** Show the value on each data point (the simple UI toggle). */
   dataLabels?: boolean;
+  /** Chart-level data labels (content + position); richer than the dataLabels toggle. */
+  labels?: ChartDataLabels;
   /** Shared category (x) labels; not used for scatter/bubble. */
   categories?: ChartRef;
   series: ChartSeries[];

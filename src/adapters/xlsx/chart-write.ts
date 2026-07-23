@@ -1,5 +1,5 @@
 import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
-import { pxToEmu, type ChartModel, type ChartSeries } from "../../core/chart-model";
+import { pxToEmu, type ChartDataLabels, type ChartModel, type ChartSeries } from "../../core/chart-model";
 import { resolveLabels, resolveNumbers, seriesName } from "../../core/chart-data";
 
 // Write created / edited charts to xlsx DrawingML. Only dirty charts are emitted; a chart read
@@ -20,14 +20,32 @@ const numRef = (ref: string | undefined, cache: (number | null)[]): string => `<
 
 const fillPr = (hex: string): string => `<c:spPr><a:solidFill><a:srgbClr val="${hex.replace("#", "")}"/></a:solidFill></c:spPr>`;
 const markerXml = (m?: { symbol?: string; size?: number }): string => (m ? `<c:marker><c:symbol val="${m.symbol ?? "circle"}"/>${m.size != null ? `<c:size val="${m.size}"/>` : ""}</c:marker>` : "");
+/** A c:dLbls block (chart-level or per-series) from the label content/position flags. */
+function dLblsXml(spec?: ChartDataLabels): string {
+  if (!spec) return "";
+  const b = (v?: boolean): number => (v ? 1 : 0);
+  const pos = spec.position ? `<c:dLblPos val="${spec.position}"/>` : "";
+  return `<c:dLbls>${pos}<c:showLegendKey val="${b(spec.legendKey)}"/><c:showVal val="${b(spec.value)}"/><c:showCatName val="${b(spec.category)}"/><c:showSerName val="${b(spec.seriesName)}"/><c:showPercent val="${b(spec.percent)}"/><c:showBubbleSize val="0"/></c:dLbls>`;
+}
+/** c:dPt elements carrying per-point colour and/or slice explosion. */
+function dPtsXml(s: ChartSeries): string {
+  const n = Math.max(s.pointColors?.length ?? 0, s.explosion?.length ?? 0);
+  let out = "";
+  for (let j = 0; j < n; j++) {
+    const c = s.pointColors?.[j];
+    const e = s.explosion?.[j];
+    if (c == null && e == null) continue;
+    out += `<c:dPt><c:idx val="${j}"/><c:bubble3D val="0"/>${e != null ? `<c:explosion val="${e}"/>` : ""}${c ? fillPr(c) : ""}</c:dPt>`;
+  }
+  return out;
+}
 function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | undefined, catLabels: string[]): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const spPr = s.color ? fillPr(s.color) : "";
-  const dpts = (s.pointColors ?? []).map((c, j) => (c ? `<c:dPt><c:idx val="${j}"/><c:bubble3D val="0"/>${fillPr(c)}</c:dPt>` : "")).join("");
   const cat = catRef ? `<c:cat>${strRef(catRef, catLabels)}</c:cat>` : "";
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dpts}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dPtsXml(s)}${dLblsXml(s.labels)}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
 }
 function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
@@ -35,10 +53,12 @@ function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
   const x = `<c:xVal>${numRef(s.xValues?.ref, resolveNumbers(wb, s.xValues))}</c:xVal>`;
   const y = `<c:yVal>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:yVal>`;
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${dLblsXml(s.labels)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
 }
 
-const catAx = (id: number, cross: number, pos: string, del = false): string => `<c:catAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="${del ? 1 : 0}"/><c:axPos val="${pos}"/><c:crossAx val="${cross}"/></c:catAx>`;
+const catAx = (id: number, cross: number, pos: string, del = false, date = false): string => date
+  ? `<c:dateAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="${del ? 1 : 0}"/><c:axPos val="${pos}"/><c:crossAx val="${cross}"/><c:baseTimeUnit val="days"/></c:dateAx>`
+  : `<c:catAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="${del ? 1 : 0}"/><c:axPos val="${pos}"/><c:crossAx val="${cross}"/></c:catAx>`;
 const valAx = (id: number, cross: number, pos: string, crossesMax = false, bounds?: { min?: number; max?: number; numFmt?: string }): string => {
   const scale = `<c:orientation val="minMax"/>${bounds?.max != null ? `<c:max val="${bounds.max}"/>` : ""}${bounds?.min != null ? `<c:min val="${bounds.min}"/>` : ""}`;
   const fmt = bounds?.numFmt ? `<c:numFmt formatCode="${esc(bounds.numFmt)}" sourceLinked="0"/>` : "";
@@ -69,7 +89,7 @@ function comboBody(model: ChartModel, wb: Workbook, catRef: string | undefined, 
     parts.push(`<c:${local}>${dir}${grp}<c:varyColors val="0"/>${sers}${dLbls}${marker}<c:axId val="${g.secondary ? AX4 : AX1}"/><c:axId val="${g.secondary ? AX3 : AX2}"/></c:${local}>`);
   }
   const hasSecondary = model.series.some((s) => s.secondaryAxis);
-  const axes = catAx(AX1, AX2, "b") + valAx(AX2, AX1, "l", false, model.axes?.y) + (hasSecondary ? valAx(AX3, AX4, "r", true) + catAx(AX4, AX3, "b", true) : "");
+  const axes = catAx(AX1, AX2, "b", false, model.axes?.x?.date === true) + valAx(AX2, AX1, "l", false, model.axes?.y) + (hasSecondary ? valAx(AX3, AX4, "r", true) + catAx(AX4, AX3, "b", true) : "");
   return parts.join("") + axes;
 }
 
@@ -79,7 +99,8 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   const catLabels = resolveLabels(wb, model.categories);
   const AX1 = 111111111;
   const AX2 = 222222222;
-  const dLbls = model.dataLabels ? `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>` : "";
+  const xDate = model.axes?.x?.date === true;
+  const dLbls = dLblsXml(model.labels ?? (model.dataLabels ? { value: true } : undefined));
   const isCombo = ["column", "bar", "line", "area"].includes(model.kind) && model.series.some((s) => (s.type && s.type !== model.kind) || s.secondaryAxis);
   let body: string;
   if (isCombo) {
@@ -96,19 +117,20 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
     } else if (model.kind === "radar") {
       body = `<c:radarChart><c:radarStyle val="marker"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:radarChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
     } else if (model.kind === "line") {
-      body = `<c:lineChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}<c:marker val="1"/><c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:lineChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
+      body = `<c:lineChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}<c:marker val="1"/><c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:lineChart>${catAx(AX1, AX2, "b", false, xDate)}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
     } else if (model.kind === "area") {
-      body = `<c:areaChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:areaChart>${catAx(AX1, AX2, "b")}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
+      body = `<c:areaChart><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:areaChart>${catAx(AX1, AX2, "b", false, xDate)}${valAx(AX2, AX1, "l", false, model.axes?.y)}`;
     } else {
       const dir = model.kind === "bar" ? "bar" : "col";
       const cAxPos = model.kind === "bar" ? "l" : "b";
       const vAxPos = model.kind === "bar" ? "b" : "l";
       const spacing = `${model.gapWidth != null ? `<c:gapWidth val="${model.gapWidth}"/>` : ""}${model.overlap != null ? `<c:overlap val="${model.overlap}"/>` : ""}`;
-      body = `<c:barChart><c:barDir val="${dir}"/><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}${spacing}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:barChart>${catAx(AX1, AX2, cAxPos)}${valAx(AX2, AX1, vAxPos, false, model.axes?.y)}`;
+      body = `<c:barChart><c:barDir val="${dir}"/><c:grouping val="${group}"/><c:varyColors val="0"/>${sers}${dLbls}${spacing}<c:axId val="${AX1}"/><c:axId val="${AX2}"/></c:barChart>${catAx(AX1, AX2, cAxPos, false, model.kind !== "bar" && xDate)}${valAx(AX2, AX1, vAxPos, false, model.axes?.y)}`;
     }
   }
   const title = model.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>${esc(model.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : `<c:autoTitleDeleted val="1"/>`;
-  const legend = model.legend?.show ? `<c:legend><c:legendPos val="${(model.legend.pos ?? "b")[0]}"/><c:overlay val="0"/></c:legend>` : "";
+  const legendEntries = (model.legend?.deleted ?? []).map((i) => `<c:legendEntry><c:idx val="${i}"/><c:delete val="1"/></c:legendEntry>`).join("");
+  const legend = model.legend?.show ? `<c:legend><c:legendPos val="${(model.legend.pos ?? "b")[0]}"/>${legendEntries}<c:overlay val="${model.legend.overlay ? 1 : 0}"/></c:legend>` : "";
   const blanks = model.blanksAs ? `<c:dispBlanksAs val="${model.blanksAs}"/>` : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart>${title}<c:plotArea><c:layout/>${body}</c:plotArea>${legend}<c:plotVisOnly val="1"/>${blanks}</c:chart></c:chartSpace>`;
 }

@@ -127,6 +127,31 @@ describe("xlsx chart writer", () => {
     expect(readWorkbook(writeWorkbook(wb)).sheets[0].charts![0].series[0].color).toBe("#c00000");
   });
 
+  it("Tier-2b round-trips: rich data labels, pie explosion, legend deletion, date axis", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "line", rect, { firstRowHeader: true, firstColLabels: true }, "t2b", defaultAnchor(rect));
+    m.series[0].labels = { value: true, category: true, percent: true, position: "outEnd" };
+    m.legend = { show: true, pos: "bottom", deleted: [1], overlay: true };
+    m.axes = { x: { date: true } };
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].labels).toEqual({ value: true, category: true, percent: true, position: "outEnd" });
+    expect(re.legend?.deleted).toEqual([1]);
+    expect(re.legend?.overlay).toBe(true);
+    expect(re.axes?.x?.date).toBe(true);
+  });
+
+  it("pie slice explosion round-trips", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };
+    const m = buildChart("Sheet1", "pie", rect, { firstRowHeader: true, firstColLabels: true }, "ex", defaultAnchor(rect));
+    m.series[0].explosion = [25, undefined];
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].explosion?.[0]).toBe(25);
+  });
+
   it("doughnut holeSize round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

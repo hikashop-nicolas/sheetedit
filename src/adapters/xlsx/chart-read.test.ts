@@ -54,10 +54,30 @@ function xlsxSchemeColor(): Uint8Array {
   return zipSync(Object.fromEntries(base));
 }
 
+function xlsxMultiLevelCats(): Uint8Array {
+  const chart = `<?xml version="1.0"?><c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>` +
+    `<c:ser><c:idx val="0"/><c:order val="0"/>` +
+    `<c:cat><c:multiLvlStrRef><c:f>Sheet1!$A$2:$B$3</c:f><c:multiLvlStrCache><c:ptCount val="2"/>` +
+    `<c:lvl><c:pt idx="0"><c:v>Jan</c:v></c:pt><c:pt idx="1"><c:v>Feb</c:v></c:pt></c:lvl>` +
+    `<c:lvl><c:pt idx="0"><c:v>Q1</c:v></c:pt></c:lvl>` +
+    `</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>` +
+    `<c:val><c:numRef><c:f>Sheet1!$C$2:$C$3</c:f><c:numCache><c:ptCount val="2"/><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>` +
+    `</c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+  const base = new Map(Object.entries(unzipSync(xlsx())));
+  base.set("xl/drawings/drawing1.xml", strToU8(drawingXml()));
+  base.set("xl/charts/chart1.xml", strToU8(chart));
+  return zipSync(Object.fromEntries(base));
+}
+
 describe("xlsx chart reader", () => {
   it("resolves a schemeClr series colour via the theme", () => {
     const wb = readWorkbook(xlsxSchemeColor());
     expect(wb.sheets[0].charts![0].series[0].color).toBe("#c0504d");
+  });
+
+  it("reads multi-level categories down to the innermost level", () => {
+    const wb = readWorkbook(xlsxMultiLevelCats());
+    expect(wb.sheets[0].charts![0].categories).toEqual({ ref: "Sheet1!$A$2:$B$3", cache: ["Jan", "Feb"] });
   });
 
 
