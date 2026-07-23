@@ -140,7 +140,8 @@ const CHART_ELEMS: { local: string; kind: ChartKind }[] = [
 function colorOf(el: Element, theme: Record<string, string> = {}): string | undefined {
   const spPr = kid(el, "spPr");
   if (!spPr) return undefined;
-  const fill = kid(spPr, "solidFill") ?? kid(spPr, "gradFill");
+  // Fill colour, or (for line series) the line colour in a:ln/solidFill.
+  const fill = kid(spPr, "solidFill") ?? kid(spPr, "gradFill") ?? (kid(spPr, "ln") ? kid(kid(spPr, "ln"), "solidFill") : undefined);
   if (!fill) return undefined;
   const clr = descend(fill, "srgbClr")[0] ?? descend(fill, "schemeClr")[0];
   if (!clr) return undefined;
@@ -239,6 +240,11 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
       const sl = readDLbls(ser); if (sl) s.labels = sl;
       const tl = readTrendline(ser); if (tl) s.trendline = tl;
       const eb = readErrorBars(ser); if (eb) s.errorBars = eb;
+      const ln = kid(kid(ser, "spPr"), "ln");
+      if (ln) {
+        const w = attr(ln, "w"); if (w != null) s.lineWidth = Math.round(Number(w) / 12700 * 100) / 100;
+        const pd = attr(kid(ln, "prstDash"), "val"); if (pd) s.dash = pd;
+      }
       if (ti > 0) s.type = k; // combo: series from a non-base type element carry their kind
       if (isSecondary) s.secondaryAxis = true;
       if (!categories) categories = refOf(kid(ser, "cat"));
@@ -269,6 +275,8 @@ function parseChart(chartDoc: Document, anchor: ChartAnchor, id: string, origina
     rotation: numAttr(pieEl, "firstSliceAng"),
     titleStyle: readTextStyle(kid(chart, "title"), theme),
     legendStyle: readTextStyle(kid(legendEl, "txPr"), theme),
+    plotFill: colorOf(plot, theme),
+    areaFill: colorOf(space, theme),
     threeD: (kind !== "surface" && /3DChart$/.test(el0.localName)) || undefined,
     ofPie: ((): ChartModel["ofPie"] => {
       const op = typeEls.find((e) => e.localName === "ofPieChart");

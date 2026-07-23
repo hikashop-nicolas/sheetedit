@@ -262,6 +262,24 @@ describe("xlsx chart writer", () => {
     expect(re.axes?.y?.labelStyle).toEqual({ color: "#0000ff" });
   });
 
+  it("series line width/dash and plot/area fills round-trip", () => {
+    const wb = readWorkbook(dataXlsx());
+    const rect = { r1: 1, c1: 1, r2: 3, c2: 3 };
+    const m = buildChart("Sheet1", "line", rect, { firstRowHeader: true, firstColLabels: true }, "ln", defaultAnchor(rect));
+    m.series[0].color = "#336699";
+    m.series[0].lineWidth = 3;
+    m.series[0].dash = "dash";
+    m.plotFill = "#f5f5f0";
+    m.areaFill = "#eef2f7";
+    (wb.sheets[0].charts ??= []).push(m);
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].charts![0];
+    expect(re.series[0].color).toBe("#336699");
+    expect(re.series[0].lineWidth).toBe(3);
+    expect(re.series[0].dash).toBe("dash");
+    expect(re.plotFill).toBe("#f5f5f0");
+    expect(re.areaFill).toBe("#eef2f7");
+  });
+
   it("pie slice explosion round-trips", () => {
     const wb = readWorkbook(dataXlsx());
     const rect = { r1: 1, c1: 1, r2: 3, c2: 2 };

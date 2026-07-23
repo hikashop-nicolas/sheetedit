@@ -27,6 +27,14 @@ const catXml = (catRef: string | undefined, catLabels: string[], catLevels?: (st
   catLevels && catLevels.length > 1 ? `<c:cat>${multiLvlStrRef(catRef, catLevels)}</c:cat>` : (catRef ? `<c:cat>${strRef(catRef, catLabels)}</c:cat>` : "");
 
 const fillPr = (hex: string): string => `<c:spPr><a:solidFill><a:srgbClr val="${hex.replace("#", "")}"/></a:solidFill></c:spPr>`;
+const srgb = (hex: string): string => `<a:srgbClr val="${hex.replace("#", "")}"/>`;
+/** A series c:spPr: solid fill and, when a line width/dash is set, an a:ln (with the colour). */
+function serSpPr(s: ChartSeries): string {
+  const fill = s.color ? `<a:solidFill>${srgb(s.color)}</a:solidFill>` : "";
+  const hasLn = s.lineWidth != null || s.dash;
+  const ln = hasLn ? `<a:ln${s.lineWidth != null ? ` w="${Math.round(s.lineWidth * 12700)}"` : ""}>${s.color ? `<a:solidFill>${srgb(s.color)}</a:solidFill>` : ""}${s.dash ? `<a:prstDash val="${s.dash}"/>` : ""}</a:ln>` : "";
+  return fill || ln ? `<c:spPr>${fill}${ln}</c:spPr>` : "";
+}
 const markerXml = (m?: { symbol?: string; size?: number }): string => (m ? `<c:marker><c:symbol val="${m.symbol ?? "circle"}"/>${m.size != null ? `<c:size val="${m.size}"/>` : ""}</c:marker>` : "");
 /** A c:dLbls block (chart-level or per-series) from the label content/position flags. */
 function dLblsXml(spec?: ChartDataLabels): string {
@@ -75,7 +83,7 @@ function serCategory(wb: Workbook, s: ChartSeries, i: number, catRef: string | u
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
-  const spPr = s.color ? fillPr(s.color) : "";
+  const spPr = serSpPr(s);
   const cat = catXml(catRef, catLabels, catLevels);
   return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dPtsXml(s)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${errBarsXml(s.errorBars)}${cat}<c:val>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:val>${s.smooth ? '<c:smooth val="1"/>' : ""}</c:ser>`;
 }
@@ -83,9 +91,10 @@ function serXY(wb: Workbook, s: ChartSeries, i: number): string {
   const name = seriesName(wb, s.name) ?? `Series ${i + 1}`;
   const nameRef = typeof s.name === "object" ? s.name : undefined;
   const tx = nameRef?.ref ? `<c:tx>${strRef(nameRef.ref, [name])}</c:tx>` : `<c:tx><c:v>${esc(name)}</c:v></c:tx>`;
+  const spPr = serSpPr(s);
   const x = `<c:xVal>${numRef(s.xValues?.ref, resolveNumbers(wb, s.xValues))}</c:xVal>`;
   const y = `<c:yVal>${numRef(s.values.ref, resolveNumbers(wb, s.values))}</c:yVal>`;
-  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${markerXml(s.marker)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${errBarsXml(s.errorBars)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
+  return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${spPr}${markerXml(s.marker)}${dLblsXml(s.labels)}${trendlineXml(s.trendline)}${errBarsXml(s.errorBars)}${x}${y}<c:smooth val="${s.smooth ? 1 : 0}"/></c:ser>`;
 }
 
 /** Run-property attributes shared by a:rPr and a:defRPr. */
@@ -209,7 +218,9 @@ export function chartXml(model: ChartModel, wb: Workbook): string {
   const legend = model.legend?.show ? `<c:legend><c:legendPos val="${(model.legend.pos ?? "b")[0]}"/>${legendEntries}<c:overlay val="${model.legend.overlay ? 1 : 0}"/>${txPrXml(model.legendStyle)}</c:legend>` : "";
   const blanks = model.blanksAs ? `<c:dispBlanksAs val="${model.blanksAs}"/>` : "";
   const view3D = d3 ? `<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:depthPercent val="100"/><c:rAngAx val="1"/></c:view3D>` : "";
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart>${title}${view3D}<c:plotArea><c:layout/>${body}</c:plotArea>${legend}<c:plotVisOnly val="1"/>${blanks}</c:chart></c:chartSpace>`;
+  const plotFill = model.plotFill ? fillPr(model.plotFill) : "";
+  const areaFill = model.areaFill ? fillPr(model.areaFill) : "";
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:chart>${title}${view3D}<c:plotArea><c:layout/>${body}${plotFill}</c:plotArea>${legend}<c:plotVisOnly val="1"/>${blanks}</c:chart>${areaFill}</c:chartSpace>`;
 }
 
 function anchorXml(model: ChartModel, chartRid: string, frameId: number): string {

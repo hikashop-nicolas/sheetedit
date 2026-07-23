@@ -328,6 +328,19 @@ export const surfacePlugin = {
   },
 };
 
+interface BgChart { ctx: CanvasRenderingContext2D; width: number; height: number; chartArea: { left: number; right: number; top: number; bottom: number } }
+/** Fills the chart-area (whole canvas) and/or plot-area background from spPr fills. Reads its
+    colours from the plugin options (options.plugins.sheeteditBg). */
+export const backgroundPlugin = {
+  id: "sheeteditBg",
+  beforeDraw(chart: BgChart, _args: unknown, opts: { area?: string; plot?: string } | undefined): void {
+    if (!opts) return;
+    const { ctx, chartArea } = chart;
+    if (opts.area) { ctx.save(); ctx.fillStyle = opts.area; ctx.fillRect(0, 0, chart.width, chart.height); ctx.restore(); }
+    if (opts.plot && chartArea) { ctx.save(); ctx.fillStyle = opts.plot; ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top); ctx.restore(); }
+  },
+};
+
 interface OfPieSec { label: string; value: number; color: string }
 interface Arc { x: number; y: number; startAngle: number; endAngle: number; outerRadius: number }
 interface OfPieChart {

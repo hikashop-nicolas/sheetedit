@@ -72,6 +72,10 @@ export interface ChartSeries {
   trendline?: ChartTrendline;
   /** Error bars on this series (c:errBars). */
   errorBars?: ChartErrorBars;
+  /** Line width in points (a:ln w) for a line/scatter series. */
+  lineWidth?: number;
+  /** Line dash preset (a:prstDash val: solid/dash/dot/dashDot/lgDash/sysDash/...). */
+  dash?: string;
 }
 
 /** A fitted trendline (c:trendline): regression type + display of its equation. */
@@ -150,6 +154,9 @@ export interface ChartModel {
   series: ChartSeries[];
   axes?: { x?: ChartAxis; y?: ChartAxis };
   anchor: ChartAnchor;
+  /** Background fills (c:spPr solidFill): the plot area and the whole chart area. */
+  plotFill?: string;
+  areaFill?: string;
   /** A 3D chart (bar3DChart / pie3DChart / etc.): rendered flat, but re-emitted 3D on write. */
   threeD?: boolean;
   /** Pie-of-pie / bar-of-pie (c:ofPieChart): the last `splitCount` slices break out into a

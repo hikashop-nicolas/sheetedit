@@ -1,10 +1,13 @@
 import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
-import { errorBarsPlugin, ofPiePlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { backgroundPlugin, errorBarsPlugin, ofPiePlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
+// a:prstDash presets -> Chart.js borderDash arrays.
+const DASH_MAP: Record<string, number[]> = { solid: [], dash: [6, 4], dot: [2, 3], dashDot: [6, 3, 2, 3], lgDash: [12, 4], lgDashDot: [12, 4, 2, 4], lgDashDotDot: [12, 4, 2, 4, 2, 4], sysDash: [4, 3], sysDot: [1, 3], sysDashDot: [4, 3, 1, 3], sysDashDotDot: [4, 3, 1, 3, 1, 3] };
+const PT_PX = 4 / 3;
 
 // The chart layer: floats a Chart.js canvas over the grid for every chart on the active sheet,
 // anchored to cells and kept glued while scrolling. The layer sits over the data area (below the
@@ -39,6 +42,7 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(stockPlugin as unknown); // no-ops unless datasets carry stock roles
     ChartJs.register(surfacePlugin as unknown); // no-ops unless datasets carry surface rows
     ChartJs.register(ofPiePlugin as unknown); // no-ops unless a dataset carries an ofPie config
+    ChartJs.register(backgroundPlugin as unknown); // no-ops unless its plugin options carry a fill
   });
   await loading;
   return ChartJs!;
@@ -151,6 +155,9 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     if (s.trendline) base.trendline = { ...s.trendline, color: s.trendline.color ?? palette(i, s.color) };
     // Error bars (drawn by the error-bars plugin).
     if (s.errorBars) base.errorBars = s.errorBars;
+    // Line width / dash (line + scatter series).
+    if (s.lineWidth != null) base.borderWidth = Math.max(1, Math.round(s.lineWidth * PT_PX));
+    if (s.dash) base.borderDash = DASH_MAP[s.dash] ?? [];
     return base;
   });
   // Stock: the O/H/L/C series become invisible scale-carriers; the stock plugin draws the candles.
@@ -233,6 +240,8 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
         title: { display: !!model.title, text: model.title, ...cjFont(model.titleStyle) },
         // Registered globally but off by default; each dataset opts in via its own datalabels config.
         datalabels: { display: false },
+        // Background fills (drawn by the background plugin); absent -> plugin no-ops.
+        ...(model.plotFill || model.areaFill ? { sheeteditBg: { plot: model.plotFill, area: model.areaFill } } : {}),
       },
       ...(scales ? { scales } : {}),
     },
