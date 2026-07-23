@@ -49,9 +49,12 @@ less thing lost when a chart is edited.
 
 ### Tier 4 - styling fidelity
 
-- [ ] Fonts / fills / borders / effects on title, axes, legend, plot area and series (txPr/spPr
-      throughout) mapped onto Chart.js element options where possible.
-- [ ] The chart style + colours parts (style1.xml / colors1.xml) - read a base palette from them.
+- [x] Fonts / colours / bold-italic on the title, legend and axes (labels + titles) via txPr /
+      rich-run rPr; series line width + dash (a:ln / a:prstDash); plot-area and chart-area
+      background fills (spPr). Read + render (Chart.js font/color, borderWidth/borderDash, a
+      background plugin) + write. Also fixed axis titles being read but never written.
+- [x] Base palette from the colours part (colors1.xml via chartColorStyle) or the theme accents,
+      used for series/slices without an explicit colour.
 
 ## Preservation guarantees (keep true throughout)
 
@@ -64,4 +67,6 @@ less thing lost when a chart is edited.
 - (DONE) Tier 1 - all six items shipped, xlsx+ods round-trip tested, LibreOffice-validated (chart:percentage read), 100% stacked browser-verified. Insert dialog gained Stacked + 100% stacked options.
 - (DONE) Tier 2 - smooth lines, series markers, schemeClr/theme colour resolution, axis+label number formats (SSF), pie rotation, rich data labels (content + position, chart + per-series), pie explosion, legend-entry deletion + overlay, ODS secondary axis + data labels, proportional date axis (line/area), multi-level categories (read + preserved on write). xlsx round-trip tested; data-labels + explosion + smooth/marker + date-axis browser-verified; LibreOffice-validated (pie + percentage labels, and the date-axis line chart, survive the xlsx->ods convert). Both earlier caveats closed: date axes now render on a proportional time axis with date-formatted ticks, and editing a multi-level-category chart preserves all levels.
 - (DONE) Tier 3 - trendlines, error bars, stock/candlestick, pie-of-pie/bar-of-pie, surface heatmap, and 3D-on-write all shipped. Rendering uses five dependency-free Chart.js plugins in src/core/ui/chart-plugins.ts (regression math, error whiskers, candlesticks, heatmap, of-pie secondary plot); read + write cover c:trendline, c:errBars, c:stockChart, c:ofPieChart, c:surfaceChart/surface3DChart, and the 3D chart-type elements + c:view3D. Each browser-verified and LibreOffice-validated. Also fixed a scatter/bubble buildChart bug (firstColLabels made x == y).
-- (next) Tier 4 - styling fidelity (txPr/spPr fonts/fills/borders on elements; style1.xml / colors1.xml base palette).
+- (DONE) Tier 4 - element text styling (title/legend/axis fonts, colours, bold/italic), series line width + dash, plot/chart-area background fills, and a base palette from colors1.xml or the theme accents. Read + render + write; each round-trip-tested and browser-verified; LibreOffice keeps the title styling. Axis titles now round-trip (were read-only before).
+
+All four tiers of CHARTS_SPEC_GAPS are complete. Remaining niceties are out of scope of this doc: a live time-scale for date axes (currently proportional-linear), true 3D rendering (rendered flat), and multi-level category axis display (innermost level shown).
