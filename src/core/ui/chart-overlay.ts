@@ -2,6 +2,7 @@ import { formatNumber, type Sheet, type Workbook } from "../model";
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
+import { registerDateAdapter } from "./date-adapter";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -34,7 +35,7 @@ let loading: Promise<void> | null = null;
 /** Lazy-load Chart.js and the data-labels plugin; resolves to the Chart constructor. */
 export async function loadChartJs(): Promise<ChartCtor> {
   if (ChartJs) return ChartJs;
-  loading ??= Promise.all([import("chart.js/auto"), import("chartjs-plugin-datalabels")]).then(([m, dl]) => {
+  loading ??= Promise.all([import("chart.js/auto"), import("chartjs-plugin-datalabels"), import("chart.js")]).then(([m, dl, core]) => {
     ChartJs = (m.default ?? (m as { Chart: ChartCtor }).Chart) as ChartCtor;
     ChartJs.register((dl.default ?? dl) as unknown); // registered globally; per-chart display is opt-in
     ChartJs.register(trendlinePlugin as unknown); // no-ops unless a dataset carries a trendline
@@ -45,6 +46,8 @@ export async function loadChartJs(): Promise<ChartCtor> {
     ChartJs.register(backgroundPlugin as unknown); // no-ops unless its plugin options carry a fill
     ChartJs.register(bar3DPlugin as unknown); // no-ops unless a dataset carries threeDBar
     ChartJs.register(pie3DPlugin as unknown); // no-ops unless a dataset carries threeDPie
+    // Chart.js reads the date adapter from the module-level _adapters singleton, not off the ctor.
+    registerDateAdapter((core as { _adapters?: { _date?: { override(a: unknown): void } } })._adapters); // enables the time scale for date axes
   });
   await loading;
   return ChartJs!;
@@ -83,7 +86,6 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     }
     return null;
   };
-  const fmtDate = (ts: number): string => new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const tss = xDate ? cats.map(toTs) : [];
   const blank = (v: number | null): number | null => (v == null ? (model.blanksAs === "gap" ? null : 0) : v); // "span" also keeps 0/null; spanGaps below connects
   // For a 100% stacked (percentStacked) chart, normalise each category to its total.
@@ -215,7 +217,7 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
   };
   const axisOpts = (title?: string, min?: number, max?: number, fmt?: string, labelStyle?: ChartTextStyle, titleStyle?: ChartTextStyle): Record<string, unknown> => ({ ...(title ? { title: { display: true, text: title, ...cjFont(titleStyle) } } : {}), ...(min != null ? { min } : {}), ...(max != null ? { max } : {}), ...ticksOpt(fmt, labelStyle) });
   const xa = xDate
-    ? { type: "linear", ticks: { callback: (v: unknown) => fmtDate(Number(v)), ...cjFont(model.axes?.x?.labelStyle) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title, ...cjFont(model.axes?.x?.titleStyle) } } : {}) }
+    ? { type: "time", ticks: { ...cjFont(model.axes?.x?.labelStyle) }, ...(model.axes?.x?.title ? { title: { display: true, text: model.axes.x.title, ...cjFont(model.axes?.x?.titleStyle) } } : {}) }
     : axisOpts(model.axes?.x?.title, undefined, undefined, model.axes?.x?.numFmt, model.axes?.x?.labelStyle, model.axes?.x?.titleStyle);
   const ya = axisOpts(model.axes?.y?.title, model.axes?.y?.min, model.percent ? 100 : model.axes?.y?.max, yFmt, model.axes?.y?.labelStyle, model.axes?.y?.titleStyle);
   const catLinear = model.kind === "column" || model.kind === "line" || model.kind === "area" || model.kind === "stock" || model.kind === "surface";
