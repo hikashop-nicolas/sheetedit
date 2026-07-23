@@ -8,6 +8,8 @@ import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core
 
 const SS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
 const CT_WORKSHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 
 /** A workbook-unique sheet name (Excel caps names at 31 chars and forbids []:*?/\\). */
@@ -40,7 +42,7 @@ export function createWorksheet(wb: Workbook, name: string): Sheet {
   let rn = 1;
   while (rids.has(`rId${rn}`)) rn++;
   const rid = `rId${rn}`;
-  const relEl = relsDoc.createElement("Relationship");
+  const relEl = relsDoc.createElementNS(PKG_REL_NS, "Relationship");
   relEl.setAttribute("Id", rid);
   relEl.setAttribute("Type", `${REL_NS}/worksheet`);
   relEl.setAttribute("Target", rel);
@@ -65,7 +67,7 @@ export function createWorksheet(wb: Workbook, name: string): Sheet {
   // Content-type override so the package declares the new part.
   const ct = parseXmlOpt(wb.files["[Content_Types].xml"]);
   if (ct && ct.documentElement.localName === "Types") {
-    const ov = ct.createElement("Override");
+    const ov = ct.createElementNS(CT_NS, "Override");
     ov.setAttribute("PartName", `/${path}`);
     ov.setAttribute("ContentType", CT_WORKSHEET);
     ct.documentElement.appendChild(ov);

@@ -83,12 +83,15 @@ function anchorXml(model: ChartModel, chartRid: string, frameId: number): string
 
 const CT_CHART = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 const CT_DRAWING = "application/vnd.openxmlformats-officedocument.drawing+xml";
+const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
+const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 function addContentType(wb: Workbook, partPath: string, ct: string): void {
   const doc = parseXmlOpt(wb.files["[Content_Types].xml"]);
   if (!doc || doc.documentElement.localName !== "Types") return;
   if (Array.from(doc.getElementsByTagName("Override")).some((o) => o.getAttribute("PartName") === `/${partPath}`)) return;
-  const ov = doc.createElement("Override");
+  // createElementNS in the content-types namespace so it inherits the root default (no xmlns="").
+  const ov = doc.createElementNS(CT_NS, "Override");
   ov.setAttribute("PartName", `/${partPath}`);
   ov.setAttribute("ContentType", ct);
   doc.documentElement.appendChild(ov);
@@ -98,12 +101,12 @@ function addContentType(wb: Workbook, partPath: string, ct: string): void {
 /** Add a relationship to a .rels part (creating it), returning the new id. */
 function addRel(wb: Workbook, relsPath: string, type: string, target: string): string {
   let doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
-  if (!doc) doc = parseXmlOpt(new TextEncoder().encode(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`))!;
+  if (!doc) doc = parseXmlOpt(new TextEncoder().encode(`<Relationships xmlns="${REL_NS}"></Relationships>`))!;
   const ids = new Set(Array.from(doc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
   let n = 1;
   while (ids.has(`rId${n}`)) n++;
   const id = `rId${n}`;
-  const rel = doc.createElement("Relationship");
+  const rel = doc.createElementNS(REL_NS, "Relationship");
   rel.setAttribute("Id", id);
   rel.setAttribute("Type", type);
   rel.setAttribute("Target", target);
@@ -132,12 +135,14 @@ function ensureSheetDrawing(wb: Workbook, sheet: Sheet): string {
   wb.files[path] = new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="${XDR}" xmlns:a="${A}"></xdr:wsDr>`);
   addContentType(wb, path, CT_DRAWING);
   const rid = addRel(wb, sheetRels, `${R}/drawing`, `../drawings/drawing${n}.xml`);
-  // Add <drawing r:id> to the worksheet XML (namespaced, after sheetData per the schema).
+  // Add <drawing r:id> to the worksheet XML. Ensure xmlns:r is declared on the root so the
+  // attribute serializes as the conventional r:id (not a generated ns prefix).
   const wsDoc = parseXmlOpt(wb.files[sheet.path!]);
   const SS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
   if (wsDoc && !Array.from(wsDoc.getElementsByTagName("*")).some((e) => e.localName === "drawing")) {
+    if (!wsDoc.documentElement.getAttribute("xmlns:r")) wsDoc.documentElement.setAttribute("xmlns:r", R);
     const d = wsDoc.createElementNS(SS, "drawing");
-    d.setAttributeNS(R, "r:id", rid);
+    d.setAttribute("r:id", rid);
     wsDoc.documentElement.appendChild(d);
     wb.files[sheet.path!] = serializeXml(wsDoc);
     sheet.doc = wsDoc;
