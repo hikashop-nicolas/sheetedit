@@ -36,15 +36,16 @@ less thing lost when a chart is edited.
 
 ### Tier 3 - needs a plugin or custom draw
 
-- [ ] Trendlines (c:trendline: linear/exp/log/poly/power/movingAvg) via a Chart.js plugin or custom.
-- [ ] Error bars (c:errBars) via chartjs-plugin-error-bars or custom.
-- [ ] stockChart (high-low-close / open-high-low-close) via a candlestick plugin or custom draw.
-- [ ] ofPieChart (pie-of-pie / bar-of-pie) - approximate (a pie + a secondary breakdown).
-- [ ] surfaceChart / surface3DChart - no 2D equivalent; render a heatmap-ish fallback or leave a
-      placeholder that preserves the original on save.
-- [ ] 3D chart scene (view3D/floor/walls): keep rendering 2D, but on WRITE of an edited 3D chart,
-      emit the 3D chart-type element (bar3DChart etc.) + a minimal view3D so it stays 3D in Excel
-      instead of silently flattening.
+- [x] Trendlines (c:trendline: linear/exp/log/poly/power/movingAvg) via a dependency-free plugin
+      (regressions computed in-house); equation + R-squared display.
+- [x] Error bars (c:errBars) via a dependency-free plugin (fixedVal/percentage/stdDev/stdErr/cust).
+- [x] stockChart (high-low-close / open-high-low-close): rendered as candlesticks / HLC bars by a
+      plugin over invisible scale-carrier series.
+- [x] ofPieChart (pie-of-pie / bar-of-pie): main pie + "Other" aggregate, with the breakout drawn
+      as a secondary pie or bar in a reserved strip.
+- [x] surfaceChart / surface3DChart: rendered as a heatmap (series x categories, value -> colour).
+- [x] 3D chart scene: rendered 2D; on write an edited 3D chart re-emits the 3D chart-type element
+      (bar3DChart etc.) + a minimal view3D so it stays 3D in Excel.
 
 ### Tier 4 - styling fidelity
 
@@ -62,4 +63,5 @@ less thing lost when a chart is edited.
 
 - (DONE) Tier 1 - all six items shipped, xlsx+ods round-trip tested, LibreOffice-validated (chart:percentage read), 100% stacked browser-verified. Insert dialog gained Stacked + 100% stacked options.
 - (DONE) Tier 2 - smooth lines, series markers, schemeClr/theme colour resolution, axis+label number formats (SSF), pie rotation, rich data labels (content + position, chart + per-series), pie explosion, legend-entry deletion + overlay, ODS secondary axis + data labels, proportional date axis (line/area), multi-level categories (read + preserved on write). xlsx round-trip tested; data-labels + explosion + smooth/marker + date-axis browser-verified; LibreOffice-validated (pie + percentage labels, and the date-axis line chart, survive the xlsx->ods convert). Both earlier caveats closed: date axes now render on a proportional time axis with date-formatted ticks, and editing a multi-level-category chart preserves all levels.
-- (next) Tier 3 - trendlines, error bars, stock/candlestick, ofPie, surface, 3D-on-write.
+- (DONE) Tier 3 - trendlines, error bars, stock/candlestick, pie-of-pie/bar-of-pie, surface heatmap, and 3D-on-write all shipped. Rendering uses five dependency-free Chart.js plugins in src/core/ui/chart-plugins.ts (regression math, error whiskers, candlesticks, heatmap, of-pie secondary plot); read + write cover c:trendline, c:errBars, c:stockChart, c:ofPieChart, c:surfaceChart/surface3DChart, and the 3D chart-type elements + c:view3D. Each browser-verified and LibreOffice-validated. Also fixed a scatter/bubble buildChart bug (firstColLabels made x == y).
+- (next) Tier 4 - styling fidelity (txPr/spPr fonts/fills/borders on elements; style1.xml / colors1.xml base palette).
