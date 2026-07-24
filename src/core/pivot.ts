@@ -13,12 +13,25 @@ import { getCell, numToStr } from "./model";
 
 export type PivotFunc = "sum" | "count" | "countNums" | "average" | "min" | "max";
 
+/** "Show values as" display transforms for a value field. */
+export type PivotShowAs = "normal" | "percentOfTotal" | "percentOfRow" | "percentOfCol" | "runningTotal";
+
+/** A value field: either an aggregation of a source column, or a calculated field (a formula over
+    the source columns' sums). `showAs` re-expresses the result (e.g. as a % of the total). */
+export interface PivotValue {
+  field?: number; // source column index for an aggregated value
+  func?: PivotFunc; // aggregation for an aggregated value
+  calc?: string; // formula over field names for a calculated field (e.g. "Revenue - Cost")
+  name?: string; // display name for a calculated field
+  showAs?: PivotShowAs;
+}
+
 export interface PivotSpec {
   /** 1-based inclusive source range; the header row is r1. */
   source: { r1: number; c1: number; r2: number; c2: number };
   rows: number[]; // field indices, 0-based within the source columns
   cols: number[];
-  values: { field: number; func: PivotFunc }[];
+  values: PivotValue[];
   /** Report/page filters: a field restricted to one item (null = All). */
   pages?: { field: number; item: number | null }[];
   /** Show per-group subtotals for the outer nested fields (Excel default when nested). */
@@ -29,7 +42,7 @@ export interface PivotItem { label: string; value: string | number; num: boolean
 interface PivotFieldInfo { index: number; name: string; items: PivotItem[]; indexOf: Map<string, number>; }
 interface PivotRecord { cells: { value: string | number | null; num: boolean }[]; }
 
-export interface PivotOutCell { value: string | number; kind: "s" | "n"; bold?: boolean; }
+export interface PivotOutCell { value: string | number; kind: "s" | "n"; bold?: boolean; numFmt?: string; }
 
 /** One line of a row/column axis: a leaf data line, a per-group subtotal, or the grand total.
     `key` holds the item indices down to this line's depth (empty for grand). */
@@ -59,6 +72,38 @@ const FUNC_LABEL: Record<PivotFunc, string> = { sum: "Sum", count: "Count", coun
 
 export function pivotValueLabel(func: PivotFunc, name: string): string {
   return `${FUNC_LABEL[func]} - ${name}`;
+}
+
+/** Display label of a value field (aggregated or calculated). */
+export function pivotValueName(v: PivotValue, fieldName: (i: number) => string): string {
+  return v.calc != null ? (v.name || "Calc") : pivotValueLabel(v.func ?? "sum", fieldName(v.field ?? 0));
+}
+
+// Tiny arithmetic evaluator for calculated-field formulas: numbers, + - * / ^, parentheses, and
+// references to source field names (longest known-name match first, so multi-word names work
+// unquoted; 'quoted' names are also accepted). Missing operands collapse the result to null.
+interface CalcAst { refs: Set<number>; eval: (sumOf: (field: number) => number | null) => number | null; }
+export function parseCalc(formula: string, names: string[]): CalcAst {
+  const nameIdx = names.map((n, i) => [n, i] as [string, number]).filter(([n]) => n).sort((a, b) => b[0].length - a[0].length);
+  const refs = new Set<number>();
+  const s = formula;
+  let pos = 0;
+  const ws = () => { while (pos < s.length && /\s/.test(s[pos]!)) pos++; };
+  type Node = (sumOf: (f: number) => number | null) => number | null;
+  const primary = (): Node => {
+    ws();
+    if (s[pos] === "(") { pos++; const e = expr(); ws(); if (s[pos] === ")") pos++; return e; }
+    for (const [nm, idx] of nameIdx) if (s.startsWith(nm, pos)) { pos += nm.length; refs.add(idx); return (sumOf) => sumOf(idx); }
+    if (s[pos] === "'") { const end = s.indexOf("'", pos + 1); const nm = s.slice(pos + 1, end < 0 ? s.length : end); pos = (end < 0 ? s.length : end) + 1; const idx = names.indexOf(nm); if (idx >= 0) refs.add(idx); return (sumOf) => (idx >= 0 ? sumOf(idx) : 0); }
+    const m = /^\d+(\.\d+)?/.exec(s.slice(pos)); if (m) { pos += m[0].length; const n = Number(m[0]); return () => n; }
+    pos++; return () => null;
+  };
+  const unary = (): Node => { ws(); if (s[pos] === "-") { pos++; const u = unary(); return (f) => { const v = u(f); return v == null ? null : -v; }; } return primary(); };
+  const pow = (): Node => { const b = unary(); ws(); if (s[pos] === "^") { pos++; const e = pow(); return (f) => { const x = b(f), y = e(f); return x == null || y == null ? null : Math.pow(x, y); }; } return b; };
+  const term = (): Node => { let n = pow(); for (;;) { ws(); const op = s[pos]; if (op !== "*" && op !== "/") break; pos++; const r = pow(); const l = n; n = (f) => { const a = l(f), b = r(f); if (a == null || b == null) return null; return op === "*" ? a * b : b === 0 ? null : a / b; }; } return n; };
+  const expr = (): Node => { let n = term(); for (;;) { ws(); const op = s[pos]; if (op !== "+" && op !== "-") break; pos++; const r = term(); const l = n; n = (f) => { const a = l(f), b = r(f); if (a == null || b == null) return null; return op === "+" ? a + b : a - b; }; } return n; };
+  const root = expr();
+  return { refs, eval: (sumOf) => root(sumOf) };
 }
 
 /** The distinct sorted items of one source column (same order the engine indexes them), so a page
@@ -183,23 +228,36 @@ export function computePivot(sheet: Sheet, spec: PivotSpec): PivotComputed {
   const subtotals = !!spec.subtotals;
   const rowAxis = buildAxis(rowKeys, spec.rows.length, subtotals);
   const colAxis = buildAxis(colKeys, spec.cols.length, subtotals);
-  const valueLabels = spec.values.map((v) => pivotValueLabel(v.func, fields[v.field]!.name));
+  const nameOf = (i: number): string => fields[i]!.name;
+  const valueLabels = spec.values.map((v) => pivotValueName(v, nameOf));
   const pageItems = pages.map((p) => ({ field: p.field, items: fields[p.field]!.items }));
 
-  // Per full (rowKey,colKey) accumulators; agg merges the subset a prefix / grand covers.
+  // Parse calculated fields once, and collect the source columns any value depends on.
+  const calcs = spec.values.map((v) => (v.calc != null ? parseCalc(v.calc, fields.map((f) => f.name)) : null));
+  const measured = new Set<number>();
+  spec.values.forEach((v, vi) => { if (calcs[vi]) calcs[vi]!.refs.forEach((r) => measured.add(r)); else if (v.field != null) measured.add(v.field); });
+  const measuredArr = [...measured];
+
+  // Per full (rowKey,colKey) accumulators, per source column; aggField merges the subset a prefix /
+  // grand covers. Calculated fields evaluate their formula over each referenced column's sum.
   const keyOf = (rec: PivotRecord, objs: PivotFieldInfo[]): string => objs.map((f) => fields[f.index]!.indexOf.get(itemKey(recItem(rec.cells[f.index]!))) ?? 0).join(",");
   const cellAcc = new Map<string, Acc[]>();
-  const bucket = (k: string): Acc[] => { let a = cellAcc.get(k); if (!a) { a = spec.values.map(newAcc); cellAcc.set(k, a); } return a; };
+  const bucket = (k: string): Acc[] => { let a = cellAcc.get(k); if (!a) { a = Array.from({ length: width }, newAcc); cellAcc.set(k, a); } return a; };
   for (const rec of filtered) {
     const accs = bucket(keyOf(rec, rowFieldObjs) + "|" + keyOf(rec, colFieldObjs));
-    spec.values.forEach((v, vi) => accumulate(accs[vi]!, rec.cells[v.field]!));
+    for (const c of measuredArr) accumulate(accs[c]!, rec.cells[c]!);
   }
-  const agg = (rowKey: number[] | null, colKey: number[] | null, vi: number): number | null => {
+  const aggField = (rowKey: number[] | null, colKey: number[] | null, field: number, func: PivotFunc): number | null => {
     const acc = newAcc();
     const rks = rowKey === null ? rowKeys : rowKeys.filter((k) => prefixOf(k, rowKey));
     const cks = colKey === null ? colKeys : colKeys.filter((k) => prefixOf(k, colKey));
-    for (const rk of rks) for (const ck of cks) { const a = cellAcc.get(rk.join(",") + "|" + ck.join(",")); if (a) merge(acc, a[vi]!); }
-    return finalize(acc, spec.values[vi]!.func);
+    for (const rk of rks) for (const ck of cks) { const a = cellAcc.get(rk.join(",") + "|" + ck.join(",")); if (a) merge(acc, a[field]!); }
+    return finalize(acc, func);
+  };
+  const agg = (rowKey: number[] | null, colKey: number[] | null, vi: number): number | null => {
+    const v = spec.values[vi]!;
+    if (calcs[vi]) return calcs[vi]!.eval((f) => aggField(rowKey, colKey, f, "sum"));
+    return aggField(rowKey, colKey, v.field!, v.func ?? "sum");
   };
 
   const built = materialize(spec, rowFieldObjs, colFieldObjs, rowAxis, colAxis, valueLabels, agg);
@@ -251,15 +309,32 @@ function materialize(
   for (let k = 0; k < R; k++) S(nameRow, k, rowFieldObjs[k]!.name, true);
   if (R === 0) S(nameRow, 0, "Total", true);
 
+  // "Show values as" transform for a data cell; also flags a percentage number format. Running
+  // total accumulates down the leaf rows within each (column, value).
+  const runAcc = new Map<string, number>();
+  const showValue = (rn: AxisNode, colKey: number[] | null, vi: number): { v: number | null; pct: boolean } => {
+    const showAs = spec.values[vi]?.showAs ?? "normal";
+    const rowKey = rn.kind === "grand" ? null : rn.key;
+    const raw = agg(rowKey, colKey, vi);
+    if (raw === null) return { v: null, pct: false };
+    if (showAs === "percentOfTotal") { const t = agg(null, null, vi); return { v: t ? raw / t : 0, pct: true }; }
+    if (showAs === "percentOfCol") { const t = agg(null, colKey, vi); return { v: t ? raw / t : 0, pct: true }; }
+    if (showAs === "percentOfRow") { const t = agg(rowKey, null, vi); return { v: t ? raw / t : 0, pct: true }; }
+    if (showAs === "runningTotal") {
+      if (rn.kind !== "leaf") return { v: null, pct: false };
+      const rk = `${vi}|${colKey?.join(",") ?? "*"}`;
+      const cum = (runAcc.get(rk) ?? 0) + raw; runAcc.set(rk, cum); return { v: cum, pct: false };
+    }
+    return { v: raw, pct: false };
+  };
   // Body rows from the row axis (leaf / subtotal / grand).
   let rr = headerRows;
   for (const rn of rowAxis) {
-    const rowKey = rn.kind === "grand" ? null : rn.key;
     const bold = rn.kind !== "leaf";
     if (rn.kind === "grand") S(rr, 0, "Grand Total", true);
     else if (rn.kind === "subtotal") S(rr, rn.key.length - 1, `${rowFieldObjs[rn.key.length - 1]!.items[rn.key[rn.key.length - 1]!]!.label} Total`, true);
     else for (let k = 0; k < R; k++) S(rr, k, rowFieldObjs[k]!.items[rn.key[k]!]!.label);
-    dcols.forEach((d, j) => { const v = agg(rowKey, colKeyOf(d.node), d.vi); if (v !== null) S(rr, headerCols + j, v, bold); });
+    dcols.forEach((d, j) => { const { v, pct } = showValue(rn, colKeyOf(d.node), d.vi); if (v !== null) { S(rr, headerCols + j, v, bold); if (pct) matrix[rr]![headerCols + j]!.numFmt = "0.00%"; } });
     rr++;
   }
   return { matrix, width, height: matrix.length, headerRows, headerCols };

@@ -114,8 +114,24 @@ export function writeXlsxPivotParts(
   const isCol = (c: number) => spec.cols.includes(c);
   const isPage = (c: number) => pages.some((p) => p.field === c);
   const isGroup = (c: number) => isRow(c) || isCol(c) || isPage(c);
-  const isVal = (c: number) => spec.values.some((v) => v.field === c);
+  const isVal = (c: number) => spec.values.some((v) => v.calc == null && v.field === c);
   const sub = !!spec.subtotals;
+  // Calculated fields become extra cacheFields (databaseField="0" + a formula), indexed after the
+  // source columns; each value field's `fld` resolves to its source column or its calc cacheField.
+  let calcN = 0;
+  const fldOf = spec.values.map((v) => (v.calc != null ? width + calcN++ : v.field ?? 0));
+  const calcFieldsXml = spec.values.filter((v) => v.calc != null).map((v, i) => `<cacheField name="${esc(v.name || `Calc${i + 1}`)}" databaseField="0" numFmtId="0" formula="${esc(v.calc!)}"><sharedItems containsSemiMixedTypes="0" containsString="0" containsNumber="1"/></cacheField>`).join("");
+  const totalFields = width + calcN;
+  // "Show values as": the OOXML showDataAs value + a percent number format / running-total base.
+  const showAsAttr = (v: (typeof spec.values)[number]): string => {
+    switch (v.showAs) {
+      case "percentOfTotal": return ' showDataAs="percentOfTotal" numFmtId="10"';
+      case "percentOfCol": return ' showDataAs="percentOfCol" numFmtId="10"';
+      case "percentOfRow": return ' showDataAs="percentOfRow" numFmtId="10"';
+      case "runningTotal": return ` showDataAs="runTotal" baseField="${spec.rows[0] ?? 0}"`;
+      default: return "";
+    }
+  };
 
   // --- cacheDefinition: cacheFields (sharedItems for grouping/page fields; type flags otherwise) ---
   let cacheFields = "";
@@ -133,7 +149,7 @@ export function writeXlsxPivotParts(
   }
   const cacheDef = `<pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${OREL}" r:id="rId1" refreshOnLoad="1" refreshedBy="sheetedit" recordCount="${computed.records.length}" createdVersion="3">`
     + `<cacheSource type="worksheet"><worksheetSource ref="${rangeRef(spec.source)}" sheet="${esc(sourceSheetName)}"/></cacheSource>`
-    + `<cacheFields count="${width}">${cacheFields}</cacheFields></pivotCacheDefinition>`;
+    + `<cacheFields count="${totalFields}">${cacheFields}${calcFieldsXml}</cacheFields></pivotCacheDefinition>`;
 
   // --- cacheRecords: <x v> for grouping fields, literal <n>/<s>/<m/> otherwise ---
   let recs = "";
@@ -167,6 +183,8 @@ export function writeXlsxPivotParts(
     } else if (isVal(c)) pivotFields += `<pivotField dataField="1" compact="0" showAll="0"/>`;
     else pivotFields += `<pivotField compact="0" showAll="0"/>`;
   }
+  // A pivotField per calculated field (they sit after the source columns as data fields).
+  for (let i = 0; i < calcN; i++) pivotFields += `<pivotField dataField="1" compact="0" showAll="0"/>`;
   const R = spec.rows.length, C = spec.cols.length;
   const rowFields = R ? `<rowFields count="${R}">${spec.rows.map((c) => `<field x="${c}"/>`).join("")}</rowFields>` : "";
   const rowItems = `<rowItems count="${computed.rowAxis.length}">${axisXml(computed.rowAxis)}</rowItems>`;
@@ -174,13 +192,17 @@ export function writeXlsxPivotParts(
   const colItems = C ? `<colItems count="${computed.colAxis.length}">${axisXml(computed.colAxis)}</colItems>` : `<colItems count="1"><i/></colItems>`;
   const pageFields = pages.length ? `<pageFields count="${pages.length}">${pages.map((p) => `<pageField fld="${p.field}"${p.item != null ? ` item="${p.item}"` : ""} hier="-1"/>`).join("")}</pageFields>` : "";
   const dataFields = `<dataFields count="${spec.values.length}">`
-    + spec.values.map((v) => `<dataField name="${esc(pivotValueLabel(v.func, computed.fields[v.field]!.name))}" fld="${v.field}" subtotal="${v.func}"/>`).join("")
+    + spec.values.map((v, vi) => {
+      const name = v.calc != null ? (v.name || "Calc") : pivotValueLabel(v.func ?? "sum", computed.fields[v.field ?? 0]!.name);
+      const subtotal = v.calc != null ? "sum" : (v.func ?? "sum");
+      return `<dataField name="${esc(name)}" fld="${fldOf[vi]}" subtotal="${subtotal}"${showAsAttr(v)}/>`;
+    }).join("")
     + `</dataFields>`;
   const loc = { r1: anchor.row, c1: anchor.col, r2: anchor.row + computed.height - 1, c2: anchor.col + computed.width - 1 };
   const pageCounts = pages.length ? ` rowPageCount="1" colPageCount="1"` : "";
   const location = `<location ref="${rangeRef(loc)}" firstHeaderRow="1" firstDataRow="${computed.headerRows}" firstDataCol="${computed.headerCols}"${pageCounts}/>`;
   const table = `<pivotTableDefinition xmlns="${MAIN}" name="${esc(destSheet.name === "" ? "PivotTable" : "PivotTable" + m)}" cacheId="${cacheId}" dataOnRows="0" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="0" dataCaption="Values" showDrill="0" useAutoFormatting="0" itemPrintTitles="1" indent="0" outline="1" outlineData="1" compact="1" compactData="1">`
-    + location + `<pivotFields count="${width}">${pivotFields}</pivotFields>` + rowFields + rowItems + colFields + colItems + pageFields + dataFields
+    + location + `<pivotFields count="${totalFields}">${pivotFields}</pivotFields>` + rowFields + rowItems + colFields + colItems + pageFields + dataFields
     + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
 
   // --- write parts + wiring ---

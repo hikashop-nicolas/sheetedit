@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Sheet } from "./model";
 import { ensureCell } from "./model";
-import { computePivot, pivotValueLabel, type PivotSpec } from "./pivot";
+import { computePivot, parseCalc, pivotValueLabel, type PivotSpec } from "./pivot";
 
 // Build the Region/Product/Sales sheet used by the LibreOffice reference fixtures.
 function sampleSheet(): Sheet {
@@ -96,6 +96,38 @@ describe("pivot compute engine", () => {
     const spec: PivotSpec = { source: SRC, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }] };
     const p = computePivot(sampleSheet(), spec);
     expect(p.colAxis.map((n) => n.kind)).toEqual(["leaf", "leaf", "grand"]);
+  });
+
+  it("shows values as a percentage of the grand total", () => {
+    const spec: PivotSpec = { source: SRC, rows: [0], cols: [], values: [{ field: 2, func: "sum", showAs: "percentOfTotal" }] };
+    const p = computePivot(sampleSheet(), spec);
+    // rows=[Region], no col, 1 value: row 0 header, row 1 North, row 2 South, row 3 grand.
+    expect(p.matrix[1]![1]!.value).toBeCloseTo(190 / 350);
+    expect(p.matrix[1]![1]!.numFmt).toBe("0.00%");
+    expect(p.matrix[2]![1]!.value).toBeCloseTo(160 / 350);
+    expect(p.matrix[3]![1]!.value).toBeCloseTo(1); // grand / grand
+  });
+
+  it("accumulates a running total down the rows", () => {
+    const spec: PivotSpec = { source: SRC, rows: [0], cols: [], values: [{ field: 2, func: "sum", showAs: "runningTotal" }] };
+    const p = computePivot(sampleSheet(), spec);
+    expect(p.matrix[1]![1]!.value).toBe(190); // North
+    expect(p.matrix[2]![1]!.value).toBe(350); // North + South
+  });
+
+  it("computes a calculated field from a formula over source fields", () => {
+    const spec: PivotSpec = { source: SRC, rows: [0], cols: [], values: [{ calc: "Sales * 2", name: "Double" }] };
+    const p = computePivot(sampleSheet(), spec);
+    expect(p.valueLabels[0]).toBe("Double");
+    expect(p.agg([0], null, 0)).toBe(380); // North sum(190) * 2
+    expect(p.agg([1], null, 0)).toBe(320); // South sum(160) * 2
+    expect(p.agg(null, null, 0)).toBe(700); // grand 350 * 2
+  });
+
+  it("parses calculated-field formulas with precedence and field refs", () => {
+    const ast = parseCalc("Sales * 2 + 10", ["Region", "Product", "Sales"]);
+    expect([...ast.refs]).toEqual([2]);
+    expect(ast.eval((f) => (f === 2 ? 100 : null))).toBe(210);
   });
 
   it("filters records by a report/page selection", () => {

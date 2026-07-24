@@ -90,6 +90,23 @@ describe("xlsx pivot tables", () => {
     expect(getCell(host, 4, 4)?.value).toBe("350");
   });
 
+  it("emits showDataAs for a percentage value and a calculated cacheField", async () => {
+    const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [], values: [{ field: 2, func: "sum", showAs: "percentOfTotal" }, { calc: "Sales * 2", name: "Double" }] };
+    const out = placeAndWrite(await realBytes("pivot.xlsx"), spec);
+    const files = unzipSync(out);
+    const table = strFromU8(files[Object.keys(files).find((k) => /pivotTables\/pivotTable2\.xml$/.test(k))!]!);
+    expect(table).toContain('showDataAs="percentOfTotal"');
+    expect(table).toContain('name="Double"');
+    const cache = strFromU8(files[Object.keys(files).find((k) => /pivotCacheDefinition2\.xml$/.test(k))!]!);
+    expect(cache).toContain('databaseField="0" numFmtId="0" formula="Sales * 2"');
+    // Re-read reconstructs both the showAs and the calculated field.
+    const back = readWorkbook(out);
+    const av = back.sheets.find((s) => s.name === "Out")!.pivotTables![0]!.authorSpec!.values;
+    expect(av[0]!.showAs).toBe("percentOfTotal");
+    expect(av[1]!.calc).toBe("Sales * 2");
+    expect(av[1]!.name).toBe("Double");
+  });
+
   it("deletes an authored pivot cleanly (parts, cache, wiring all removed)", async () => {
     const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }] };
     const wb = readWorkbook(await realBytes("pivot.xlsx"));

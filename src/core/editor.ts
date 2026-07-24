@@ -14,7 +14,7 @@ import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellCha
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
-import { computePivot, pivotColumnItems, pivotValueLabel, type PivotFunc, type PivotSpec } from "./pivot";
+import { computePivot, pivotColumnItems, pivotValueName, type PivotFunc, type PivotShowAs, type PivotSpec, type PivotValue } from "./pivot";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2590,7 +2590,13 @@ export function createSheetEditor(
     for (let r = rect.r1; r <= rect.r2; r++) for (let c = rect.c1; c <= rect.c2; c++) if (getCell(sheet, r, c)) setCellInput(sheet, r, c, "");
   };
   const placeMatrix = (sheet: Sheet, matrix: import("./pivot").PivotOutCell[][], anchor: { r: number; c: number }): void => {
-    for (let r = 0; r < matrix.length; r++) for (let c = 0; c < matrix[r]!.length; c++) { const cell = matrix[r]![c]!; if (cell.value !== "") setCellInput(sheet, anchor.r + r, anchor.c + c, String(cell.value)); }
+    for (let r = 0; r < matrix.length; r++) for (let c = 0; c < matrix[r]!.length; c++) {
+      const cell = matrix[r]![c]!;
+      if (cell.value === "") continue;
+      const rr = anchor.r + r, cc = anchor.c + c;
+      setCellInput(sheet, rr, cc, String(cell.value));
+      if (cell.numFmt) { const m = ensureCell(sheet, rr, cc); if (wb.kind === "ods") setOdsCellNumFmt(wb, sheet, m, cell.numFmt); else setXlsxCellNumFmt(wb, sheet, m, cell.numFmt); }
+    }
   };
   // Emit a pivot (compute + place + write the format definition) onto dest at anchor, returning the
   // model to store on the sheet. Shared by create, edit and refresh.
@@ -2609,7 +2615,7 @@ export function createSheetEditor(
       rowFields: spec.rows.map((c) => computed.fields[c]!.name),
       colFields: spec.cols.map((c) => computed.fields[c]!.name),
       pageFields: (spec.pages ?? []).map((p) => computed.fields[p.field]!.name),
-      dataFields: spec.values.map((v) => ({ name: pivotValueLabel(v.func, computed.fields[v.field]!.name), func: v.func })),
+      dataFields: spec.values.map((v) => ({ name: pivotValueName(v, (i) => computed.fields[i]!.name), func: v.func })),
       authorSpec: spec, part, cachePart, hostSheet: dest.name,
     };
   };
@@ -2657,12 +2663,14 @@ export function createSheetEditor(
     const width = spec.source.c2 - spec.source.c1 + 1;
     const roles = Array.from({ length: width }, () => "unused");
     const funcs = Array.from({ length: width }, () => "sum");
+    const showAs = Array.from({ length: width }, () => "normal");
     const pageItems: (number | null)[] = Array.from({ length: width }, () => null);
     for (const i of spec.rows) roles[i] = "rows";
     for (const i of spec.cols) roles[i] = "columns";
-    for (const v of spec.values) { roles[v.field] = "values"; funcs[v.field] = v.func; }
+    for (const v of spec.values) if (v.field != null && v.calc == null) { roles[v.field] = "values"; funcs[v.field] = v.func ?? "sum"; showAs[v.field] = v.showAs ?? "normal"; }
     for (const p of spec.pages ?? []) { roles[p.field] = "page"; pageItems[p.field] = p.item; }
-    openPivotDialog({ sheet: srcSheet, range: { ...spec.source }, initial: { roles, funcs, pageItems, subtotals: !!spec.subtotals }, onApply: (ns) => applyPivotEdit(host, info, ns) });
+    const calcFields = spec.values.filter((v) => v.calc != null).map((v) => ({ name: v.name ?? "Calc", formula: v.calc! }));
+    openPivotDialog({ sheet: srcSheet, range: { ...spec.source }, initial: { roles, funcs, showAs, pageItems, subtotals: !!spec.subtotals, calcFields }, onApply: (ns) => applyPivotEdit(host, info, ns) });
   };
   // A small action menu shown when a pivot's overlay tag is clicked: refresh or edit an authored
   // pivot (pivots read from a file are read-only in place; open in Excel/LibreOffice to change them).
@@ -2689,22 +2697,24 @@ export function createSheetEditor(
     setTimeout(() => document.addEventListener("pointerdown", function h(e) { if (!menu.contains(e.target as Node)) { closePivotMenu(); document.removeEventListener("pointerdown", h, true); } }, true), 0);
   };
 
-  // Read the dialog state (per-column role, value function, page selection, subtotals) into a spec.
-  const pivotSpecFrom = (range: { r1: number; c1: number; r2: number; c2: number }, roles: string[], funcs: string[], pageItems: (number | null)[], subtotals: boolean): PivotSpec => {
-    const rows: number[] = [], cols: number[] = [], values: { field: number; func: PivotFunc }[] = [], pages: { field: number; item: number | null }[] = [];
+  // Read the dialog state (per-column role, function, "show as", page selection, subtotals, and any
+  // calculated fields) into a spec.
+  const pivotSpecFrom = (range: { r1: number; c1: number; r2: number; c2: number }, roles: string[], funcs: string[], showAs: string[], pageItems: (number | null)[], subtotals: boolean, calcFields: { name: string; formula: string }[]): PivotSpec => {
+    const rows: number[] = [], cols: number[] = [], values: PivotValue[] = [], pages: { field: number; item: number | null }[] = [];
     for (let i = 0; i < roles.length; i++) {
       if (roles[i] === "rows") rows.push(i);
       else if (roles[i] === "columns") cols.push(i);
-      else if (roles[i] === "values") values.push({ field: i, func: funcs[i] as PivotFunc });
+      else if (roles[i] === "values") values.push({ field: i, func: funcs[i] as PivotFunc, showAs: showAs[i] === "normal" ? undefined : (showAs[i] as PivotShowAs) });
       else if (roles[i] === "page") pages.push({ field: i, item: pageItems[i] ?? null });
     }
+    for (const cf of calcFields) if (cf.formula.trim() && cf.name.trim()) values.push({ calc: cf.formula.trim(), name: cf.name.trim() });
     return { source: range, rows, cols, values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined };
   };
 
   // Insert-pivot dialog: a two-pane modal. Left: assign each source column (from the selection's
   // header row) to Rows / Columns / Values (with a function). Right: a live preview of the resulting
   // pivot that updates as you change roles. Needs at least one Rows field and one Values field.
-  const openPivotDialog = (opts?: { sheet: Sheet; range: { r1: number; c1: number; r2: number; c2: number }; initial: { roles: string[]; funcs: string[]; pageItems: (number | null)[]; subtotals: boolean }; onApply: (spec: PivotSpec) => void }): void => {
+  const openPivotDialog = (opts?: { sheet: Sheet; range: { r1: number; c1: number; r2: number; c2: number }; initial: { roles: string[]; funcs: string[]; showAs: string[]; pageItems: (number | null)[]; subtotals: boolean; calcFields: { name: string; formula: string }[] }; onApply: (spec: PivotSpec) => void }): void => {
     if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
     const sheet = opts?.sheet ?? wb.sheets[active]!;
     const s = getSelRect();
@@ -2718,8 +2728,10 @@ export function createSheetEditor(
     const hasData = !!opts || (range.r2 > range.r1 && headerBlank.some((b) => !b));
     const roles: string[] = opts?.initial.roles.slice() ?? headers.map((_, i) => (hasData ? (i === 0 ? "rows" : i === width - 1 ? "values" : "unused") : "unused"));
     const funcs: string[] = opts?.initial.funcs.slice() ?? headers.map(() => "sum");
+    const showAs: string[] = opts?.initial.showAs.slice() ?? headers.map(() => "normal");
     const pageItems: (number | null)[] = opts?.initial.pageItems.slice() ?? headers.map(() => null);
     let subtotals = opts?.initial.subtotals ?? false;
+    const calcFields: { name: string; formula: string }[] = opts?.initial.calcFields.map((c) => ({ ...c })) ?? [];
     const onApply = opts?.onApply ?? ((spec: PivotSpec) => createPivot(spec, sheet.name));
     // Distinct values per column, for the page-filter pickers (aligned to the engine's item order).
     const colItems = headers.map((_, i) => (hasData ? pivotColumnItems(sheet, range, i) : []));
@@ -2742,6 +2754,7 @@ export function createSheetEditor(
 
     const roleOpts: [string, string][] = [["unused", t("pivotUnused")], ["rows", t("pivotRows")], ["columns", t("pivotColumns")], ["values", t("pivotValues")], ["page", t("pivotPageF")]];
     const funcOpts: [string, string][] = (["sum", "count", "average", "min", "max"] as const).map((f) => [f, t(`pivotFn_${f}`)]);
+    const showAsOpts: [string, string][] = (["normal", "percentOfTotal", "percentOfCol", "percentOfRow", "runningTotal"] as const).map((f) => [f, t(`pivotShow_${f}`)]);
     const mkSelect = (opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement => {
       const sel = document.createElement("select"); sel.style.cssText = selStyle;
       for (const [v, l] of opts) { const o = document.createElement("option"); o.value = v; o.textContent = l; sel.appendChild(o); }
@@ -2751,7 +2764,7 @@ export function createSheetEditor(
 
     let insertBtn: HTMLButtonElement;
     const renderPreview = (): void => {
-      const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals);
+      const spec = pivotSpecFrom(range, roles, funcs, showAs, pageItems, subtotals, calcFields);
       const valid = hasData && spec.rows.length > 0 && spec.values.length > 0;
       if (insertBtn) { insertBtn.disabled = !valid; insertBtn.style.opacity = valid ? "1" : "0.45"; insertBtn.style.cursor = valid ? "pointer" : "not-allowed"; }
       preview.textContent = "";
@@ -2766,7 +2779,7 @@ export function createSheetEditor(
         for (let c = 0; c < maxC; c++) {
           const cell = computed.matrix[r]![c]!;
           const td = document.createElement("td");
-          td.textContent = cell.value === "" ? "" : String(cell.value);
+          td.textContent = cell.value === "" ? "" : cell.numFmt === "0.00%" && cell.kind === "n" ? `${(Number(cell.value) * 100).toFixed(2)}%` : String(cell.value);
           td.style.cssText = `border:1px solid var(--sheetedit-btn,#3a4047);padding:2px 6px;white-space:nowrap;${cell.kind === "n" ? "text-align:right;" : ""}${cell.bold ? "font-weight:600;" : ""}`;
           tr.appendChild(td);
         }
@@ -2785,16 +2798,40 @@ export function createSheetEditor(
       const funcSel = mkSelect(funcOpts, funcs[i]!, (v) => { funcs[i] = v; renderPreview(); });
       funcSel.dataset.field = `func_${i}`;
       funcSel.style.display = roles[i] === "values" ? "" : "none";
+      // "Show values as" picker for a value field (% of total / running total).
+      const showSel = mkSelect(showAsOpts, showAs[i]!, (v) => { showAs[i] = v; renderPreview(); });
+      showSel.dataset.field = `show_${i}`;
+      showSel.style.display = roles[i] === "values" ? "" : "none";
       // Page-filter value picker (All + each distinct value of this column).
       const pageOpts: [string, string][] = [["", t("pivotAll")], ...colItems[i]!.map((it, k): [string, string] => [String(k), it.label])];
       const pageSel = mkSelect(pageOpts, "", (v) => { pageItems[i] = v === "" ? null : Number(v); renderPreview(); });
       pageSel.dataset.field = `page_${i}`;
       pageSel.style.display = roles[i] === "page" ? "" : "none";
-      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; funcSel.style.display = v === "values" ? "" : "none"; pageSel.style.display = v === "page" ? "" : "none"; renderPreview(); });
+      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; const val = v === "values"; funcSel.style.display = val ? "" : "none"; showSel.style.display = val ? "" : "none"; pageSel.style.display = v === "page" ? "" : "none"; renderPreview(); });
       roleSel.dataset.field = `role_${i}`;
-      row.append(roleSel, funcSel, pageSel);
+      row.append(roleSel, funcSel, showSel, pageSel);
       if (hasData) left.appendChild(row);
     }
+    // Calculated fields: a name + a formula over field names (e.g. "Revenue - Cost"); each becomes
+    // an extra value field. Rebuilt live in the preview; rows can be removed.
+    const calcWrap = document.createElement("div"); calcWrap.style.cssText = "margin-top:8px";
+    const renderCalc = (): void => {
+      calcWrap.textContent = "";
+      calcFields.forEach((cf, k) => {
+        const row = document.createElement("div"); row.className = "sheetedit-pivot-calc"; row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:6px";
+        const nameI = document.createElement("input"); nameI.type = "text"; nameI.placeholder = t("pivotCalcName"); nameI.value = cf.name; nameI.style.cssText = selStyle + ";flex:0 0 90px"; nameI.dataset.field = `calcname_${k}`;
+        nameI.addEventListener("input", () => { cf.name = nameI.value; renderPreview(); });
+        const fI = document.createElement("input"); fI.type = "text"; fI.placeholder = t("pivotCalcFormula"); fI.value = cf.formula; fI.style.cssText = selStyle + ";flex:1 1 auto;min-width:0"; fI.dataset.field = `calcformula_${k}`;
+        fI.addEventListener("input", () => { cf.formula = fI.value; renderPreview(); });
+        const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "✕"; rm.title = t("chartDelete"); rm.style.cssText = "font:inherit;padding:3px 7px;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:inherit;cursor:pointer";
+        rm.addEventListener("click", () => { calcFields.splice(k, 1); renderCalc(); renderPreview(); });
+        row.append(nameI, fI, rm); calcWrap.appendChild(row);
+      });
+      const add = document.createElement("button"); add.type = "button"; add.dataset.role = "add-calc"; add.textContent = t("pivotCalcAdd"); add.style.cssText = "font:inherit;font-size:12px;padding:4px 9px;border:1px dashed var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:var(--sheetedit-muted,#aab2bf);cursor:pointer";
+      add.addEventListener("click", () => { calcFields.push({ name: `Calc${calcFields.length + 1}`, formula: "" }); renderCalc(); renderPreview(); });
+      calcWrap.appendChild(add);
+    };
+    if (hasData) { renderCalc(); left.appendChild(calcWrap); }
     // Subtotals toggle (meaningful once there are nested row/column fields).
     if (hasData) {
       const stRow = document.createElement("label"); stRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:6px;color:var(--sheetedit-muted,#aab2bf)";
@@ -2811,7 +2848,7 @@ export function createSheetEditor(
     insertBtn = document.createElement("button"); insertBtn.textContent = t("pivotCreate"); insertBtn.dataset.role = "ok";
     insertBtn.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-accent,#6e7bff);border-radius:6px;cursor:pointer;background:var(--sheetedit-accent,#6e7bff);color:#fff";
     cancel.addEventListener("click", close);
-    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals); if (!spec.rows.length || !spec.values.length) return; close(); onApply(spec); });
+    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, showAs, pageItems, subtotals, calcFields); if (!spec.rows.length || !spec.values.length) return; close(); onApply(spec); });
     actions.append(cancel, insertBtn); card.appendChild(actions);
     modal.appendChild(card); wrap.appendChild(modal);
     modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });

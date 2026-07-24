@@ -322,7 +322,9 @@ export function writeOdsPivotDef(
   for (const c of spec.rows) emit(c, "row", "auto", { subtotal: !!spec.subtotals });
   for (const c of spec.cols) emit(c, "column", "auto", { subtotal: !!spec.subtotals });
   for (const p of spec.pages ?? []) emit(p.field, "page", "auto", { pageItem: p.item });
-  for (const v of spec.values) emit(v.field, "data", ODF_FUNC[v.func] ?? "sum");
+  // Only source-backed value fields map to ODF data-pilot fields; calculated fields have no ODF
+  // equivalent (their result is in the materialised output; a LibreOffice refresh would drop them).
+  for (const v of spec.values) if (v.calc == null && v.field != null) emit(v.field, "data", ODF_FUNC[v.func ?? "sum"] ?? "sum");
   container.appendChild(pt);
 }
 
