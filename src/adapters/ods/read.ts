@@ -1,4 +1,4 @@
-import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, Workbook } from "../../core/model";
+import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, TextRun, Workbook } from "../../core/model";
 import { formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
 import { readOdsCharts } from "./chart-read";
@@ -14,12 +14,14 @@ export interface OdsStyles {
   rowH: Map<string, number>; // family table-row -> height px
   // family table-cell -> its <style:map> conditional-format entries (standard ODF CF).
   cfMap: Map<string, { cond: string; apply: string }[]>;
+  text: Map<string, CellStyle>; // family text -> resolved run style (for in-cell <text:span>)
 }
 
 // Parse <style:style> from the given docs (content.xml automatic styles + styles.xml),
 // resolving table-cell parent chains, and the column/row dimension styles.
 export function parseOdsStyles(docs: Document[]): OdsStyles {
   const raw = new Map<string, { el: Element; parent?: string }>();
+  const rawText = new Map<string, { el: Element; parent?: string }>();
   const colW = new Map<string, number>();
   const rowH = new Map<string, number>();
   const cfMap = new Map<string, { cond: string; apply: string }[]>();
@@ -32,6 +34,8 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
         raw.set(name, { el: st, parent: st.getAttribute("style:parent-style-name") || undefined });
         const maps = Array.from(st.getElementsByTagName("style:map"));
         if (maps.length) cfMap.set(name, maps.map((m) => ({ cond: m.getAttribute("style:condition") ?? "", apply: m.getAttribute("style:apply-style-name") ?? "" })).filter((x) => x.cond && x.apply));
+      } else if (family === "text") {
+        rawText.set(name, { el: st, parent: st.getAttribute("style:parent-style-name") || undefined });
       } else if (family === "table-column") {
         const p = st.getElementsByTagName("style:table-column-properties")[0];
         const w = odsLenToPx(p?.getAttribute("style:column-width"));
@@ -112,7 +116,19 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
     return merged;
   };
   for (const name of raw.keys()) resolve(name);
-  return { cell, colW, rowH, cfMap };
+  const text = new Map<string, CellStyle>();
+  const resolveText = (name: string, depth = 0): CellStyle => {
+    const cached = text.get(name);
+    if (cached) return cached;
+    const entry = rawText.get(name);
+    if (!entry || depth > 8) return {};
+    const base = entry.parent ? resolveText(entry.parent, depth + 1) : {};
+    const merged = { ...base, ...ownStyle(entry.el) };
+    text.set(name, merged);
+    return merged;
+  };
+  for (const name of rawText.keys()) resolveText(name);
+  return { cell, colW, rowH, cfMap, text };
 }
 
 // Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
@@ -450,6 +466,39 @@ export interface ParsedOdsCell {
   coveredEl?: Element;
 }
 
+// Per-run rich text: the first <text:p>'s text nodes + <text:span> runs, each span's style resolved
+// to bold/italic/underline/strike/colour/size/font. Returned only when there is real per-run
+// variation (>1 run and at least one styled span), mirroring the xlsx rich-text path.
+function odsCellRuns(cellEl: Element, styles: OdsStyles): TextRun[] | undefined {
+  const p = Array.from(cellEl.children).find((c) => c.localName === "p");
+  if (!p) return undefined;
+  const runs: TextRun[] = [];
+  let styled = 0;
+  for (const node of Array.from(p.childNodes)) {
+    if (node.nodeType === 3) { const t = node.textContent ?? ""; if (t) runs.push({ text: t }); continue; }
+    if (node.nodeType !== 1) continue;
+    const el = node as Element;
+    if (el.localName === "span") {
+      const cs = styles.text.get(el.getAttribute("text:style-name") ?? "") ?? {};
+      const run: TextRun = { text: el.textContent ?? "" };
+      if (cs.bold) run.bold = true;
+      if (cs.italic) run.italic = true;
+      if (cs.underline) run.underline = true;
+      if (cs.strike) run.strike = true;
+      if (cs.color) run.color = cs.color;
+      if (cs.fontSize) run.size = cs.fontSize;
+      if (cs.fontFamily) run.font = cs.fontFamily;
+      if (run.bold || run.italic || run.underline || run.strike || run.color || run.size || run.font) styled++;
+      if (run.text) runs.push(run);
+    } else if (el.localName === "a") {
+      runs.push({ text: el.textContent ?? "" });
+    } else if (el.localName === "s") {
+      runs.push({ text: " ".repeat(Math.max(1, Number(el.getAttribute("text:c") || "1"))) });
+    }
+  }
+  return styled > 0 && runs.length > 1 ? runs : undefined;
+}
+
 export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] {
   const out: ParsedOdsCell[] = [];
   let col = 0;
@@ -532,6 +581,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
     }
     const link = odsCellLink(cellEl);
     const comments = odsCellComments(cellEl);
+    const richRuns = kind === "s" && !phonetic ? odsCellRuns(cellEl, styles) : undefined;
     const odsValidationName = cellEl.getAttribute("table:content-validation-name") ?? undefined;
     const has = value !== "" || formulaRaw != null || style != null || link != null || comments != null || odsValidationName != null;
     if (!has) {
@@ -555,6 +605,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       phonetic,
       link,
       comments,
+      richRuns,
       odsValidationName,
     };
     out.push({ has: true, span: Math.min(crep, REPEAT_CAP), startCol, colSpan, rowSpan, cell });
