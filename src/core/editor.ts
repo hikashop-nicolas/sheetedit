@@ -13,7 +13,8 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
+import { computePivot, pivotValueLabel, type PivotFunc, type PivotSpec } from "./pivot";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -26,7 +27,7 @@ import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup } from "../adapters/xlsx";
+import { flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup, writeXlsxPivotParts } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1643,6 +1644,10 @@ export function createSheetEditor(
     const FILTER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
     toolbar.append(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
   }
+  if (caps.pivots) {
+    const PIVOT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M2 6h12M6 6v8M6 6V2"/><path d="M9 9.5l2 2M11 9.5l-2 2"/></svg>`;
+    toolbar.append(tbIcon(PIVOT_ICON, t("pivotInsert"), () => openPivotDialog()));
+  }
   if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
     toolbar.append(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
@@ -2562,6 +2567,145 @@ export function createSheetEditor(
       else setXlsxCondFormat(wb, sheet, ranges, spec);
       mark(); renderGrid();
     });
+  };
+
+  // Build a pivot from a source range onto a fresh sheet: compute it, place the output cells, emit
+  // the format-specific definition, model it for the overlay, and switch to it.
+  const createPivot = (spec: PivotSpec, sourceSheetName: string): void => {
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
+    const srcSheet = wb.sheets.find((s) => s.name === sourceSheetName) ?? wb.sheets[active]!;
+    const computed = computePivot(srcSheet, spec);
+    const destIdx = addSheet(wb, "Pivot");
+    const dest = wb.sheets[destIdx]!;
+    for (let r = 0; r < computed.matrix.length; r++)
+      for (let c = 0; c < computed.matrix[r]!.length; c++) {
+        const cell = computed.matrix[r]![c]!;
+        if (cell.value !== "") setCellInput(dest, r + 1, c + 1, String(cell.value));
+      }
+    if (wb.kind === "xlsx") writeXlsxPivotParts(wb, dest, { row: 1, col: 1 }, sourceSheetName, spec, computed);
+    else { dest.odsDirty = true; writeOdsPivotDef(wb, dest.name, sourceSheetName, spec, computed); }
+    dest.pivotTables = [{
+      name: "PivotTable",
+      sourceSheet: sourceSheetName,
+      sourceRange: { ...spec.source },
+      targetRange: { r1: 1, c1: 1, r2: computed.height, c2: computed.width },
+      rowFields: spec.rows.map((c) => computed.fields[c]!.name),
+      colFields: spec.cols.map((c) => computed.fields[c]!.name),
+      pageFields: [],
+      dataFields: spec.values.map((v) => ({ name: pivotValueLabel(v.func, computed.fields[v.field]!.name), func: v.func })),
+    }];
+    switchSheet(destIdx);
+    mark();
+  };
+
+  // Read the roles/funcs state into a spec (v1 uses at most one column field).
+  const pivotSpecFrom = (range: { r1: number; c1: number; r2: number; c2: number }, roles: string[], funcs: string[]): PivotSpec => {
+    const rows: number[] = [], cols: number[] = [], values: { field: number; func: PivotFunc }[] = [];
+    for (let i = 0; i < roles.length; i++) {
+      if (roles[i] === "rows") rows.push(i);
+      else if (roles[i] === "columns") cols.push(i);
+      else if (roles[i] === "values") values.push({ field: i, func: funcs[i] as PivotFunc });
+    }
+    return { source: range, rows, cols: cols.slice(0, 1), values };
+  };
+
+  // Insert-pivot dialog: a two-pane modal. Left: assign each source column (from the selection's
+  // header row) to Rows / Columns / Values (with a function). Right: a live preview of the resulting
+  // pivot that updates as you change roles. Needs at least one Rows field and one Values field.
+  const openPivotDialog = (): void => {
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
+    const sheet = wb.sheets[active]!;
+    const s = getSelRect();
+    const range = s.r2 > s.r1 || s.c2 > s.c1 ? s : currentRegion(sheet, s.r1, s.c1);
+    const width = range.c2 - range.c1 + 1;
+    const headers: string[] = [];
+    for (let c = 0; c < width; c++) { const cell = getCell(sheet, range.r1, range.c1 + c); headers.push((cell?.value ?? "").trim() || `Column ${c + 1}`); }
+    const headerBlank: boolean[] = [];
+    for (let c = 0; c < width; c++) headerBlank.push((getCell(sheet, range.r1, range.c1 + c)?.value ?? "").trim() === "");
+    // A usable data region needs a header row plus at least one data row and a real header somewhere.
+    const hasData = range.r2 > range.r1 && headerBlank.some((b) => !b);
+    const roles: string[] = headers.map((_, i) => (hasData ? (i === 0 ? "rows" : i === width - 1 ? "values" : "unused") : "unused"));
+    const funcs: string[] = headers.map(() => "sum");
+
+    const modal = document.createElement("div");
+    modal.className = "sheetedit-form-modal sheetedit-pivot-modal";
+    modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
+    const card = document.createElement("div");
+    card.style.cssText = "width:min(720px,96%);max-height:88vh;overflow:auto;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
+    const h = document.createElement("h3"); h.textContent = t("pivotInsert"); h.style.cssText = "margin:0 0 4px;font-size:15px"; card.appendChild(h);
+    const srcLine = document.createElement("div");
+    srcLine.textContent = `${t("pivotSource")}: ${sheet.name}!${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`;
+    srcLine.style.cssText = "color:var(--sheetedit-muted,#aab2bf);margin-bottom:12px;font-size:12px"; card.appendChild(srcLine);
+    const body = document.createElement("div"); body.style.cssText = "display:flex;gap:16px;flex-wrap:wrap"; card.appendChild(body);
+    const left = document.createElement("div"); left.style.cssText = "flex:1 1 260px;min-width:240px"; body.appendChild(left);
+    const right = document.createElement("div"); right.style.cssText = "flex:1 1 300px;min-width:260px"; body.appendChild(right);
+    const previewLbl = document.createElement("div"); previewLbl.textContent = t("pivotPreview"); previewLbl.style.cssText = "color:var(--sheetedit-muted,#aab2bf);font-size:12px;margin-bottom:6px"; right.appendChild(previewLbl);
+    const preview = document.createElement("div"); preview.style.cssText = "border:1px solid var(--sheetedit-btn,#3a4047);border-radius:6px;padding:8px;overflow:auto;max-height:260px;font-size:12px"; right.appendChild(preview);
+    const selStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:4px 6px";
+
+    const roleOpts: [string, string][] = [["unused", t("pivotUnused")], ["rows", t("pivotRows")], ["columns", t("pivotColumns")], ["values", t("pivotValues")]];
+    const funcOpts: [string, string][] = (["sum", "count", "average", "min", "max"] as const).map((f) => [f, t(`pivotFn_${f}`)]);
+    const mkSelect = (opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement => {
+      const sel = document.createElement("select"); sel.style.cssText = selStyle;
+      for (const [v, l] of opts) { const o = document.createElement("option"); o.value = v; o.textContent = l; sel.appendChild(o); }
+      sel.value = value; sel.addEventListener("change", () => onChange(sel.value));
+      return sel;
+    };
+
+    let insertBtn: HTMLButtonElement;
+    const renderPreview = (): void => {
+      const spec = pivotSpecFrom(range, roles, funcs);
+      const valid = hasData && spec.rows.length > 0 && spec.values.length > 0;
+      if (insertBtn) { insertBtn.disabled = !valid; insertBtn.style.opacity = valid ? "1" : "0.45"; insertBtn.style.cursor = valid ? "pointer" : "not-allowed"; }
+      preview.textContent = "";
+      if (!hasData) { preview.textContent = t("pivotNoData"); preview.style.color = "var(--sheetedit-muted,#aab2bf)"; return; }
+      if (!valid) { preview.textContent = t("pivotHint"); preview.style.color = "var(--sheetedit-muted,#aab2bf)"; return; }
+      preview.style.color = "";
+      const computed = computePivot(sheet, spec);
+      const table = document.createElement("table"); table.style.cssText = "border-collapse:collapse";
+      const maxR = Math.min(computed.matrix.length, 12), maxC = Math.min(computed.width, 8);
+      for (let r = 0; r < maxR; r++) {
+        const tr = document.createElement("tr");
+        for (let c = 0; c < maxC; c++) {
+          const cell = computed.matrix[r]![c]!;
+          const td = document.createElement("td");
+          td.textContent = cell.value === "" ? "" : String(cell.value);
+          td.style.cssText = `border:1px solid var(--sheetedit-btn,#3a4047);padding:2px 6px;white-space:nowrap;${cell.kind === "n" ? "text-align:right;" : ""}${cell.bold ? "font-weight:600;" : ""}`;
+          tr.appendChild(td);
+        }
+        if (computed.width > maxC) { const td = document.createElement("td"); td.textContent = "…"; td.style.cssText = "padding:2px 6px"; tr.appendChild(td); }
+        table.appendChild(tr);
+      }
+      if (computed.matrix.length > maxR) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.textContent = "…"; td.colSpan = maxC; td.style.cssText = "padding:2px 6px"; tr.appendChild(td); table.appendChild(tr); }
+      preview.appendChild(table);
+    };
+
+    if (!hasData) { const p = document.createElement("div"); p.textContent = t("pivotNoData"); p.style.color = "var(--sheetedit-muted,#aab2bf)"; left.appendChild(p); }
+    for (let i = 0; i < width; i++) {
+      const row = document.createElement("div"); row.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px";
+      const name = document.createElement("span"); name.textContent = headers[i]!; name.title = headers[i]!;
+      name.style.cssText = "flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"; row.appendChild(name);
+      const funcSel = mkSelect(funcOpts, funcs[i]!, (v) => { funcs[i] = v; renderPreview(); });
+      funcSel.dataset.field = `func_${i}`;
+      funcSel.style.display = roles[i] === "values" ? "" : "none";
+      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; funcSel.style.display = v === "values" ? "" : "none"; renderPreview(); });
+      roleSel.dataset.field = `role_${i}`;
+      row.append(roleSel, funcSel);
+      if (hasData) left.appendChild(row);
+    }
+
+    const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:14px";
+    const close = (): void => modal.remove();
+    const cancel = document.createElement("button"); cancel.textContent = t("chartCancel"); cancel.dataset.role = "cancel";
+    cancel.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)";
+    insertBtn = document.createElement("button"); insertBtn.textContent = t("pivotCreate"); insertBtn.dataset.role = "ok";
+    insertBtn.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-accent,#6e7bff);border-radius:6px;cursor:pointer;background:var(--sheetedit-accent,#6e7bff);color:#fff";
+    cancel.addEventListener("click", close);
+    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs); if (!spec.rows.length || !spec.values.length) return; close(); createPivot(spec, sheet.name); });
+    actions.append(cancel, insertBtn); card.appendChild(actions);
+    modal.appendChild(card); wrap.appendChild(modal);
+    modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
+    renderPreview();
   };
 
   // The sparkline hosted by the single focused cell, if any (drives the float-bar actions).

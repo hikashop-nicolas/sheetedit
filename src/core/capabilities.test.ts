@@ -15,6 +15,7 @@ describe("workbook capabilities", () => {
     expect(c.dataValidation).toBe(true);
     expect(c.conditionalFormat).toBe(true);
     expect(c.autofilter).toBe(true);
+    expect(c.pivots).toBe(true);
     // Excel-style sparklines have no interoperable ODF authoring form.
     expect(c.sparklines).toBe(false);
   });

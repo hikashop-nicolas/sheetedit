@@ -24,4 +24,21 @@ describe("pivot tables", () => {
     cy.get(".sheetedit-pivotbox", { timeout: TIMEOUT }).should("exist");
     cy.get(".sheetedit-pivottag").should("contain.text", "PivotTable1");
   });
+
+  it("authors a pivot from a selection through the insert dialog", () => {
+    open("cypress/fixtures/pivot.xlsx"); // opens on the Data sheet
+    // Select the source range A1:C7 (header + data).
+    cy.get('input[aria-label="A1"]').focus();
+    cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
+    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
+    // Defaults: Region=Rows, Sales=Values(Sum). Make Product a column field for a crosstab.
+    cy.get('.sheetedit-form-modal [data-field="role_1"]').select("columns");
+    cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+    cy.get(".sheetedit-form-modal").should("not.exist");
+    // A new sheet holds the pivot, outlined + labelled, with the grand total materialised.
+    cy.get(".sheetedit-pivotbox", { timeout: TIMEOUT }).should("exist");
+    cy.get(".sheetedit-pivottag").should("contain.text", "PivotTable");
+    cy.get('input[aria-label="D5"]').should("have.value", "350");
+  });
 });

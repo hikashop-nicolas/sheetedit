@@ -1,0 +1,196 @@
+import type { Sheet, Workbook } from "../../core/model";
+import { colToLetters, numToStr, parseXmlOpt, serializeXml } from "../../core/model";
+import { pivotValueLabel, type PivotComputed, type PivotSpec } from "../../core/pivot";
+
+// xlsx pivot authoring: emit the pivotCacheDefinition + pivotCacheRecords + pivotTable parts, wire
+// them into the package (rels, [Content_Types].xml, workbook <pivotCaches>, the host worksheet's
+// rels), and set refreshOnLoad so Excel rebuilds the pivot body from the worksheet source on open.
+// The output cells themselves are placed by the caller (format-agnostic). Structure mirrors what
+// LibreOffice emits, which is Excel-compatible; the cache/records are correct for a non-refreshing
+// reader while the field roles + source drive both apps' rebuild.
+
+const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
+const OREL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function addContentType(wb: Workbook, partPath: string, ct: string): void {
+  const doc = parseXmlOpt(wb.files["[Content_Types].xml"]);
+  if (!doc || doc.documentElement.localName !== "Types") return;
+  if (Array.from(doc.getElementsByTagName("Override")).some((o) => o.getAttribute("PartName") === `/${partPath}`)) return;
+  const ov = doc.createElementNS(CT_NS, "Override");
+  ov.setAttribute("PartName", `/${partPath}`);
+  ov.setAttribute("ContentType", ct);
+  doc.documentElement.appendChild(ov);
+  wb.files["[Content_Types].xml"] = serializeXml(doc);
+}
+
+function addRel(wb: Workbook, relsPath: string, type: string, target: string): string {
+  let doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
+  if (!doc) doc = parseXmlOpt(new TextEncoder().encode(`<Relationships xmlns="${REL_NS}"></Relationships>`))!;
+  const ids = new Set(Array.from(doc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
+  let n = 1; while (ids.has(`rId${n}`)) n++;
+  const id = `rId${n}`;
+  const rel = doc.createElementNS(REL_NS, "Relationship");
+  rel.setAttribute("Id", id); rel.setAttribute("Type", type); rel.setAttribute("Target", target);
+  doc.documentElement.appendChild(rel);
+  wb.files[relsPath] = serializeXml(doc);
+  return id;
+}
+
+const bytes = (s: string): Uint8Array => new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${s}`);
+
+// Delta-encoded rowItems / colItems: @r = count of leading fields unchanged from the previous line,
+// then an <x> per changed level (v omitted for item 0), plus a trailing grand-total line.
+function itemsXml(keys: number[][]): string {
+  let prev: number[] = [];
+  let out = "";
+  for (const key of keys) {
+    let r = 0; while (r < key.length && r < prev.length && key[r] === prev[r]) r++;
+    let xs = "";
+    for (let k = r; k < key.length; k++) xs += key[k] === 0 ? "<x/>" : `<x v="${key[k]}"/>`;
+    if (!xs) xs = "<x/>";
+    out += `<i${r > 0 ? ` r="${r}"` : ""}>${xs}</i>`;
+    prev = key;
+  }
+  out += `<i t="grand"><x/></i>`;
+  return out;
+}
+
+function nextCacheId(wb: Workbook): number {
+  const doc = parseXmlOpt(wb.files["xl/workbook.xml"]);
+  let max = 0;
+  if (doc) for (const pc of Array.from(doc.getElementsByTagName("pivotCache"))) max = Math.max(max, Number(pc.getAttribute("cacheId") || "0"));
+  return max + 1;
+}
+
+/** Append <pivotCache cacheId r:id> into workbook.xml's <pivotCaches> (created + positioned after
+    <calcPr>, before <extLst>, per the CT_Workbook child order). */
+function addWorkbookPivotCache(wb: Workbook, cacheId: number, relId: string): void {
+  const doc = parseXmlOpt(wb.files["xl/workbook.xml"]);
+  if (!doc) return;
+  const root = doc.documentElement;
+  let caches = Array.from(root.children).find((e) => e.localName === "pivotCaches");
+  if (!caches) {
+    caches = doc.createElementNS(MAIN, "pivotCaches");
+    const extLst = Array.from(root.children).find((e) => e.localName === "extLst");
+    const calcPr = Array.from(root.children).find((e) => e.localName === "calcPr");
+    root.insertBefore(caches, extLst ?? (calcPr ? calcPr.nextSibling : null));
+  }
+  const pc = doc.createElementNS(MAIN, "pivotCache");
+  pc.setAttribute("cacheId", String(cacheId));
+  pc.setAttributeNS(OREL, "r:id", relId);
+  caches.appendChild(pc);
+  wb.files["xl/workbook.xml"] = serializeXml(doc);
+}
+
+/** Emit and wire the pivot parts for a pivot whose output is anchored at (anchorRow, anchorCol) on
+    destSheet, sourcing sourceSheetName's data described by spec/computed. */
+export function writeXlsxPivotParts(
+  wb: Workbook,
+  destSheet: Sheet,
+  anchor: { row: number; col: number },
+  sourceSheetName: string,
+  spec: PivotSpec,
+  computed: PivotComputed,
+): void {
+  const width = spec.source.c2 - spec.source.c1 + 1;
+  const cacheId = nextCacheId(wb);
+  // Unique part numbers (cache def + records share n; table uses m).
+  let n = 1; while (wb.files[`xl/pivotCache/pivotCacheDefinition${n}.xml`] || wb.files[`xl/pivotCache/pivotCacheRecords${n}.xml`]) n++;
+  let m = 1; while (wb.files[`xl/pivotTables/pivotTable${m}.xml`]) m++;
+  const cacheDefPath = `xl/pivotCache/pivotCacheDefinition${n}.xml`;
+  const recordsPath = `xl/pivotCache/pivotCacheRecords${n}.xml`;
+  const tablePath = `xl/pivotTables/pivotTable${m}.xml`;
+
+  const isRow = (c: number) => spec.rows.includes(c);
+  const isCol = (c: number) => spec.cols.includes(c);
+  const isVal = (c: number) => spec.values.some((v) => v.field === c);
+
+  // --- cacheDefinition: cacheFields (sharedItems for grouping fields; type flags otherwise) ---
+  let cacheFields = "";
+  for (let c = 0; c < width; c++) {
+    const f = computed.fields[c]!;
+    if (isRow(c) || isCol(c)) {
+      const items = f.items.map((it) => (it.num ? `<n v="${numToStr(it.value as number)}"/>` : `<s v="${esc(String(it.value))}"/>`)).join("");
+      cacheFields += `<cacheField name="${esc(f.name)}" numFmtId="0"><sharedItems count="${f.items.length}">${items}</sharedItems></cacheField>`;
+    } else {
+      let hasNum = false, hasStr = false, hasBlank = false;
+      for (const rec of computed.records) { const cv = rec.cells[c]!; if (cv.value === null) hasBlank = true; else if (cv.num) hasNum = true; else hasStr = true; }
+      const flags = `containsSemiMixedTypes="${hasStr || hasBlank ? 1 : 0}" containsString="${hasStr ? 1 : 0}" containsNumber="${hasNum ? 1 : 0}"${hasNum && !hasStr ? ' containsBlank="' + (hasBlank ? 1 : 0) + '"' : ""}`;
+      cacheFields += `<cacheField name="${esc(f.name)}" numFmtId="0"><sharedItems ${flags}/></cacheField>`;
+    }
+  }
+  const cacheDef = `<pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${OREL}" r:id="rId1" refreshOnLoad="1" refreshedBy="sheetedit" recordCount="${computed.records.length}" createdVersion="3">`
+    + `<cacheSource type="worksheet"><worksheetSource ref="${rangeRef(spec.source)}" sheet="${esc(sourceSheetName)}"/></cacheSource>`
+    + `<cacheFields count="${width}">${cacheFields}</cacheFields></pivotCacheDefinition>`;
+
+  // --- cacheRecords: <x v> for grouping fields, literal <n>/<s>/<m/> otherwise ---
+  let recs = "";
+  for (const rec of computed.records) {
+    let r = "";
+    for (let c = 0; c < width; c++) {
+      const cv = rec.cells[c]!;
+      const f = computed.fields[c]!;
+      if (isRow(c) || isCol(c)) {
+        const v = cv.value === null ? "(empty)" : cv.value;
+        r += `<x v="${f.indexOf.get((typeof v === "number" ? "n:" : "s:") + v) ?? 0}"/>`;
+      } else if (cv.value === null) r += "<m/>";
+      else if (cv.num) r += `<n v="${numToStr(cv.value as number)}"/>`;
+      else r += `<s v="${esc(String(cv.value))}"/>`;
+    }
+    recs += `<r>${r}</r>`;
+  }
+  const records = `<pivotCacheRecords xmlns="${MAIN}" xmlns:r="${OREL}" count="${computed.records.length}">${recs}</pivotCacheRecords>`;
+
+  // --- pivotTable ---
+  let pivotFields = "";
+  for (let c = 0; c < width; c++) {
+    const f = computed.fields[c]!;
+    if (isRow(c) || isCol(c)) {
+      const items = f.items.map((_, i) => `<item x="${i}"/>`).join("");
+      pivotFields += `<pivotField axis="${isRow(c) ? "axisRow" : "axisCol"}" compact="0" showAll="0" defaultSubtotal="0"><items count="${f.items.length}">${items}</items></pivotField>`;
+    } else if (isVal(c)) pivotFields += `<pivotField dataField="1" compact="0" showAll="0"/>`;
+    else pivotFields += `<pivotField compact="0" showAll="0"/>`;
+  }
+  const R = spec.rows.length, C = spec.cols.length;
+  const rowFields = `<rowFields count="${R}">${spec.rows.map((c) => `<field x="${c}"/>`).join("")}</rowFields>`;
+  const rowItems = `<rowItems count="${computed.rowKeys.length + 1}">${itemsXml(computed.rowKeys)}</rowItems>`;
+  let colFields = "", colItems: string;
+  if (C === 1) {
+    colFields = `<colFields count="1"><field x="${spec.cols[0]}"/></colFields>`;
+    colItems = `<colItems count="${computed.colKeys.length + 1}">${itemsXml(computed.colKeys)}</colItems>`;
+  } else colItems = `<colItems count="1"><i/></colItems>`;
+  const dataFields = `<dataFields count="${spec.values.length}">`
+    + spec.values.map((v) => `<dataField name="${esc(pivotValueLabel(v.func, computed.fields[v.field]!.name))}" fld="${v.field}" subtotal="${v.func}"/>`).join("")
+    + `</dataFields>`;
+  const loc = { r1: anchor.row, c1: anchor.col, r2: anchor.row + computed.height - 1, c2: anchor.col + computed.width - 1 };
+  const location = `<location ref="${rangeRef(loc)}" firstHeaderRow="1" firstDataRow="${computed.headerRows}" firstDataCol="${computed.headerCols}"/>`;
+  const table = `<pivotTableDefinition xmlns="${MAIN}" name="${esc(destSheet.name === "" ? "PivotTable" : "PivotTable" + m)}" cacheId="${cacheId}" dataOnRows="0" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="0" dataCaption="Values" showDrill="0" useAutoFormatting="0" itemPrintTitles="1" indent="0" outline="1" outlineData="1" compact="1" compactData="1">`
+    + location + `<pivotFields count="${width}">${pivotFields}</pivotFields>` + rowFields + rowItems + colFields + colItems + dataFields
+    + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
+
+  // --- write parts + wiring ---
+  wb.files[cacheDefPath] = bytes(cacheDef);
+  wb.files[recordsPath] = bytes(records);
+  wb.files[tablePath] = bytes(table);
+  wb.files[`xl/pivotCache/_rels/pivotCacheDefinition${n}.xml.rels`] = new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${REL_NS}"><Relationship Id="rId1" Type="${OREL}/pivotCacheRecords" Target="pivotCacheRecords${n}.xml"/></Relationships>`);
+  wb.files[`xl/pivotTables/_rels/pivotTable${m}.xml.rels`] = new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="${REL_NS}"><Relationship Id="rId1" Type="${OREL}/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`);
+  addContentType(wb, tablePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml");
+  addContentType(wb, cacheDefPath, "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml");
+  addContentType(wb, recordsPath, "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml");
+  // Host worksheet -> pivotTable rel.
+  const wsRels = destSheet.path!.replace(/([^/]+)$/, "_rels/$1.rels");
+  addRel(wb, wsRels, `${OREL}/pivotTable`, `../pivotTables/pivotTable${m}.xml`);
+  // Workbook -> pivotCacheDefinition rel, then the <pivotCache> entry.
+  const wbRelId = addRel(wb, "xl/_rels/workbook.xml.rels", `${OREL}/pivotCacheDefinition`, `pivotCache/pivotCacheDefinition${n}.xml`);
+  addWorkbookPivotCache(wb, cacheId, wbRelId);
+  // Track the cache so a later edit to the source range re-flags refreshOnLoad (already set here).
+  (wb.pivotCaches ??= []).push({ part: cacheDefPath, sourceSheet: sourceSheetName, source: { ...spec.source }, refreshFlagged: true });
+}
+
+function rangeRef(r: { r1: number; c1: number; r2: number; c2: number }): string {
+  return `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`;
+}

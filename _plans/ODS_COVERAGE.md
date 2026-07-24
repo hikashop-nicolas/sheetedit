@@ -61,10 +61,17 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
 - **CF colour scale / data bar / icon set for ODS**: read-only (from LibreOffice files); not
   authorable (no interoperable ODF form).
 
-## Pivot tables (both formats, read-only)
+## Pivot tables (both formats)
 
-Pivot tables are detected, modelled and surfaced but not authored, in either format:
+Pivot tables are detected, modelled, surfaced, preserved and (v1) authorable, in either format:
 
+- **Authoring**: the Insert-pivot dialog (source range from the selection, assign each column to
+  Rows / Columns / Values with a function, live preview) builds the pivot on a new sheet. v1
+  supports any number of nested row fields, at most one column field, one or more value fields
+  (sum / count / average / min / max), no intermediate subtotals. It emits the native definition
+  (xlsx `pivotCache`+`pivotTable`, ODS `data-pilot-table`) with `refreshOnLoad` so Excel/LibreOffice
+  rebuild from the source on open, plus the materialised output cells. Verified end-to-end through a
+  LibreOffice round-trip (the recomputed values match the engine).
 - **ODS** reads `<table:data-pilot-table>`; **xlsx** reads `pivotTable*.xml` + its `pivotCache`.
   Each pivot's output already renders as the cells it materialises; on top of that the output range
   is outlined and labelled read-only so the region reads as a live pivot, not editable cells.

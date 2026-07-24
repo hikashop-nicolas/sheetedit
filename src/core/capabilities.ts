@@ -19,6 +19,8 @@ export interface WorkbookCapabilities {
   comments: boolean;
   /** Conditional formatting (author + render). */
   conditionalFormat: boolean;
+  /** Create a pivot table / data-pilot from a source range. */
+  pivots: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -29,6 +31,7 @@ const NONE: WorkbookCapabilities = {
   dataValidation: false,
   comments: false,
   conditionalFormat: false,
+  pivots: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -39,6 +42,7 @@ const XLSX: WorkbookCapabilities = {
   dataValidation: true,
   comments: true,
   conditionalFormat: true,
+  pivots: true,
 };
 
 // ODF has native hyperlinks, comments, validation and conditional formatting, but no Excel-style
@@ -52,6 +56,7 @@ const ODS: WorkbookCapabilities = {
   dataValidation: true,
   comments: true,
   conditionalFormat: true,
+  pivots: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

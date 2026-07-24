@@ -264,6 +264,50 @@ export function setOdsAutoFilter(wb: Workbook, sheet: Sheet, range: { r1: number
   sheet.odsDirty = true;
 }
 
+const ODF_FUNC: Record<string, string> = { sum: "sum", count: "count", countNums: "countnums", average: "average", min: "min", max: "max" };
+
+// Emit a <table:data-pilot-table> (source + one field per orientation with its function) into the
+// spreadsheet's <table:data-pilot-tables>. LibreOffice recomputes the pilot from the source on
+// refresh; the materialised output cells (written by the caller) are what it shows until then.
+export function writeOdsPivotDef(
+  wb: Workbook,
+  destSheetName: string,
+  sourceSheetName: string,
+  spec: import("../../core/pivot").PivotSpec,
+  computed: import("../../core/pivot").PivotComputed,
+): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
+  if (!spreadsheet) return;
+  let container = Array.from(spreadsheet.children).find((e) => e.localName === "data-pilot-tables");
+  if (!container) { container = doc.createElementNS(ODS.table, "table:data-pilot-tables"); spreadsheet.appendChild(container); }
+  const pt = doc.createElementNS(ODS.table, "table:data-pilot-table");
+  pt.setAttributeNS(ODS.table, "table:name", `DataPilot_${container.children.length + 1}`);
+  pt.setAttributeNS(ODS.table, "table:application-data", "");
+  pt.setAttributeNS(ODS.table, "table:target-range-address", a1RangeToOdfTarget(destSheetName, { r1: 1, c1: 1, r2: computed.height, c2: computed.width }));
+  pt.setAttributeNS(ODS.table, "table:show-filter-button", "false");
+  pt.setAttributeNS(ODS.table, "table:drill-down-on-double-click", "true");
+  const src = doc.createElementNS(ODS.table, "table:source-cell-range");
+  src.setAttributeNS(ODS.table, "table:cell-range-address", a1RangeToOdfTarget(sourceSheetName, spec.source));
+  pt.appendChild(src);
+  const emit = (fieldIdx: number, orientation: string, func: string): void => {
+    const f = doc.createElementNS(ODS.table, "table:data-pilot-field");
+    f.setAttributeNS(ODS.table, "table:source-field-name", computed.fields[fieldIdx]!.name);
+    f.setAttributeNS(ODS.table, "table:orientation", orientation);
+    f.setAttributeNS(ODS.table, "table:used-hierarchy", "-1");
+    f.setAttributeNS(ODS.table, "table:function", func);
+    const level = doc.createElementNS(ODS.table, "table:data-pilot-level");
+    level.setAttributeNS(ODS.table, "table:show-empty", "false");
+    f.appendChild(level);
+    pt.appendChild(f);
+  };
+  for (const c of spec.rows) emit(c, "row", "auto");
+  for (const c of spec.cols) emit(c, "column", "auto");
+  for (const v of spec.values) emit(v.field, "data", ODF_FUNC[v.func] ?? "sum");
+  container.appendChild(pt);
+}
+
 // An A1 range -> an ODF conditional-format target address "Sheet1.A1:Sheet1.A5".
 function a1RangeToOdfTarget(sheetName: string, g: { r1: number; c1: number; r2: number; c2: number }): string {
   const a1 = (r: number, c: number): string => {

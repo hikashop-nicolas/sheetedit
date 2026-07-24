@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { readWorkbook } from "../../index";
 import { flagXlsxPivotRefresh } from "./pivot-read";
-import { strFromU8 } from "fflate";
+import { writeXlsxPivotParts } from "./pivot-write";
+import { computePivot, type PivotSpec } from "../../core/pivot";
+import { setCellInput, writeWorkbook } from "../../core/workbook";
+import { addSheet } from "../../core/sheet-ops";
+import { getCell } from "../../core/model";
+import { strFromU8, unzipSync } from "fflate";
+
+function placeAndWrite(fixtureBytes: Uint8Array, spec: PivotSpec): Uint8Array {
+  const wb = readWorkbook(fixtureBytes);
+  const data = wb.sheets.find((s) => s.name === "Data")!;
+  const computed = computePivot(data, spec);
+  const dest = wb.sheets[addSheet(wb, "Out")]!;
+  for (let r = 0; r < computed.matrix.length; r++)
+    for (let c = 0; c < computed.matrix[r]!.length; c++) { const cell = computed.matrix[r]![c]!; if (cell.value !== "") setCellInput(dest, r + 1, c + 1, String(cell.value)); }
+  writeXlsxPivotParts(wb, dest, { row: 1, col: 1 }, "Data", spec, computed);
+  return writeWorkbook(wb);
+}
 
 async function realBytes(name: string): Promise<Uint8Array> {
   const { readFileSync } = await import("node:fs");
@@ -45,6 +61,23 @@ describe("xlsx pivot tables", () => {
     flagXlsxPivotRefresh(wb, "Data", [{ r: 99, c: 99 }]);
     flagXlsxPivotRefresh(wb, "Pivot", [{ r: 2, c: 2 }]);
     expect(strFromU8(wb.files[part]!)).not.toContain("refreshOnLoad");
+  });
+
+  it("authors a new pivot: emits the parts and reads back the definition", async () => {
+    const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }] };
+    const out = placeAndWrite(await realBytes("pivot.xlsx"), spec);
+    const files = unzipSync(out);
+    // A second pivot cache/table pair was added, with a worksheet source and refreshOnLoad.
+    const cache = Object.keys(files).find((k) => /pivotCacheDefinition2\.xml$/.test(k))!;
+    expect(strFromU8(files[cache]!)).toContain('refreshOnLoad="1"');
+    expect(strFromU8(files[cache]!)).toContain('<worksheetSource ref="A1:C7" sheet="Data"/>');
+    // The output cells are materialised (grand total present) and the pivot is detected on re-read.
+    const back = readWorkbook(out);
+    const host = back.sheets.find((s) => s.name === "Out")!;
+    expect(host.pivotTables?.[0]?.rowFields).toEqual(["Region"]);
+    expect(host.pivotTables?.[0]?.colFields).toEqual(["Product"]);
+    // Materialised grand total (D5 = 350) is present in the output cells.
+    expect(getCell(host, 5, 4)?.value).toBe("350");
   });
 
   it("preserves the pivot parts verbatim through a read/write round-trip", async () => {
