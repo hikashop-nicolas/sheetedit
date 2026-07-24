@@ -52,10 +52,11 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   (with a #SPILL! guard on collisions). Producers UNIQUE / SORT / FILTER / SEQUENCE are supplied
   (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
   mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
-- Pictures can be moved and resized (xlsx; the two-cell anchor is written back); replacing an
-  image's bytes and editing non-picture shapes are still not supported. Other preserved-only
-  features above (form controls, slicers, protection) are not editable. The now-rendered features
-  (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
+- Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
+  the media part swapped). Editing non-picture shapes is still not supported (shapes are not
+  rendered). Other preserved-only features above (form controls, slicers, protection) are not
+  editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
+  authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
   total), calculated fields, calculated items, and a pivot chart (over the output) are all
   supported. Not attempted: byte-identical layout to Excel (both apps re-flow the body on open).

@@ -10,6 +10,8 @@ export const ODS = {
   fo: "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
   number: "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0",
   xlink: "http://www.w3.org/1999/xlink",
+  draw: "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+  svg: "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0",
   dc: "http://purl.org/dc/elements/1.1/",
   calcext: "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0",
 };

@@ -1665,9 +1665,36 @@ export function createSheetEditor(
     gridScroll,
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
-    editable: () => wb.kind === "xlsx", // ods drawing write-back is not implemented yet
+    editable: () => wb.kind === "xlsx" || wb.kind === "ods",
     onEdit: () => { mark(); imageLayer.refresh(); },
+    onReplace: (im) => replaceImage(im),
   });
+  // Replace a picture's bytes: pick a new image file, swap the data URI + stage the bytes for the
+  // writer (keeping the anchor). The media part is rewritten on save.
+  const replaceImage = (im: import("./model").SheetImage): void => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.style.display = "none";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const ext = (file.name.split(".").pop() || (file.type.split("/")[1] ?? "png")).toLowerCase();
+      const mime = file.type || `image/${ext}`;
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      im.replaceBytes = bytes;
+      im.replaceExt = ext;
+      im.dataUri = `data:${mime};base64,${btoa(bin)}`;
+      im.dirty = true;
+      mark();
+      imageLayer.refresh();
+    });
+    document.body.appendChild(input);
+    input.click();
+  };
   const pivotLayer = setupPivotLayer({
     wrap,
     gridScroll,

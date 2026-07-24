@@ -281,7 +281,7 @@ export interface StyleChange {
 export interface TextRun { text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; size?: number; color?: string; font?: string; }
 
 /** An embedded picture anchored on a sheet. Rendered on an overlay; a move/resize updates `anchor`
-    and sets `dirty`, which the xlsx writer flushes back into the drawing part. */
+    and sets `dirty`, which the writer flushes back (xlsx: the drawing anchor; ods: the draw:frame). */
 export interface SheetImage {
   anchor: import("./chart-model").ChartAnchor;
   dataUri: string;
@@ -289,7 +289,20 @@ export interface SheetImage {
       move/resize can find and rewrite the exact anchor element on save. */
   drawingPath?: string;
   anchorIndex?: number;
-  /** Moved/resized in the UI -> written back; otherwise the drawing part stays verbatim. */
+  /** The media part path holding this picture's bytes (xlsx xl/media/..., ods Pictures/...), so a
+      replace can swap them. */
+  mediaPath?: string;
+  /** ods: the draw:frame element (in the persistent contentDoc) and its anchor cell, so a move/
+      resize can patch svg:x/y/width/height relative to that cell without re-parenting the frame. */
+  odsFrameEl?: Element;
+  odsAnchorCol?: number;
+  odsAnchorRow?: number;
+  /** ods: pixel offset (from the anchor cell) + size committed by a move/resize, applied on save. */
+  odsFrame?: { x: number; y: number; w: number; h: number };
+  /** Replacement bytes + extension picked in the UI; the writer swaps the media part on save. */
+  replaceBytes?: Uint8Array;
+  replaceExt?: string;
+  /** Moved/resized/replaced in the UI -> written back; otherwise the parts stay verbatim. */
   dirty?: boolean;
 }
 

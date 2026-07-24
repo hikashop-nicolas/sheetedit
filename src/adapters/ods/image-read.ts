@@ -40,6 +40,6 @@ export function readOdsImages(wb: Workbook, files: Record<string, Uint8Array>): 
     const sheet: Sheet | undefined = t ? wb.sheets.find((s) => s.tableEl === t) : undefined;
     if (!sheet || !t) continue;
     const anchor: ChartAnchor = anchorOf(frame, t);
-    (sheet.images ??= []).push({ anchor, dataUri });
+    (sheet.images ??= []).push({ anchor, dataUri, odsFrameEl: frame, odsAnchorCol: anchor.fromCol, odsAnchorRow: anchor.fromRow, mediaPath: href && !href.startsWith("data:") && files[href] ? href : undefined });
   }
 }

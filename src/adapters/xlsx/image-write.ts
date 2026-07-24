@@ -55,12 +55,62 @@ function rewriteImage(wb: Workbook, im: SheetImage): void {
   wb.files[im.drawingPath] = serializeXml(doc);
 }
 
-/** Persist all dirty images to the workbook's drawing parts. */
+/** Ensure [Content_Types].xml has a Default for the given image extension. */
+function ensureContentType(wb: Workbook, ext: string): void {
+  const ct = wb.files["[Content_Types].xml"];
+  if (!ct) return;
+  const doc = parseXmlOpt(ct);
+  if (!doc) return;
+  const has = Array.from(doc.getElementsByTagName("Default")).some((d) => (d.getAttribute("Extension") || "").toLowerCase() === ext);
+  if (has) return;
+  const mime: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", bmp: "image/bmp", webp: "image/webp", svg: "image/svg+xml", tif: "image/tiff", tiff: "image/tiff" };
+  const d = doc.createElementNS(doc.documentElement.namespaceURI, "Default");
+  d.setAttribute("Extension", ext); d.setAttribute("ContentType", mime[ext] ?? "application/octet-stream");
+  doc.documentElement.insertBefore(d, doc.documentElement.firstChild);
+  wb.files["[Content_Types].xml"] = serializeXml(doc);
+}
+
+/** Point the drawing's relationship for this image at a new media target (used when a replacement
+    has a different extension, so the part path changes). */
+function retargetDrawingRel(wb: Workbook, im: SheetImage, newFile: string): void {
+  if (!im.drawingPath) return;
+  const relsPath = im.drawingPath.replace(/drawings\/(drawing[^/]+\.xml)$/i, "drawings/_rels/$1.rels");
+  const relsDoc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
+  if (!relsDoc) return;
+  for (const r of Array.from(relsDoc.getElementsByTagName("Relationship"))) {
+    const target = r.getAttribute("Target") || "";
+    if (/image/i.test(r.getAttribute("Type") || "") && target.replace(/^.*\//, "") === im.mediaPath?.replace(/^.*\//, "")) {
+      r.setAttribute("Target", target.replace(/[^/]+$/, newFile));
+    }
+  }
+  wb.files[relsPath] = serializeXml(relsDoc);
+}
+
+/** Swap an image's media bytes. Same extension overwrites the part in place; a different extension
+    writes a new part, retargets the drawing relationship and registers the content type. */
+function replaceImageBytes(wb: Workbook, im: SheetImage): void {
+  if (!im.replaceBytes || !im.mediaPath) return;
+  const oldExt = (im.mediaPath.split(".").pop() || "png").toLowerCase();
+  const ext = (im.replaceExt || oldExt).toLowerCase();
+  if (ext === oldExt) { wb.files[im.mediaPath] = im.replaceBytes; }
+  else {
+    const newPath = im.mediaPath.replace(/[^/]+$/, `${im.mediaPath.replace(/^.*\//, "").replace(/\.[^.]+$/, "")}.${ext}`);
+    wb.files[newPath] = im.replaceBytes;
+    retargetDrawingRel(wb, im, newPath.replace(/^.*\//, ""));
+    ensureContentType(wb, ext);
+    im.mediaPath = newPath; // leave the old part as a harmless orphan (may be shared)
+  }
+  im.replaceBytes = undefined;
+  im.replaceExt = undefined;
+}
+
+/** Persist all dirty images: media replacements and moved/resized anchors. */
 export function writeXlsxImages(wb: Workbook): void {
   for (const sheet of wb.sheets as Sheet[]) {
     for (const im of sheet.images ?? []) {
       if (!im.dirty) continue;
-      rewriteImage(wb, im);
+      if (im.replaceBytes) replaceImageBytes(wb, im);
+      if (im.odsFrame == null) rewriteImage(wb, im); // anchor rewrite (xlsx images have no odsFrame)
       im.dirty = false;
     }
   }

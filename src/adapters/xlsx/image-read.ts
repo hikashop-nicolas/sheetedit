@@ -40,7 +40,7 @@ export function readImages(sheet: Sheet, files: Record<string, Uint8Array>, path
       const bytes = files[mediaPath];
       const anchor = anchorOf(anchorEl);
       if (!bytes || !anchor) return;
-      out.push({ anchor, dataUri: toDataUri(bytes, mediaPath), drawingPath: drawPath, anchorIndex });
+      out.push({ anchor, dataUri: toDataUri(bytes, mediaPath), drawingPath: drawPath, anchorIndex, mediaPath });
     });
   }
   if (out.length) sheet.images = out;

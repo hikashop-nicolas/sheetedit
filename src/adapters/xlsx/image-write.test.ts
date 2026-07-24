@@ -58,6 +58,28 @@ describe("embedded image writer", () => {
     expect(re.sheets[0].images![0].anchor).toMatchObject({ fromCol: 2, toCol: 6, toRow: 9 });
   });
 
+  it("replaces an image's bytes in place when the extension is unchanged", () => {
+    const wb = readWorkbook(base(twoCell));
+    const im = wb.sheets[0].images![0];
+    const fresh = Uint8Array.from([137, 80, 78, 71, 9, 9, 9, 9]);
+    im.replaceBytes = fresh; im.replaceExt = "png"; im.dirty = true;
+    writeXlsx(wb);
+    expect(Array.from(wb.files["xl/media/image1.png"])).toEqual(Array.from(fresh));
+  });
+
+  it("replaces with a different extension: new part, retargeted rel, content type", () => {
+    const wb = readWorkbook(base(twoCell));
+    const im = wb.sheets[0].images![0];
+    im.replaceBytes = Uint8Array.from([255, 216, 255, 224]); im.replaceExt = "jpg"; im.dirty = true;
+    writeXlsx(wb);
+    expect(wb.files["xl/media/image1.jpg"]).toBeTruthy();
+    expect(new TextDecoder().decode(wb.files["xl/drawings/_rels/drawing1.xml.rels"])).toContain("image1.jpg");
+    expect(new TextDecoder().decode(wb.files["[Content_Types].xml"])).toMatch(/Extension="jpg"/);
+    // read back: the image resolves to the new jpeg part
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(re.sheets[0].images![0].dataUri.startsWith("data:image/jpeg")).toBe(true);
+  });
+
   it("leaves an untouched image's drawing part byte-identical", () => {
     const wb = readWorkbook(base(twoCell));
     const before = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);

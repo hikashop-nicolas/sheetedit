@@ -102,10 +102,13 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
 - **Rich text**: feature-complete. Per-run styling is rendered, authored (select a sub-range while
   editing, then bold/italic/underline/strike/colour/size/font) and written to xlsx + ods (DONE).
   Retyping a cell's text clears its runs (offsets shift); re-apply after the text is settled.
-- **Images**: move + resize authored on xlsx (drag the picture, drag the corner handle; the new
-  two-cell anchor is written back to the drawing part, converting a oneCell/absolute anchor to a
-  twoCellAnchor). ODS images stay render-only (no drawing write-back yet). Still to do: replace an
-  image's bytes, and shape (non-picture) editing (shapes are not rendered today).
+- **Images**: move, resize and replace authored on both xlsx and ods. Drag the picture to move,
+  drag the corner handle to resize, double-click to pick a replacement file. xlsx writes back the
+  two-cell drawing anchor (converting a oneCell/absolute anchor to a twoCellAnchor); ods rewrites the
+  draw:frame's svg:x/y/width/height relative to its anchor cell (no re-parenting). Replace swaps the
+  media part in place for the same extension, or writes a new part + retargets the rel/href +
+  registers the content type / manifest entry for a different one. Verified through LibreOffice
+  round-trips. Still to do: shape (non-picture) editing (shapes are not rendered today).
 - **Dynamic arrays**: exotic spill producers are best-effort; only UNIQUE/SORT/FILTER/SEQUENCE +
   TRANSPOSE/bare-range spill are supplied.
 - **Preserved-only, no plans to edit**: form controls / ActiveX / slicers interactivity, sheet /

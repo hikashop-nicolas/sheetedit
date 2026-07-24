@@ -46,4 +46,54 @@ describe("ods embedded images", () => {
     expect(files["Pictures/a.png"]).toBeTruthy(); // media preserved
     expect(strFromU8(files["content.xml"]!)).toContain("Pictures/a.png"); // frame preserved
   });
+
+  it("writes a moved/resized frame back to svg:x/y/width/height", () => {
+    const frame = `<table:table-cell><draw:frame draw:name="Image1" svg:width="2cm" svg:height="1cm" svg:x="0.1cm" svg:y="0.1cm" table:end-cell-address="Sheet1.C3"><draw:image xlink:href="Pictures/a.png"/></draw:frame></table:table-cell>`;
+    const wb = readWorkbook(ods(frame, { "Pictures/a.png": new Uint8Array([137, 80, 78, 71, 9]) }));
+    const im = wb.sheets[0].images![0];
+    // a move/resize (as the overlay would commit): 96px = 1in = 2.54cm.
+    im.odsFrame = { x: 96, y: 192, w: 288, h: 96 };
+    im.dirty = true;
+    const content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]!);
+    expect(content).toMatch(/svg:x="2\.540cm"/);
+    expect(content).toMatch(/svg:y="5\.080cm"/);
+    expect(content).toMatch(/svg:width="7\.620cm"/);
+    expect(content).toMatch(/svg:height="2\.540cm"/);
+    expect(content).not.toContain("end-cell-address"); // explicit size supersedes the two-cell end
+  });
+
+  it("replaces an ods image's bytes in place (same extension)", () => {
+    const frame = `<table:table-cell><draw:frame draw:name="Image1" svg:width="2cm" svg:height="1cm"><draw:image xlink:href="Pictures/a.png"/></draw:frame></table:table-cell>`;
+    const wb = readWorkbook(ods(frame, { "Pictures/a.png": new Uint8Array([1, 2, 3]) }));
+    const im = wb.sheets[0].images![0];
+    const fresh = new Uint8Array([9, 8, 7, 6]);
+    im.replaceBytes = fresh; im.replaceExt = "png"; im.dirty = true;
+    const files = unzipSync(writeWorkbook(wb));
+    expect(Array.from(files["Pictures/a.png"]!)).toEqual(Array.from(fresh));
+  });
+
+  it("replaces an ods image with a different extension: new part + href + manifest", () => {
+    const frame = `<table:table-cell><draw:frame draw:name="Image1" svg:width="2cm" svg:height="1cm"><draw:image xlink:href="Pictures/a.png"/></draw:frame></table:table-cell>`;
+    const wb = readWorkbook(ods(frame, { "Pictures/a.png": new Uint8Array([1, 2, 3]) }));
+    const im = wb.sheets[0].images![0];
+    im.replaceBytes = new Uint8Array([255, 216, 255, 224]); im.replaceExt = "jpg"; im.dirty = true;
+    const files = unzipSync(writeWorkbook(wb));
+    expect(files["Pictures/a.jpg"]).toBeTruthy();
+    expect(strFromU8(files["content.xml"]!)).toContain("Pictures/a.jpg");
+    expect(strFromU8(files["META-INF/manifest.xml"]!)).toMatch(/Pictures\/a\.jpg/);
+  });
+
+  it("re-reads the moved frame's offset back as the anchor position", () => {
+    const frame = `<table:table-cell><draw:frame draw:name="Image1" svg:width="2cm" svg:height="1cm" svg:x="0cm" svg:y="0cm"><draw:image xlink:href="Pictures/a.png"/></draw:frame></table:table-cell>`;
+    const wb = readWorkbook(ods(frame, { "Pictures/a.png": new Uint8Array([137, 80, 78, 71, 9]) }));
+    const im = wb.sheets[0].images![0];
+    im.odsFrame = { x: 96, y: 96, w: 192, h: 96 };
+    im.dirty = true;
+    const re = readWorkbook(writeWorkbook(wb));
+    const a = re.sheets[0].images![0].anchor;
+    // anchored to A1 (col 1,row 1) + a 96px offset -> the frame renders 96px right/down of A1.
+    expect(a.fromCol).toBe(1);
+    expect(Math.round(a.fromColOff)).toBe(96);
+    expect(Math.round(a.fromRowOff)).toBe(96);
+  });
 });

@@ -13,7 +13,9 @@ export interface ImageLayerDeps {
   geom: () => ChartGeom;
   /** After a move/resize: the image's anchor was updated + dirty set; the host marks + persists. */
   onEdit?: (im: SheetImage) => void;
-  /** True when the active sheet's images can be written back (xlsx); gates the drag handles. */
+  /** Double-click on an editable image: the host prompts for a replacement file. */
+  onReplace?: (im: SheetImage) => void;
+  /** True when the active sheet's images can be written back; gates the drag handles + replace. */
   editable?: () => boolean;
 }
 
@@ -59,7 +61,9 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
   };
   const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
 
-  // Commit a dragged/resized pixel rect (content coords) back to the image's cell anchor.
+  // Commit a dragged/resized pixel rect (content coords) back to the image's cell anchor. For ods,
+  // also record the frame's pixel offset from its (unchanged) anchor cell + its size, which the ods
+  // writer applies without re-parenting the frame.
   const rectToAnchor = (im: SheetImage, x: number, y: number, w: number, h: number): void => {
     const g = deps.geom();
     const set = (px: number, at: (p: number) => number, of: (i: number) => number): [number, number] => { const i = Math.max(1, at(px)); return [i, Math.max(0, px - of(i))]; };
@@ -68,6 +72,9 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
     const [tc, tco] = set(x + w, g.colAt, g.xOfCol);
     const [tr, tro] = set(y + h, g.rowAt, g.yOfRow);
     im.anchor = { fromCol: fc, fromRow: fr, fromColOff: fco, fromRowOff: fro, toCol: tc, toRow: tr, toColOff: tco, toRowOff: tro };
+    if (im.odsFrameEl && im.odsAnchorCol != null && im.odsAnchorRow != null) {
+      im.odsFrame = { x: x - g.xOfCol(im.odsAnchorCol), y: y - g.yOfRow(im.odsAnchorRow), w, h };
+    }
     im.dirty = true;
   };
 
@@ -133,6 +140,8 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
         handle.className = "sheetedit-image-resize";
         box.appendChild(handle);
         attachDrag(box, handle, im);
+        box.title = deps.onReplace ? "Double-click to replace" : "";
+        box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); deps.onReplace?.(im); });
       }
       inner.appendChild(box);
       boxes.set(im, box);
