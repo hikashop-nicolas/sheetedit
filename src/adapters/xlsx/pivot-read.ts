@@ -55,15 +55,29 @@ function resolvePart(base: string, target: string): string {
   return parts.join("/");
 }
 
-interface CacheInfo { part: string; fields: string[]; calcFormula?: (string | undefined)[]; sourceSheet?: string; source?: { r1: number; c1: number; r2: number; c2: number } }
+interface CacheInfo { part: string; fields: string[]; calcFormula?: (string | undefined)[]; sharedVals?: string[][]; calcItems?: { field: number; name: string; formula: string }[]; sourceSheet?: string; source?: { r1: number; c1: number; r2: number; c2: number } }
 
 function readCache(files: Record<string, Uint8Array>, part: string): CacheInfo | undefined {
   const bytes = files[part];
   if (!bytes) return undefined;
   const doc = parseXmlOpt(bytes);
   if (!doc) return undefined;
-  const info: CacheInfo = { part, fields: [], calcFormula: [] };
-  for (const cf of Array.from(doc.getElementsByTagName("cacheField"))) { info.fields.push(cf.getAttribute("name") ?? ""); info.calcFormula!.push(cf.getAttribute("databaseField") === "0" ? (cf.getAttribute("formula") ?? undefined) : undefined); }
+  const info: CacheInfo = { part, fields: [], calcFormula: [], sharedVals: [] };
+  for (const cf of Array.from(doc.getElementsByTagName("cacheField"))) {
+    info.fields.push(cf.getAttribute("name") ?? "");
+    info.calcFormula!.push(cf.getAttribute("databaseField") === "0" ? (cf.getAttribute("formula") ?? undefined) : undefined);
+    const si = Array.from(cf.getElementsByTagName("sharedItems")[0]?.children ?? []).map((e) => e.getAttribute("v") ?? "");
+    info.sharedVals!.push(si);
+  }
+  // Calculated items: <calculatedItem field formula> + a reference <x v="idx"> naming the item.
+  const cis: { field: number; name: string; formula: string }[] = [];
+  for (const ci of Array.from(doc.getElementsByTagName("calculatedItem"))) {
+    const field = Number(ci.getAttribute("field") ?? "-1");
+    const formula = ci.getAttribute("formula") ?? "";
+    const idx = Number(ci.getElementsByTagName("x")[0]?.getAttribute("v") ?? "-1");
+    if (field >= 0 && formula) cis.push({ field, name: info.sharedVals![field]?.[idx] ?? `Calc${cis.length + 1}`, formula });
+  }
+  if (cis.length) info.calcItems = cis;
   const ws = doc.getElementsByTagName("worksheetSource")[0];
   if (ws) {
     const sheet = ws.getAttribute("sheet") ?? undefined;
@@ -154,7 +168,7 @@ export function readXlsxPivots(wb: Workbook, files: Record<string, Uint8Array>):
           return { field: fld, func: subtotalToFunc(d.getAttribute("subtotal")), showAs };
         }).filter((v): v is import("../../core/pivot").PivotValue => v !== null);
         const pages = Array.from(tdoc.getElementsByTagName("pageField")).map((p) => ({ field: Number(p.getAttribute("fld") ?? "-1"), item: p.getAttribute("item") != null ? Number(p.getAttribute("item")) : null })).filter((p) => p.field >= 0);
-        if (values.length) info.authorSpec = { source: cache.source, rows: idxs("rowFields"), cols: idxs("colFields"), values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined };
+        if (values.length) info.authorSpec = { source: cache.source, rows: idxs("rowFields"), cols: idxs("colFields"), values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined, calcItems: cache.calcItems?.length ? cache.calcItems : undefined };
       }
       info.part = tablePart;
       if (cache?.part) info.cachePart = cache.part;

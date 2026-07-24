@@ -8,10 +8,14 @@ xlsx and ODS, verified through LibreOffice round-trips. The dialog has a live pr
 Advanced value features (2026-07-24): **show values as** (% of grand/column/row total, running
 total), **calculated fields** (a formula over the source columns' sums, via a small in-engine
 arithmetic parser), and a **pivot chart** (chart the pivot output, grand totals excluded, from the
-tag menu; bound to the output cells so it updates on refresh). xlsx emits showDataAs + calculated
-cacheFields; both are reconstructed on read so they survive an edit. Excel and sheetedit's display
-honour them; LibreOffice's xlsx pivot rebuild does not (shows the raw aggregate). Still open:
-calculated *items*.
+tag menu; bound to the output cells so it updates on refresh), plus **calculated items** (a
+synthetic member of a row/column field from a formula over that field's items, e.g. "North +
+South"; appears as an extra row/column, grand totals exclude it). xlsx emits showDataAs, calculated
+cacheFields, and `<calculatedItems>` (+ `f="1"` items); all are reconstructed on read so they
+survive an edit. Excel and sheetedit's display honour them; LibreOffice's xlsx pivot rebuild does
+not. The calculated-item OOXML is emitted per the ECMA-376 spec but could not be verified in Excel
+here (only that the file opens cleanly in LibreOffice, which ignores calc items). Pivots are now
+feature-complete apart from byte-identical Excel layout (both apps re-flow the body on open anyway).
 
 ## Scope
 

@@ -122,6 +122,13 @@ export function writeXlsxPivotParts(
   const fldOf = spec.values.map((v) => (v.calc != null ? width + calcN++ : v.field ?? 0));
   const calcFieldsXml = spec.values.filter((v) => v.calc != null).map((v, i) => `<cacheField name="${esc(v.name || `Calc${i + 1}`)}" databaseField="0" numFmtId="0" formula="${esc(v.calc!)}"><sharedItems containsSemiMixedTypes="0" containsString="0" containsNumber="1"/></cacheField>`).join("");
   const totalFields = width + calcN;
+  // Calculated items: synthetic members of a row/column field (a formula over that field's items).
+  // They ride in the field's sharedItems + pivotField <item f="1">, with the formula in
+  // <calculatedItems>. The item's index within the field = its position after the real items.
+  const calcItems = spec.calcItems ?? [];
+  const fieldRealCount = (c: number): number => computed.fields[c]!.items.length - calcItems.filter((ci) => ci.field === c).length;
+  const calcItemIndex = new Map<(typeof calcItems)[number], number>();
+  { const per = new Map<number, number>(); for (const ci of calcItems) { const k = per.get(ci.field) ?? 0; calcItemIndex.set(ci, fieldRealCount(ci.field) + k); per.set(ci.field, k + 1); } }
   // "Show values as": the OOXML showDataAs value + a percent number format / running-total base.
   const showAsAttr = (v: (typeof spec.values)[number]): string => {
     switch (v.showAs) {
@@ -149,7 +156,9 @@ export function writeXlsxPivotParts(
   }
   const cacheDef = `<pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${OREL}" r:id="rId1" refreshOnLoad="1" refreshedBy="sheetedit" recordCount="${computed.records.length}" createdVersion="3">`
     + `<cacheSource type="worksheet"><worksheetSource ref="${rangeRef(spec.source)}" sheet="${esc(sourceSheetName)}"/></cacheSource>`
-    + `<cacheFields count="${totalFields}">${cacheFields}${calcFieldsXml}</cacheFields></pivotCacheDefinition>`;
+    + `<cacheFields count="${totalFields}">${cacheFields}${calcFieldsXml}</cacheFields>`
+    + (calcItems.length ? `<calculatedItems count="${calcItems.length}">` + calcItems.map((ci) => `<calculatedItem field="${ci.field}" formula="${esc(ci.formula)}"><pivotArea outline="0" fieldPosition="0"><references count="1"><reference field="${ci.field}" count="1"><x v="${calcItemIndex.get(ci)}"/></reference></references></pivotArea></calculatedItem>`).join("") + `</calculatedItems>` : "")
+    + `</pivotCacheDefinition>`;
 
   // --- cacheRecords: <x v> for grouping fields, literal <n>/<s>/<m/> otherwise ---
   let recs = "";
@@ -175,7 +184,9 @@ export function writeXlsxPivotParts(
     const f = computed.fields[c]!;
     if (isRow(c) || isCol(c)) {
       // With subtotals on, drop the defaultSubtotal="0" (default is on) and add the subtotal item.
-      const items = f.items.map((_, i) => `<item x="${i}"/>`).join("") + (sub ? `<item t="default"/>` : "");
+      // Items beyond the real count are calculated items, flagged f="1".
+      const realN = fieldRealCount(c);
+      const items = f.items.map((_, i) => (i >= realN ? `<item x="${i}" f="1"/>` : `<item x="${i}"/>`)).join("") + (sub ? `<item t="default"/>` : "");
       pivotFields += `<pivotField axis="${isRow(c) ? "axisRow" : "axisCol"}" compact="0" showAll="0"${sub ? "" : ' defaultSubtotal="0"'}><items count="${f.items.length + (sub ? 1 : 0)}">${items}</items></pivotField>`;
     } else if (isPage(c)) {
       const items = f.items.map((_, i) => `<item x="${i}"/>`).join("");

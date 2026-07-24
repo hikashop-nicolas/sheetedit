@@ -116,6 +116,8 @@ sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`
   total, per field.
 - **Calculated fields**: add a value field defined by a formula over the source columns' sums
   (e.g. `Revenue - Cost`).
+- **Calculated items**: add a synthetic member to a row/column field from a formula over that
+  field's items (e.g. on Region: `North + South`); it appears as an extra row/column.
 - **Pivot chart**: from the tag menu, chart the pivot's output (grand totals excluded); the chart is
   bound to the output cells, so it updates when the pivot recomputes.
 - **Edit / refresh** from the pivot's tag menu: refresh recomputes the output from the current
@@ -124,10 +126,11 @@ sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`
 - Written as the **native** structure in both formats, with `refreshOnLoad` set so Excel and
   LibreOffice re-render the pivot from the source on open; verified through LibreOffice round-trips.
 
-Caveats: "show values as" and calculated fields are honoured by Excel (standard OOXML) and by
-sheetedit's own display, but LibreOffice's xlsx pivot rebuild ignores them (it shows the raw
-aggregate). Calculated *items* and byte-identical layout to Excel are not implemented (both apps
-re-flow the body from the definition on open).
+Caveats: "show values as", calculated fields and calculated items are honoured by Excel (standard
+OOXML) and by sheetedit's own display, but LibreOffice's xlsx pivot rebuild ignores them (it shows
+the raw aggregate). Calculated items are emitted per the OOXML spec but could not be verified in
+Excel here, only that the file still opens cleanly in LibreOffice. Byte-identical layout to Excel is
+not attempted (both apps re-flow the body from the definition on open).
 
 ## How preservation works
 

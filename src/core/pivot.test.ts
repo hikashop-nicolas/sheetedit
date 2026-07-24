@@ -124,6 +124,29 @@ describe("pivot compute engine", () => {
     expect(p.agg(null, null, 0)).toBe(700); // grand 350 * 2
   });
 
+  it("adds a calculated item to a row field as a synthetic row", () => {
+    // On Region: a calc item "All NS" = North + South. rows=[Region], sum of Sales.
+    const spec: PivotSpec = { source: SRC, rows: [0], cols: [], values: [{ field: 2, func: "sum" }], calcItems: [{ field: 0, name: "All NS", formula: "North + South" }] };
+    const p = computePivot(sampleSheet(), spec);
+    const flat = p.matrix.map((row) => row.map((c) => c.value));
+    // North (190), South (160), calc item All NS (350), then grand (350, real items only).
+    expect(flat.some((r) => r[0] === "All NS" && r[1] === 350)).toBe(true);
+    expect(p.agg(null, null, 0)).toBe(350); // grand excludes the calc item
+  });
+
+  it("evaluates a calculated item per opposite-axis cell", () => {
+    // On Product (columns): "AminusB" = Apple - Banana. rows=[Region], cols=[Product].
+    const spec: PivotSpec = { source: SRC, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }], calcItems: [{ field: 1, name: "AminusB", formula: "Apple - Banana" }] };
+    const p = computePivot(sampleSheet(), spec);
+    const flat = p.matrix.map((row) => row.map((c) => c.value));
+    const header = flat[0]!;
+    const ci = header.indexOf("AminusB");
+    expect(ci).toBeGreaterThan(0);
+    // North row: Apple 140 - Banana 50 = 90; South: 70 - 90 = -20.
+    expect(flat.find((r) => r[0] === "North")![ci]).toBe(90);
+    expect(flat.find((r) => r[0] === "South")![ci]).toBe(-20);
+  });
+
   it("parses calculated-field formulas with precedence and field refs", () => {
     const ast = parseCalc("Sales * 2 + 10", ["Region", "Product", "Sales"]);
     expect([...ast.refs]).toEqual([2]);

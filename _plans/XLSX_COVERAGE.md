@@ -55,10 +55,11 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   slicers, protection). The now-rendered features (hyperlinks, dropdowns, CF, comments) are
   read/followed, not authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
-  total), calculated fields, and a pivot chart (over the output) are all supported. Not yet:
-  calculated *items*, and byte-identical layout to Excel (both apps re-flow the body on open).
-  "Show values as" and calculated fields are honoured by Excel and sheetedit's display but ignored
-  by LibreOffice's xlsx pivot rebuild (a LibreOffice limitation).
+  total), calculated fields, calculated items, and a pivot chart (over the output) are all
+  supported. Not attempted: byte-identical layout to Excel (both apps re-flow the body on open).
+  Show-values-as / calculated fields / calculated items are honoured by Excel and sheetedit's
+  display but ignored by LibreOffice's xlsx pivot rebuild; the calculated-item OOXML is emitted per
+  spec but unverified in Excel (only that the file opens cleanly in LibreOffice).
 - Conditional formatting: icon sets now render (arrows/traffic-lights/symbols/ratings, bucketed by
   the cfvo thresholds); arbitrary expression rules and time-period rules still round-trip only, and
   cellIs operands are numeric literals (cell-ref/formula operands skipped).

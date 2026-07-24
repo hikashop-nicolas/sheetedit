@@ -81,10 +81,12 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   show a pressed state reflecting the active cell.
 
 ## Remaining / not yet done (the honest backlog)
-- **Pivots, advanced**: "show values as", calculated fields and a pivot chart are now DONE (see
-  PIVOT_AUTHORING.md). Still not done: calculated *items*, and byte-identical layout to Excel (both
-  apps re-flow the body on open anyway). "Show values as" + calculated fields are honoured by Excel
-  and sheetedit's display but ignored by LibreOffice's xlsx pivot rebuild.
+- **Pivots**: feature-complete. "Show values as", calculated fields, calculated items and a pivot
+  chart are all DONE (see PIVOT_AUTHORING.md). Not attempted: byte-identical layout to Excel (both
+  apps re-flow the body on open anyway). Caveat: show-values-as / calculated fields / calculated
+  items are honoured by Excel and sheetedit's display but ignored by LibreOffice's xlsx pivot
+  rebuild; the calculated-item OOXML is emitted per spec but unverified in Excel (only that the file
+  opens cleanly in LibreOffice).
 - **Conditional formatting**: icon-set authoring, `is-true-formula` / text-period rule authoring,
   and cell-reference / formula operands for `cellIs` (numeric literals only today; these round-trip).
 - **Sparklines**: authoring on ods (xlsx is author + render; ods is render-only).

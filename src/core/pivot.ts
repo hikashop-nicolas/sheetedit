@@ -26,6 +26,10 @@ export interface PivotValue {
   showAs?: PivotShowAs;
 }
 
+/** A calculated item: a synthetic member of a row/column field, defined by a formula over that
+    field's other item names (e.g. on Region: "West + East"). Appears as an extra row/column. */
+export interface PivotCalcItem { field: number; name: string; formula: string }
+
 export interface PivotSpec {
   /** 1-based inclusive source range; the header row is r1. */
   source: { r1: number; c1: number; r2: number; c2: number };
@@ -36,6 +40,8 @@ export interface PivotSpec {
   pages?: { field: number; item: number | null }[];
   /** Show per-group subtotals for the outer nested fields (Excel default when nested). */
   subtotals?: boolean;
+  /** Calculated items added to row/column fields. */
+  calcItems?: PivotCalcItem[];
 }
 
 export interface PivotItem { label: string; value: string | number; num: boolean; }
@@ -223,8 +229,41 @@ export function computePivot(sheet: Sheet, spec: PivotSpec): PivotComputed {
 
   const rowFieldObjs = spec.rows.map((i) => fields[i]!);
   const colFieldObjs = spec.cols.map((i) => fields[i]!);
-  const rowKeys = collectKeys(filtered, rowFieldObjs);
-  const colKeys = collectKeys(filtered, colFieldObjs);
+  // Real leaf keys (from records) drive aggregation; calculated-item keys are added for the axis only.
+  const realRowKeys = collectKeys(filtered, rowFieldObjs);
+  const realColKeys = collectKeys(filtered, colFieldObjs);
+
+  // Append calculated items to their fields as synthetic items and parse each formula against the
+  // field's item labels (after appending, so a calc item may reference a sibling calc item).
+  const calcItemDefs: { field: number; idx: number; ast: ReturnType<typeof parseCalc> }[] = [];
+  (spec.calcItems ?? []).forEach((ci) => {
+    const f = fields[ci.field]; if (!f) return;
+    const idx = f.items.length;
+    f.items.push({ label: ci.name, value: ci.name, num: false });
+    f.indexOf.set(itemKey(ci.name), idx);
+    calcItemDefs.push({ field: ci.field, idx, ast: null as unknown as ReturnType<typeof parseCalc> });
+  });
+  calcItemDefs.forEach((d, k) => { d.ast = parseCalc((spec.calcItems ?? [])[k]!.formula, fields[d.field]!.items.map((it) => it.label)); });
+  const calcItemAt = (fieldObjs: PivotFieldInfo[], key: number[]): { L: number; ast: (typeof calcItemDefs)[number]["ast"] } | null => {
+    for (let L = 0; L < key.length; L++) { const d = calcItemDefs.find((c) => c.field === fieldObjs[L]!.index && c.idx === key[L]); if (d) return { L, ast: d.ast }; }
+    return null;
+  };
+  // Add calculated-item keys: for each field level with calc items, cross the calc item with the
+  // distinct combinations of the other levels seen in the real keys.
+  const withCalc = (real: number[][], fieldObjs: PivotFieldInfo[]): number[][] => {
+    const out = real.slice();
+    fieldObjs.forEach((fo, L) => {
+      const cis = calcItemDefs.filter((c) => c.field === fo.index);
+      if (!cis.length) return;
+      const combos = new Map<string, number[]>();
+      for (const rk of real) { const o = rk.slice(); o[L] = -1; const s = o.join(","); if (!combos.has(s)) combos.set(s, o); }
+      if (!real.length) combos.set("", Array.from({ length: fieldObjs.length }, () => -1));
+      for (const d of cis) for (const combo of combos.values()) { const key = combo.map((v, i) => (i === L ? d.idx : v === -1 ? 0 : v)); if (!out.some((k) => k.join(",") === key.join(","))) out.push(key); }
+    });
+    return out;
+  };
+  const rowKeys = withCalc(realRowKeys, rowFieldObjs);
+  const colKeys = withCalc(realColKeys, colFieldObjs);
   const subtotals = !!spec.subtotals;
   const rowAxis = buildAxis(rowKeys, spec.rows.length, subtotals);
   const colAxis = buildAxis(colKeys, spec.cols.length, subtotals);
@@ -239,7 +278,7 @@ export function computePivot(sheet: Sheet, spec: PivotSpec): PivotComputed {
   const measuredArr = [...measured];
 
   // Per full (rowKey,colKey) accumulators, per source column; aggField merges the subset a prefix /
-  // grand covers. Calculated fields evaluate their formula over each referenced column's sum.
+  // grand covers (over REAL keys only, so grand totals exclude calculated items).
   const keyOf = (rec: PivotRecord, objs: PivotFieldInfo[]): string => objs.map((f) => fields[f.index]!.indexOf.get(itemKey(recItem(rec.cells[f.index]!))) ?? 0).join(",");
   const cellAcc = new Map<string, Acc[]>();
   const bucket = (k: string): Acc[] => { let a = cellAcc.get(k); if (!a) { a = Array.from({ length: width }, newAcc); cellAcc.set(k, a); } return a; };
@@ -249,12 +288,15 @@ export function computePivot(sheet: Sheet, spec: PivotSpec): PivotComputed {
   }
   const aggField = (rowKey: number[] | null, colKey: number[] | null, field: number, func: PivotFunc): number | null => {
     const acc = newAcc();
-    const rks = rowKey === null ? rowKeys : rowKeys.filter((k) => prefixOf(k, rowKey));
-    const cks = colKey === null ? colKeys : colKeys.filter((k) => prefixOf(k, colKey));
+    const rks = rowKey === null ? realRowKeys : realRowKeys.filter((k) => prefixOf(k, rowKey));
+    const cks = colKey === null ? realColKeys : realColKeys.filter((k) => prefixOf(k, colKey));
     for (const rk of rks) for (const ck of cks) { const a = cellAcc.get(rk.join(",") + "|" + ck.join(",")); if (a) merge(acc, a[field]!); }
     return finalize(acc, func);
   };
   const agg = (rowKey: number[] | null, colKey: number[] | null, vi: number): number | null => {
+    // Resolve a calculated item in the row/column key by evaluating its formula over the real items.
+    if (rowKey) { const c = calcItemAt(rowFieldObjs, rowKey); if (c) return c.ast.eval((j) => agg(rowKey.map((v, i) => (i === c.L ? j : v)), colKey, vi)); }
+    if (colKey) { const c = calcItemAt(colFieldObjs, colKey); if (c) return c.ast.eval((j) => agg(rowKey, colKey.map((v, i) => (i === c.L ? j : v)), vi)); }
     const v = spec.values[vi]!;
     if (calcs[vi]) return calcs[vi]!.eval((f) => aggField(rowKey, colKey, f, "sum"));
     return aggField(rowKey, colKey, v.field!, v.func ?? "sum");

@@ -107,6 +107,20 @@ describe("xlsx pivot tables", () => {
     expect(av[1]!.name).toBe("Double");
   });
 
+  it("emits and reconstructs a calculated item", async () => {
+    const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }], calcItems: [{ field: 0, name: "All NS", formula: "North + South" }] };
+    const out = placeAndWrite(await realBytes("pivot.xlsx"), spec);
+    const files = unzipSync(out);
+    const cache = strFromU8(files[Object.keys(files).find((k) => /pivotCacheDefinition2\.xml$/.test(k))!]!);
+    expect(cache).toContain('<calculatedItem field="0" formula="North + South">');
+    const table = strFromU8(files[Object.keys(files).find((k) => /pivotTable2\.xml$/.test(k))!]!);
+    expect(table).toContain('f="1"'); // the calc item flagged in the field's items
+    // Re-read reconstructs the calculated item into the authoring spec.
+    const back = readWorkbook(out);
+    const ci = back.sheets.find((s) => s.name === "Out")!.pivotTables![0]!.authorSpec!.calcItems!;
+    expect(ci).toEqual([{ field: 0, name: "All NS", formula: "North + South" }]);
+  });
+
   it("deletes an authored pivot cleanly (parts, cache, wiring all removed)", async () => {
     const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }] };
     const wb = readWorkbook(await realBytes("pivot.xlsx"));
