@@ -214,6 +214,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   readOdsImages(wb, files);
   readOdsSparklines(wb);
   readOdsAutoFilter(wb);
+  readOdsPivots(wb);
   return wb;
 }
 
@@ -400,6 +401,50 @@ function readOdsSparklines(wb: Workbook): void {
       if (!p) continue;
       (sheet.sparklines ??= []).push({ type, color, negColor, host: { r: p.row, c: p.col }, dataRef: odfAddrToA1(data.replace(/\$/g, "")) });
     }
+  }
+}
+
+// One ODF range/address -> { sheet, r1..c2 } (1-based inclusive), or null.
+function odfRange(addr: string | null): { sheet: string; r1: number; c1: number; r2: number; c2: number } | null {
+  if (!addr) return null;
+  const a1 = odfAddrToA1(addr.replace(/\$/g, ""));
+  const bang = a1.indexOf("!");
+  const sheet = bang >= 0 ? a1.slice(0, bang) : "";
+  const body = (bang >= 0 ? a1.slice(bang + 1) : a1).split(":");
+  const p1 = parseA1Ref(body[0] ?? ""); const p2 = body[1] ? parseA1Ref(body[1]) : p1;
+  if (!p1 || !p2) return null;
+  return { sheet, r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
+}
+
+// Data-pilot (pivot) tables: <table:data-pilot-table> carries the output target-range-address and,
+// per source field, an orientation (row/column/data/page). Read-only: the output already renders as
+// the cells LibreOffice materialised; this models the definition so the UI can surface it.
+function readOdsPivots(wb: Workbook): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  for (const pt of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "data-pilot-table")) {
+    const target = odfRange(attrByLocal(pt, "target-range-address"));
+    const host = target ? (wb.sheets.find((s) => s.name === target.sheet) ?? (target.sheet === "" ? wb.sheets[0] : undefined)) : wb.sheets[0];
+    if (!host) continue;
+    const info: import("../../core/model").PivotTableInfo = { name: attrByLocal(pt, "name") ?? "DataPilot", rowFields: [], colFields: [], pageFields: [], dataFields: [] };
+    if (target) info.targetRange = { r1: target.r1, c1: target.c1, r2: target.r2, c2: target.c2 };
+    const src = Array.from(pt.children).find((c) => c.localName === "source-cell-range");
+    const srcR = src ? odfRange(attrByLocal(src, "cell-range-address")) : null;
+    if (srcR) { info.sourceSheet = srcR.sheet; info.sourceRange = { r1: srcR.r1, c1: srcR.c1, r2: srcR.r2, c2: srcR.c2 }; }
+    for (const f of Array.from(pt.children)) {
+      if (f.localName !== "data-pilot-field") continue;
+      const name = attrByLocal(f, "source-field-name");
+      if (!name) continue; // the values-layout placeholder has no source field
+      const orient = attrByLocal(f, "orientation");
+      if (orient === "row") info.rowFields.push(name);
+      else if (orient === "column") info.colFields.push(name);
+      else if (orient === "page") info.pageFields.push(name);
+      else if (orient === "data") {
+        const fn = attrByLocal(f, "function");
+        info.dataFields.push({ name, func: fn && fn !== "auto" ? fn : "sum" });
+      }
+    }
+    (host.pivotTables ??= []).push(info);
   }
 }
 

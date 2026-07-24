@@ -17,6 +17,8 @@ against the OASIS ODF 1.3 spec.
 - LibreOffice sparklines (`<calcext:sparkline-groups>`) rendered; render-only.
 - AutoFilter (`<table:database-range>` with filter buttons): toggle, per-column filter menu, sort,
   and row hiding persisted as `table:visibility`. Verified through a LibreOffice round-trip.
+- Data-pilot (pivot) tables (`<table:data-pilot-table>`): detected and modelled (row/column/data/
+  page fields, source range, output range), outlined read-only on the grid, and preserved verbatim.
 
 ## Conditional formatting (how ODF represents it)
 
@@ -58,6 +60,24 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
 - **CF condition grammar**: `is-true-formula(...)` and text-based conditions are not rendered.
 - **CF colour scale / data bar / icon set for ODS**: read-only (from LibreOffice files); not
   authorable (no interoperable ODF form).
+
+## Pivot tables (both formats, read-only)
+
+Pivot tables are detected, modelled and surfaced but not authored, in either format:
+
+- **ODS** reads `<table:data-pilot-table>`; **xlsx** reads `pivotTable*.xml` + its `pivotCache`.
+  Each pivot's output already renders as the cells it materialises; on top of that the output range
+  is outlined and labelled read-only so the region reads as a live pivot, not editable cells.
+- **Preservation**: every pivot part passes through the writer verbatim (xlsx cache/table parts;
+  the ODS `data-pilot-tables` block rides along in the untouched content.xml subtree).
+- **Source-edit refresh (xlsx)**: editing a cell inside a pivot's worksheet source sets
+  `refreshOnLoad="1"` on that cache definition, so **Excel** rebuilds the pivot from the changed
+  source on open instead of showing the stale cached output. (LibreOffice recomputes data pilots on
+  open regardless, so the flag is a no-op there, harmless.) The pivot's own cached records are not
+  recomputed in-app; Excel/LibreOffice do that on load.
+- **Source-edit refresh (ODS)**: ODF data pilots carry no refresh-on-load flag and LibreOffice does
+  not auto-refresh them on open, so an edited ODS source leaves the pilot output stale until it is
+  refreshed in LibreOffice, matching LibreOffice's own behaviour when you edit pivot source.
 
 ## Not applicable to ODF
 

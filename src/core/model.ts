@@ -63,6 +63,34 @@ export interface CfRule {
 
 export interface CondFormat { ranges: { r1: number; c1: number; r2: number; c2: number }[]; rules: CfRule[]; }
 
+/** A field that appears in a data-field slot (Sum of Sales, ...) with its aggregation. */
+export interface PivotDataField { name: string; func?: string; }
+
+/** A pivot table / data-pilot detected in a workbook. Read-only: the output is rendered as the
+    ordinary cells it materialises; this describes the definition so the UI can surface it and so
+    an edit to the source range can flag the cache for refresh. Format-agnostic. */
+export interface PivotTableInfo {
+  name: string;
+  /** Source data location, when it is a worksheet range (sheet name + 1-based inclusive range). */
+  sourceSheet?: string;
+  sourceRange?: { r1: number; c1: number; r2: number; c2: number };
+  /** Output range on the host sheet (1-based inclusive), when known. */
+  targetRange?: { r1: number; c1: number; r2: number; c2: number };
+  rowFields: string[];
+  colFields: string[];
+  pageFields: string[];
+  dataFields: PivotDataField[];
+}
+
+/** xlsx-only: a pivot cache backed by a worksheet range, tracked so a source-data edit can set
+    refreshOnLoad on its definition part (Excel then recomputes the pivot when the file opens). */
+export interface PivotCacheRef {
+  part: string; // e.g. "xl/pivotCache/pivotCacheDefinition1.xml"
+  sourceSheet: string;
+  source: { r1: number; c1: number; r2: number; c2: number };
+  refreshFlagged?: boolean; // set once we have written refreshOnLoad, to avoid re-serialising
+}
+
 /** A phonetic-guide (furigana) run: the reading shown above base[sb..eb). */
 export interface Phonetic {
   sb: number; // start base-char offset (inclusive)
@@ -170,6 +198,8 @@ export interface Sheet {
   freeze?: { rows: number; cols: number };
   /** Autofilter range (1-based inclusive; first row = header). Drives sort/filter UI. */
   autoFilter?: { r1: number; c1: number; r2: number; c2: number };
+  /** Pivot tables / data-pilots whose output lands on this sheet (read-only; rendered as cells). */
+  pivotTables?: PivotTableInfo[];
   /** Runtime: per-column (1-based) set of allowed display values; a column absent from the map
       passes everything. Recomputed into filterHidden. */
   filters?: Map<number, Set<string>>;
@@ -215,6 +245,8 @@ export interface Workbook {
   /** Workbook-level defined names -> an A1 reference ("Sheet1!A1:A10", "A1"), so recalc
       can resolve named ranges in formulas. */
   definedNames?: Map<string, string>;
+  /** xlsx: pivot caches backed by a worksheet range; a source edit flags one for refresh. */
+  pivotCaches?: PivotCacheRef[];
 }
 
 /** A style change to apply to a cell (only the set fields change). */

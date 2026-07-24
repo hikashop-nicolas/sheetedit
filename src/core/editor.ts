@@ -22,10 +22,11 @@ import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
+import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup } from "../adapters/xlsx";
+import { flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1187,6 +1188,7 @@ export function createSheetEditor(
     const changes: UndoCellChange[] = positions.map((pos) => ({ r: pos.r, c: pos.c, before: snapFields(getCell(sheet, pos.r, pos.c)), after: null }));
     mutate();
     for (const ch of changes) ch.after = snapFields(getCell(sheet, ch.r, ch.c));
+    if (wb.kind === "xlsx" && wb.pivotCaches) flagXlsxPivotRefresh(wb, sheet.name, positions);
     history.push({ sheet: active, cells: changes, ...extra });
   };
   const applyStep = (step: { sheet: number; cells: UndoCellChange[]; undoExtra?: () => void; redoExtra?: () => void }, dir: "undo" | "redo") => {
@@ -1612,6 +1614,13 @@ export function createSheetEditor(
     gridScroll,
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+  });
+  const pivotLayer = setupPivotLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    label: (name) => t("pivotTag", { name }),
   });
   const chartUi = chartsOn
     ? setupChartUi({
@@ -2761,6 +2770,7 @@ export function createSheetEditor(
     gridScroll.scrollLeft = keepLeft;
     chartLayer.refresh();
     imageLayer.refresh();
+    pivotLayer.refresh();
   };
 
   const switchSheet = (i: number): void => {
@@ -2946,6 +2956,7 @@ export function createSheetEditor(
       window.removeEventListener("pointercancel", endDrag);
       chartLayer.teardown();
       imageLayer.teardown();
+      pivotLayer.teardown();
       chartUi.teardown();
       closeLineMenu();
       borderPop?.remove();
