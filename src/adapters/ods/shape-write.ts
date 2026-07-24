@@ -1,6 +1,7 @@
 import { type SheetShape, type Workbook } from "../../core/model";
 import { ODS } from "./shared";
 import { ensureOdsAutoStyles, internOdsStyle } from "./styles";
+import { POLY_GEOMS, shapePoints } from "../../core/shape-geom";
 
 // Author drawing shapes on an ods sheet. All shape writes happen on the live contentDoc before
 // writeOds serializes it: an existing shape's element is patched in place (svg position + style +
@@ -10,7 +11,27 @@ import { ensureOdsAutoStyles, internOdsStyle } from "./styles";
 const DRAW = ODS.draw, SVG = ODS.svg, TEXT = ODS.text;
 const COL_W = 96, ROW_H = 24, PX_CM = 96 / 2.54;
 const cm = (px: number): string => `${(px / PX_CM).toFixed(3)}cm`;
-const drawLocal = (geom: string): string => (geom === "ellipse" ? "ellipse" : geom === "line" ? "line" : "rect"); // roundRect/triangle -> rect box
+// geom -> ODF element: primitives keep their own tag; polygon shapes use a custom-shape.
+const drawLocal = (geom: string): string => (geom === "ellipse" ? "ellipse" : geom === "line" ? "line" : POLY_GEOMS.includes(geom as never) ? "custom-shape" : "rect");
+// our geom -> ODF enhanced-geometry draw:type (matched by the reader).
+const ODF_TYPE: Record<string, string> = { diamond: "diamond", parallelogram: "parallelogram", hexagon: "hexagon", pentagon: "pentagon", star: "star5", rightArrow: "right-arrow", triangle: "isosceles-triangle" };
+
+/** Add the geometry detail for a shape element: an enhanced-geometry for a custom-shape, or a
+    corner radius for a rounded rectangle. Removes any prior enhanced-geometry first (a restyle). */
+function decorateGeom(doc: Document, el: Element, sh: SheetShape): void {
+  for (const c of Array.from(el.children)) if (c.localName === "enhanced-geometry") el.removeChild(c);
+  if (el.localName === "custom-shape") {
+    const pts = shapePoints(sh.geom, 1000, 1000) ?? [];
+    const path = pts.length ? `M ${pts.map(([x, y]) => `${Math.round(x)} ${Math.round(y)}`).join(" L ")} Z N` : "";
+    const eg = doc.createElementNS(DRAW, "draw:enhanced-geometry");
+    eg.setAttributeNS(DRAW, "draw:type", ODF_TYPE[sh.geom] ?? "non-primitive");
+    eg.setAttributeNS(SVG, "svg:viewBox", "0 0 1000 1000");
+    eg.setAttributeNS(DRAW, "draw:enhanced-path", path);
+    el.appendChild(eg);
+  } else if (sh.geom === "roundRect") {
+    el.setAttributeNS(DRAW, "draw:corner-radius", cm(6));
+  }
+}
 
 /** A graphic style (fill / stroke) for a shape, interned into the doc's automatic styles. */
 function graphicStyle(doc: Document, sh: SheetShape): string {
@@ -62,6 +83,7 @@ export function writeOdsShapes(wb: Workbook): void {
         const el = doc.createElementNS(DRAW, `draw:${drawLocal(sh.geom)}`);
         el.setAttributeNS(DRAW, "draw:style-name", graphicStyle(doc, sh));
         setGeom(el, sh, (a.fromCol - 1) * COL_W + a.fromColOff, (a.fromRow - 1) * ROW_H + a.fromRowOff, (a.toCol - a.fromCol) * COL_W + a.toColOff - a.fromColOff, (a.toRow - a.fromRow) * ROW_H + a.toRowOff - a.fromRowOff);
+        decorateGeom(doc, el, sh);
         setText(doc, el, sh);
         shapesContainer(doc, sheet.tableEl).appendChild(el);
         sh.odsShapeEl = el; sh.odsAnchorCol = 1; sh.odsAnchorRow = 1; sh.created = false;

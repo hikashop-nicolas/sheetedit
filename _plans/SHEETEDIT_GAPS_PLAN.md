@@ -112,8 +112,10 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   registers the content type / manifest entry for a different one. Verified through LibreOffice
   round-trips.
 - **Shapes**: read + render + author + write on both xlsx and ods. Drawing shapes (rectangle,
-  rounded rectangle, ellipse, triangle, line; unknown presets fall back to a rect but keep their
-  preset name so they round-trip) render as an SVG overlay with fill / outline / centered text.
+  rounded rectangle, ellipse, triangle, diamond, parallelogram, pentagon, hexagon, star, arrow,
+  line; unknown presets fall back to a rect but keep their preset name so they round-trip) render as
+  an SVG overlay with fill / outline / centered text. Polygon shapes share one pure vertex helper
+  (core/shape-geom.ts) between the SVG renderer and the ODF enhanced-path writer.
   Insert from the toolbar; move (drag) / resize (corner handle) / edit (double-click -> fill /
   outline / text) / delete (the corner x). xlsx writes xdr:sp in the drawing part (patched in place
   for edits, appended for new); ods writes draw:rect / draw:ellipse / draw:line into a table:shapes

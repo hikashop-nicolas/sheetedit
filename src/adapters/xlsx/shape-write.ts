@@ -13,9 +13,10 @@ const kid = (p: Element, local: string): Element | undefined => Array.from(p.chi
 const hex = (c: string): string => c.replace(/^#/, "").toUpperCase();
 
 /** The preset geometry name to write (round-trips the file's original when we kept it). */
+const PRST: Record<string, string> = { roundRect: "roundRect", ellipse: "ellipse", triangle: "triangle", line: "line", diamond: "diamond", parallelogram: "parallelogram", hexagon: "hexagon", pentagon: "pentagon", star: "star5", rightArrow: "rightArrow" };
 function prstOf(sh: SheetShape): string {
   if (sh.preset) return sh.preset;
-  return sh.geom === "roundRect" ? "roundRect" : sh.geom === "ellipse" ? "ellipse" : sh.geom === "triangle" ? "triangle" : sh.geom === "line" ? "line" : "rect";
+  return PRST[sh.geom] ?? "rect";
 }
 
 /** Inner spPr / txBody markup shared by the new-shape and restyle paths. */

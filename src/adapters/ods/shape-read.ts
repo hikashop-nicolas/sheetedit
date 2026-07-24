@@ -7,6 +7,15 @@ import { anchorOf, attrByLocal as A, descend } from "./chart-read";
 // and written back on edit (the frame stays otherwise verbatim).
 
 const GEOM: Record<string, ShapeGeom> = { rect: "rect", ellipse: "ellipse", circle: "ellipse", line: "line", "custom-shape": "rect" };
+// draw:type on a custom-shape's enhanced-geometry -> our geom (matches what the writer emits).
+const CUSTOM_GEOM: Record<string, ShapeGeom> = { diamond: "diamond", parallelogram: "parallelogram", hexagon: "hexagon", pentagon: "pentagon", star5: "star", "right-arrow": "rightArrow", "isosceles-triangle": "triangle", "round-rectangle": "roundRect" };
+
+/** The geometry of a draw element, resolving a custom-shape's enhanced-geometry draw:type. */
+function geomOf(el: Element): ShapeGeom {
+  if (el.localName !== "custom-shape") return GEOM[el.localName]!;
+  const eg = descend(el, "enhanced-geometry")[0];
+  return (eg && CUSTOM_GEOM[A(eg, "type") ?? ""]) || "rect";
+}
 
 /** Map graphic style-name -> resolved fill / stroke, following parent-style-name chains. */
 function graphicStyles(doc: Document): Map<string, { fill?: string; stroke?: string; strokeWidth?: number }> {
@@ -68,7 +77,7 @@ export function readOdsShapes(wb: Workbook): void {
     const style = styles.get(A(el, "style-name") ?? "") ?? {};
     const text = descend(el, "p").map((p) => p.textContent ?? "").join("\n").trim() || undefined;
     const shape: SheetShape = {
-      geom: GEOM[el.localName]!,
+      geom: geomOf(el),
       anchor,
       fill: style.fill,
       stroke: style.stroke,

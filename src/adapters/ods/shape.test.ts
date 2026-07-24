@@ -49,6 +49,22 @@ describe("ods drawing shapes", () => {
     expect(re[0].fill?.toLowerCase()).toBe("#00aa00");
   });
 
+  it("authors a polygon shape as a custom-shape and round-trips its geometry", () => {
+    const wb = readWorkbook(ods(""));
+    (wb.sheets[0].shapes ??= []).push({
+      geom: "diamond",
+      anchor: { fromCol: 2, fromRow: 2, fromColOff: 0, fromRowOff: 0, toCol: 5, toRow: 6, toColOff: 0, toRowOff: 0 },
+      fill: "#c00000", created: true, dirty: true,
+    });
+    const out = writeWorkbook(wb);
+    const content = strFromU8(unzipSync(out)["content.xml"]!);
+    expect(content).toContain("<draw:custom-shape");
+    expect(content).toContain('draw:type="diamond"');
+    expect(content).toContain("draw:enhanced-path");
+    const re = readWorkbook(out).sheets[0].shapes ?? [];
+    expect(re[0].geom).toBe("diamond");
+  });
+
   it("patches an existing shape's move + restyle", () => {
     const style = `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#4472c4"/></style:style>`;
     const rect = `<table:shapes><draw:rect draw:style-name="gr1" svg:x="0cm" svg:y="0cm" svg:width="2cm" svg:height="1cm"/></table:shapes>`;

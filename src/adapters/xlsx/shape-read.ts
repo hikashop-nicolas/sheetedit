@@ -15,6 +15,12 @@ function geomOf(prst: string | null): ShapeGeom {
     case "roundRect": case "round1Rect": case "round2SameRect": return "roundRect";
     case "triangle": case "isoscelesTriangle": case "rtTriangle": return "triangle";
     case "line": case "straightConnector1": return "line";
+    case "diamond": return "diamond";
+    case "parallelogram": return "parallelogram";
+    case "hexagon": return "hexagon";
+    case "pentagon": return "pentagon";
+    case "star4": case "star5": case "star6": case "star7": case "star8": return "star";
+    case "rightArrow": case "leftArrow": case "upArrow": case "downArrow": return "rightArrow";
     default: return "rect";
   }
 }

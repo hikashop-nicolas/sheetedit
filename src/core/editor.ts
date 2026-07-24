@@ -3066,15 +3066,28 @@ export function createSheetEditor(
       { value: "roundRect", label: t("shapeRoundRect") },
       { value: "ellipse", label: t("shapeEllipse") },
       { value: "triangle", label: t("shapeTriangle") },
+      { value: "diamond", label: t("shapeDiamond") },
+      { value: "parallelogram", label: t("shapeParallelogram") },
+      { value: "pentagon", label: t("shapePentagon") },
+      { value: "hexagon", label: t("shapeHexagon") },
+      { value: "star", label: t("shapeStar") },
+      { value: "rightArrow", label: t("shapeArrow") },
       { value: "line", label: t("shapeLine") },
     ];
+    const filled = geomOpts.map((o) => o.value).filter((v) => v !== "line"); // fill / text apply to every non-line shape
+    // When editing there is no geometry picker, so fill/text can't be gated on it: show them unless
+    // the shape is a line. When creating, gate them live on the chosen geometry.
+    const fillGate = existing ? undefined : ({ key: "geom", values: filled } as const);
+    const showFillNow = !existing || existing.geom !== "line";
     formDialog(existing ? t("shapeEdit") : t("shapeInsert"), [
       ...(existing ? [] : [{ key: "geom", label: t("shapeType"), type: "select" as const, value: "rect", options: geomOpts }]),
-      { key: "fill", label: t("shapeFill"), type: "color", value: existing?.fill ?? "#4c8bf5", showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
-      { key: "noFill", label: t("shapeNoFill"), type: "checkbox", value: existing ? !existing.fill : false, showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
+      ...(showFillNow ? [
+        { key: "fill", label: t("shapeFill"), type: "color" as const, value: existing?.fill ?? "#4c8bf5", showFor: fillGate },
+        { key: "noFill", label: t("shapeNoFill"), type: "checkbox" as const, value: existing ? !existing.fill : false, showFor: fillGate },
+      ] : []),
       { key: "stroke", label: t("shapeOutline"), type: "color", value: existing?.stroke ?? "#1f3a5f" },
       { key: "strokeWidth", label: t("shapeOutlineWidth"), type: "text", value: String(existing?.strokeWidth ?? 1) },
-      { key: "text", label: t("shapeText"), type: "text", value: existing?.text ?? "", showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
+      ...(showFillNow ? [{ key: "text", label: t("shapeText"), type: "text" as const, value: existing?.text ?? "", showFor: fillGate }] : []),
     ], (v) => {
       const geom = (existing?.geom ?? String(v.geom)) as import("./model").ShapeGeom;
       const isLine = geom === "line";

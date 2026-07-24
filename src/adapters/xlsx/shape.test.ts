@@ -39,6 +39,17 @@ describe("drawing shapes", () => {
     expect(sh[0].anchor.fromCol).toBe(2); // B2
   });
 
+  it("reads and authors the extended preset shapes (diamond / star / arrow)", () => {
+    expect(readWorkbook(base(spAnchor("diamond"))).sheets[0].shapes![0].geom).toBe("diamond");
+    expect(readWorkbook(base(spAnchor("star5"))).sheets[0].shapes![0].geom).toBe("star");
+    expect(readWorkbook(base(spAnchor("rightArrow"))).sheets[0].shapes![0].geom).toBe("rightArrow");
+    const wb = readWorkbook(base(""));
+    (wb.sheets[0].shapes ??= []).push({ geom: "star", anchor: { fromCol: 2, fromRow: 2, fromColOff: 0, fromRowOff: 0, toCol: 5, toRow: 6, toColOff: 0, toRowOff: 0 }, fill: "#ffcc00", created: true, dirty: true });
+    writeXlsx(wb);
+    expect(new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"])).toContain('prst="star5"');
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0].geom).toBe("star");
+  });
+
   it("maps an unknown preset to a rect but keeps the original preset name", () => {
     const sh = readWorkbook(base(spAnchor("cloud"))).sheets[0].shapes ?? [];
     expect(sh[0].geom).toBe("rect");

@@ -314,7 +314,7 @@ export interface SheetImage {
 
 /** A supported drawing shape geometry. Anything else read from a file maps to "rect" for rendering
     but keeps its original preset name so it round-trips. */
-export type ShapeGeom = "rect" | "roundRect" | "ellipse" | "line" | "triangle";
+export type ShapeGeom = "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "diamond" | "parallelogram" | "hexagon" | "pentagon" | "star" | "rightArrow";
 
 /** A drawing shape anchored on a sheet. Rendered as an SVG box over the grid; authored + written
     back (xlsx xdr:sp in the drawing part, ods draw:rect/ellipse/line/custom-shape). */

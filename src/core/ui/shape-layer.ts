@@ -1,5 +1,6 @@
 import type { Sheet, SheetShape } from "../model";
 import type { ChartGeom } from "./chart-overlay";
+import { shapePoints } from "../shape-geom";
 
 // An overlay that floats a sheet's drawing shapes over the grid as SVG, anchored to cells and glued
 // while scrolling (the same layer pattern as the image / chart overlays). Shapes can be selected,
@@ -57,14 +58,16 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
       body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" rx="${r}" ry="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
       break;
     }
-    case "triangle":
-      body = `<polygon points="${w / 2},${inset} ${w - inset},${h - inset} ${inset},${h - inset}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
-      break;
     case "line":
       body = `<line x1="${inset}" y1="${inset}" x2="${w - inset}" y2="${h - inset}" stroke="${stroke === "none" ? "#000000" : stroke}" stroke-width="${sw}"/>`;
       break;
-    default:
-      body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+    default: {
+      // Polygon shapes (triangle / diamond / hexagon / pentagon / star / arrow / parallelogram),
+      // inset a touch so the stroke stays inside the box; else a plain rectangle.
+      const pts = shapePoints(sh.geom, iw, ih);
+      if (pts) body = `<polygon points="${pts.map(([x, y]) => `${x + inset},${y + inset}`).join(" ")}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`;
+      else body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+    }
   }
   let label = "";
   if (sh.text && sh.geom !== "line") {
