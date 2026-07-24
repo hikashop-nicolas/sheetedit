@@ -14,11 +14,15 @@ const NS =
   `xmlns:calcext="urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0"`;
 
 function ods(): Uint8Array {
-  const nc = (v: number) => `<table:table-cell office:value-type="float" office:value="${v}"><text:p>${v}</text:p></table:table-cell>`;
-  const rows = [1, 2, 3, 4, 5].map((v) => `<table:table-row>${nc(v)}${nc(v)}</table:table-row>`).join("");
-  const styles = `<office:automatic-styles><style:style style:name="ce1" style:family="table-cell"><style:table-cell-properties fo:background-color="#ffc7ce"/></style:style></office:automatic-styles>`;
+  // Column A uses ce1, whose <style:map> applies ce2 (fill) when value > 3 (standard ODF CF).
+  const nc = (v: number, style?: string) => `<table:table-cell ${style ? `table:style-name="${style}" ` : ""}office:value-type="float" office:value="${v}"><text:p>${v}</text:p></table:table-cell>`;
+  const rows = [1, 2, 3, 4, 5].map((v) => `<table:table-row>${nc(v, "ce1")}${nc(v)}</table:table-row>`).join("");
+  const styles = `<office:automatic-styles>` +
+    `<style:style style:name="ce1" style:family="table-cell"><style:map style:condition="cell-content()&gt;3" style:apply-style-name="ce2" style:base-cell-address="Sheet1.A1"/></style:style>` +
+    `<style:style style:name="ce2" style:family="table-cell"><style:table-cell-properties fo:background-color="#ffc7ce"/></style:style>` +
+    `</office:automatic-styles>`;
+  // The colour scale on column B has no style:map form, so it lives in calcext (LibreOffice).
   const cf = `<calcext:conditional-formats>` +
-    `<calcext:conditional-format calcext:target-range-address="Sheet1.A1:Sheet1.A5"><calcext:condition calcext:apply-style-name="ce1" calcext:value="&gt;3" calcext:base-cell-address="Sheet1.A1"/></calcext:conditional-format>` +
     `<calcext:conditional-format calcext:target-range-address="Sheet1.B1:Sheet1.B5"><calcext:color-scale><calcext:color-scale-entry calcext:type="minimum" calcext:color="#f8696b"/><calcext:color-scale-entry calcext:type="maximum" calcext:color="#63be7b"/></calcext:color-scale></calcext:conditional-format>` +
     `</calcext:conditional-formats>`;
   const content = `<?xml version="1.0"?><office:document-content ${NS}>${styles}<office:body><office:spreadsheet>` +

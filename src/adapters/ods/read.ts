@@ -11,6 +11,8 @@ export interface OdsStyles {
   cell: Map<string, CellStyle>; // family table-cell -> resolved style
   colW: Map<string, number>; // family table-column -> width px
   rowH: Map<string, number>; // family table-row -> height px
+  // family table-cell -> its <style:map> conditional-format entries (standard ODF CF).
+  cfMap: Map<string, { cond: string; apply: string }[]>;
 }
 
 // Parse <style:style> from the given docs (content.xml automatic styles + styles.xml),
@@ -19,6 +21,7 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
   const raw = new Map<string, { el: Element; parent?: string }>();
   const colW = new Map<string, number>();
   const rowH = new Map<string, number>();
+  const cfMap = new Map<string, { cond: string; apply: string }[]>();
   for (const doc of docs) {
     for (const st of Array.from(doc.getElementsByTagName("style:style"))) {
       const name = st.getAttribute("style:name");
@@ -26,6 +29,8 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       const family = st.getAttribute("style:family");
       if (family === "table-cell") {
         raw.set(name, { el: st, parent: st.getAttribute("style:parent-style-name") || undefined });
+        const maps = Array.from(st.getElementsByTagName("style:map"));
+        if (maps.length) cfMap.set(name, maps.map((m) => ({ cond: m.getAttribute("style:condition") ?? "", apply: m.getAttribute("style:apply-style-name") ?? "" })).filter((x) => x.cond && x.apply));
       } else if (family === "table-column") {
         const p = st.getElementsByTagName("style:table-column-properties")[0];
         const w = odsLenToPx(p?.getAttribute("style:column-width"));
@@ -106,7 +111,7 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
     return merged;
   };
   for (const name of raw.keys()) resolve(name);
-  return { cell, colW, rowH };
+  return { cell, colW, rowH, cfMap };
 }
 
 // Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
@@ -174,7 +179,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   }
   if (definedNames.size) wb.definedNames = definedNames;
   const validationDefs = parseOdsValidations(contentDoc);
-  const condFormats = parseOdsCondFormats(contentDoc, styles);
+  const condFormats = parseOdsCondFormats(contentDoc);
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
@@ -185,6 +190,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     // Conditional formats whose target sheet is this one (empty sheet name = single-sheet target).
     const cfs = condFormats.get(name) ?? (wb.sheets.length === 0 ? condFormats.get("") : undefined);
     if (cfs?.length) sheet.condFormats = cfs;
+    buildOdsStyleMapCf(sheet, styles); // standard <style:map> CF (the interoperable mechanism)
     wb.sheets.push(sheet);
   }
   readOdsCharts(wb, files);
@@ -230,6 +236,42 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
   if (out.length) sheet.validations = out;
 }
 
+// A standard ODF <style:map> condition ("cell-content()>5", "cell-content-is-between(1,10)")
+// -> operator + operands. is-true-formula and other forms are not rendered (returned null).
+function parseStyleMapCondition(cond: string): { operator: string; formulas: string[] } | null {
+  const c = cond.trim();
+  const btw = /^cell-content-is-between\((.+),(.+)\)$/i.exec(c);
+  if (btw) return { operator: "between", formulas: [btw[1]!.trim(), btw[2]!.trim()] };
+  const nbtw = /^cell-content-is-not-between\((.+),(.+)\)$/i.exec(c);
+  if (nbtw) return { operator: "notBetween", formulas: [nbtw[1]!.trim(), nbtw[2]!.trim()] };
+  const m = /^cell-content\(\)\s*(<=|>=|!=|<>|<|>|=)\s*(.+)$/.exec(c);
+  if (!m) return null;
+  const op = { "<": "lessThan", ">": "greaterThan", "<=": "lessThanOrEqual", ">=": "greaterThanOrEqual", "=": "equal", "!=": "notEqual", "<>": "notEqual" }[m[1]!]!;
+  return { operator: op, formulas: [m[2]!.trim()] };
+}
+
+// Standard ODF conditional formatting: cells whose base style carries <style:map> entries.
+// Grouped by style (each producing a CondFormat over its cells), the map's apply-style resolved
+// to a dxf. This is the interoperable mechanism; calcext (below) only adds colour scales etc.
+function buildOdsStyleMapCf(sheet: Sheet, styles: OdsStyles): void {
+  if (!styles.cfMap.size) return;
+  const byStyle = new Map<string, { r: number; c: number }[]>();
+  for (const cell of sheet.cells.values())
+    if (cell.style && styles.cfMap.has(cell.style)) (byStyle.get(cell.style) ?? byStyle.set(cell.style, []).get(cell.style)!).push({ r: cell.row, c: cell.col });
+  const out: NonNullable<Sheet["condFormats"]> = sheet.condFormats ? [...sheet.condFormats] : [];
+  for (const [styleName, cells] of byStyle) {
+    const rules: CondFormat["rules"] = [];
+    let priority = 1;
+    for (const m of styles.cfMap.get(styleName)!) {
+      const parsed = parseStyleMapCondition(m.cond);
+      const cs = styles.cell.get(m.apply);
+      if (parsed && cs) rules.push({ type: "cellIs", priority: priority++, operator: parsed.operator, formulas: parsed.formulas, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
+    }
+    if (rules.length) out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), rules });
+  }
+  if (out.length) sheet.condFormats = out;
+}
+
 // --- conditional formatting (LibreOffice calcext extension) ----------------
 const attrByLocal = (el: Element, local: string): string | null => {
   for (const a of Array.from(el.attributes)) if (a.localName === local) return a.value;
@@ -237,22 +279,9 @@ const attrByLocal = (el: Element, local: string): string | null => {
 };
 const kidsByLocal = (el: Element, local: string): Element[] => Array.from(el.children).filter((c) => c.localName === local);
 
-// An ODF value expression on a condition ("&gt;5", "between(1;10)", "=5") -> operator + operands.
-function odsCfCondition(value: string): { operator: string; formulas: string[] } | null {
-  const v = value.trim();
-  const between = /^between\((.+);(.+)\)$/i.exec(v);
-  if (between) return { operator: "between", formulas: [between[1]!.trim(), between[2]!.trim()] };
-  const notBetween = /^not-between\((.+);(.+)\)$/i.exec(v);
-  if (notBetween) return { operator: "notBetween", formulas: [notBetween[1]!.trim(), notBetween[2]!.trim()] };
-  const m = /^(<=|>=|!=|<>|<|>|=)\s*(.+)$/.exec(v);
-  if (!m) return null;
-  const op = { "<": "lessThan", ">": "greaterThan", "<=": "lessThanOrEqual", ">=": "greaterThanOrEqual", "=": "equal", "!=": "notEqual", "<>": "notEqual" }[m[1]!]!;
-  return { operator: op, formulas: [m[2]!.trim()] };
-}
-
 // Parse <calcext:conditional-formats> into per-sheet CondFormat lists, resolving a condition's
 // apply-style-name to a dxf via the cell-style map, and reading colour scales / data bars / icons.
-function parseOdsCondFormats(doc: Document, styles: OdsStyles): Map<string, CondFormat[]> {
+function parseOdsCondFormats(doc: Document): Map<string, CondFormat[]> {
   const bySheet = new Map<string, CondFormat[]>();
   // Map calcext threshold types onto the ones the renderer's stopValue understands.
   const cfvoType: Record<string, string> = { minimum: "min", maximum: "max", number: "num", value: "num", "auto-minimum": "min", "auto-maximum": "max" };
@@ -282,12 +311,10 @@ function parseOdsCondFormats(doc: Document, styles: OdsStyles): Map<string, Cond
     let priority = 1;
     for (const child of Array.from(cf.children)) {
       const l = child.localName;
-      if (l === "condition") {
-        const parsed = odsCfCondition(attrByLocal(child, "value") ?? "");
-        const styleName = attrByLocal(child, "apply-style-name") ?? "";
-        const cs = styles.cell.get(styleName);
-        if (parsed && cs) rules.push({ type: "cellIs", priority: priority++, operator: parsed.operator, formulas: parsed.formulas, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
-      } else if (l === "color-scale") {
+      // calcext:condition (a cellIs) is only LibreOffice's mirror of the standard <style:map>,
+      // which buildOdsStyleMapCf already reads; skip it here to avoid duplicate rules. Colour
+      // scales / data bars / icon sets have no style:map form, so they are read only from calcext.
+      if (l === "color-scale") {
         const entries = kidsByLocal(child, "color-scale-entry");
         rules.push({ type: "colorScale", priority: priority++, colorScale: { cfvo: entries.map(cfvo), colors: entries.map(colorOf) } });
       } else if (l === "data-bar") {

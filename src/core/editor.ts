@@ -2531,9 +2531,14 @@ export function createSheetEditor(
   const openCfDialog = (): void => {
     const s = getSelRect(); const sheet = wb.sheets[active]!;
     const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    // Colour scales / data bars and text-contains have no interoperable ODF form (calcext-only,
+    // which LibreOffice drops when externally authored), so ODS offers only the standard highlight.
+    const ods = wb.kind === "ods";
+    const kindOpts = [{ value: "cellIs", label: t("cfHighlight") }, ...(ods ? [] : [{ value: "colorScale", label: t("cfColorScale") }, { value: "dataBar", label: t("cfDataBar") }])];
+    const opOpts = [["greaterThan", "> "], ["lessThan", "< "], ["equal", "= "], ["notEqual", "≠ "], ["greaterThanOrEqual", "≥ "], ["lessThanOrEqual", "≤ "], ...(ods ? [] : [["containsText", t("cfContains")]])];
     formDialog(t("cfEdit"), [
-      { key: "kind", label: t("cfKind"), type: "select", value: "cellIs", options: [{ value: "cellIs", label: t("cfHighlight") }, { value: "colorScale", label: t("cfColorScale") }, { value: "dataBar", label: t("cfDataBar") }] },
-      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: [["greaterThan", "> "], ["lessThan", "< "], ["equal", "= "], ["notEqual", "≠ "], ["greaterThanOrEqual", "≥ "], ["lessThanOrEqual", "≤ "], ["containsText", t("cfContains")]].map(([v, l]) => ({ value: v!, label: l! })) },
+      { key: "kind", label: t("cfKind"), type: "select", value: "cellIs", options: kindOpts },
+      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: opOpts.map(([v, l]) => ({ value: v!, label: l! })) },
       { key: "value", label: t("cfValue"), type: "text", value: "" },
       { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce" },
     ], (v) => {
