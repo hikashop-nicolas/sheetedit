@@ -3,11 +3,12 @@
 A standalone, framework-agnostic, client-side **spreadsheet editor** for `.xlsx`
 (OOXML) and `.ods` (OpenDocument). Both are zips of XML; sheetedit reads the cells
 into an editable grid, **preserves formulas and recalculates** them as you edit, and
-exports a valid workbook, **keeping styles, number formats, charts and other sheets**
-intact. No server, no upload.
+exports a valid workbook, **keeping styles, number formats, charts, pivot tables and other
+sheets** intact. No server, no upload.
 
-It also opens and edits a workbook's **Power Query** definitions in a built-in,
-Excel-style query editor, refreshing them on-device (see [Power Query](#power-query)).
+It also **creates and edits charts and pivot tables**, and opens and edits a workbook's
+**Power Query** definitions in a built-in, Excel-style query editor, refreshing them on-device
+(see [Charts](#charts), [Pivot tables](#pivot-tables), [Power Query](#power-query)).
 
 **[▶ Live demo](https://hikashop-nicolas.github.io/sheetedit/)** - open a `.xlsx` or
 `.ods`, edit cells and formulas, and download the result, entirely in your browser.
@@ -101,6 +102,25 @@ Covered types: column, bar, line, area, pie, doughnut, scatter, bubble and radar
 equivalent, plus deep formatting (trendlines, per-point styling). Chart rendering is an
 approximation, not pixel-identical to Excel/LibreOffice.
 
+## Pivot tables
+
+sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`, ods
+`data-pilot-table`), outlines each one on the grid, and lets you **create, edit and refresh** them:
+
+- **Insert** opens a dialog: pick the source range, drag each column into Rows / Columns / Values
+  (with an aggregation) / Report Filter, toggle subtotals, all with a **live preview** of the
+  result, then it lands on a new sheet.
+- **Fields**: any depth of nested row and column fields, one or more value fields
+  (sum / count / average / min / max), report/page filters, and per-group subtotals.
+- **Edit / refresh** from the pivot's tag menu: refresh recomputes the output from the current
+  source; edit reopens the dialog prefilled and rewrites the pivot in place. This works both for
+  pivots you create and for pivots opened from a file (the definition is reconstructed on read).
+- Written as the **native** structure in both formats, with `refreshOnLoad` set so Excel and
+  LibreOffice re-render the pivot from the source on open; verified through LibreOffice round-trips.
+
+Not covered: calculated fields/items, "show values as" (% of total, running total), pivot charts,
+and byte-identical layout to Excel (both apps re-flow the body from the definition on open).
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the
@@ -121,8 +141,8 @@ approximation, not pixel-identical to Excel/LibreOffice.
   Desktop apps recompute on open, so cached values are a convenience, not authority.
 - `.ods` formulas typed in the grid are translated from A1 to ODF syntax on save; the
   common arithmetic, range and function cases are handled.
-- Not a full spreadsheet application (no pivot tables, no drawing/shape editing). This is a
-  lightweight, embeddable in-browser editor for cell, formula, chart and query content.
+- Not a full spreadsheet application (no drawing/shape editing, no macros). This is a lightweight,
+  embeddable in-browser editor for cell, formula, chart, pivot and query content.
 - Power Query editing is `.xlsx`-only, and a query result loaded onto a brand-new sheet is
   written as plain cells (not a live, Excel-refreshable table). Loading onto an existing
   destination table refreshes it in place.

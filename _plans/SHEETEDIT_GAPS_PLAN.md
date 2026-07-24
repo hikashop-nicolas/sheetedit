@@ -1,9 +1,10 @@
 # sheetedit: closing the remaining xlsx/ods gaps
 
-Charts are now feature-complete (see CHARTS_SPEC_GAPS.md). This plan closes the rest of the gaps
-from XLSX_COVERAGE.md, in priority order. Each phase is a shippable increment: implement, unit-test,
-browser-verify the visible behaviour, LibreOffice/round-trip check where a file format is touched,
-commit, then bump omnitext. Keep the house rules: dependency-light, framework-agnostic, in-place
+Status (2026-07-24): Phases 1-9 below are DONE. Charts and pivot tables are feature-complete for
+the common cases (see CHARTS_SPEC_GAPS.md, PIVOT_AUTHORING.md); the "Remaining / not yet done"
+section at the end is the current, honest backlog. Each phase was a shippable increment: implement,
+unit-test, browser-verify the visible behaviour, LibreOffice/round-trip check where a file format is
+touched, commit, then bump omnitext. House rules: dependency-light, framework-agnostic, in-place
 surgical XML edits (preserve untouched parts byte-for-byte), lazy-load anything heavy.
 
 ## Phases
@@ -63,11 +64,41 @@ what fast-formula-parser can evaluate; exotic spills stay preserved-only.
 - Fixed a bug from Phase 6/furigana: editing a cell now clears its stale richRuns/phonetic, so a
   re-typed value no longer renders the old per-run styling or ruby over the new text.
 
-## Explicitly deferred (documented as preserved-only, not in this plan)
-- Pivot tables (needs a pivot cache + refresh engine) - very large, low incremental value.
-- Form controls / ActiveX / slicers interactivity - niche.
-- Image move/resize/replace editing (render-only in Phase 2).
-- Full in-cell rich-text editing (render-only in Phase 6).
+### Phase 9 - Pivot tables: read, author, edit, refresh (DONE)
+Detect pivots (xlsx `pivotTable`+`pivotCache`, ods `data-pilot-table`), outline them on the grid,
+and let the user create/edit/refresh them. A pure compute engine (core/pivot.ts, row/column axis
+model with prefix-aware aggregation) feeds both writers; the insert dialog assigns columns to Rows /
+Columns / Values(+function) / Report Filter with a subtotals toggle and a live preview. Supports
+nested row/column fields, multiple value fields (sum/count/average/min/max), page filters and
+subtotals. Emits the native structure with refreshOnLoad; edit rewrites in place and refresh
+recomputes from source, for authored and file-read pivots alike (the authoring spec is reconstructed
+on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See PIVOT_AUTHORING.md.
+
+### Also shipped (toolbar / UX, 2026-07-24)
+- The toolbar folds its authoring controls into a "⋯" overflow menu (icon + label rows) when width
+  runs out; the style cluster only collapses into its "Aa" menu as a last resort.
+- The on/off + mutually-exclusive style buttons (bold/italic/underline/strike/align/valign/wrap)
+  show a pressed state reflecting the active cell.
+
+## Remaining / not yet done (the honest backlog)
+- **Pivots, advanced**: calculated fields/items, "show values as" (% of total / running total),
+  pivot charts, and byte-identical layout to Excel (both apps re-flow the body on open anyway).
+- **Conditional formatting**: icon-set authoring, `is-true-formula` / text-period rule authoring,
+  and cell-reference / formula operands for `cellIs` (numeric literals only today; these round-trip).
+- **Sparklines**: authoring on ods (xlsx is author + render; ods is render-only).
+- **Rich text**: full in-cell rich-text *editing* (per-run styling is rendered + preserved, not
+  authored from the UI).
+- **Images / shapes**: move / resize / replace editing (render-only + preserved today).
+- **Dynamic arrays**: exotic spill producers are best-effort; only UNIQUE/SORT/FILTER/SEQUENCE +
+  TRANSPOSE/bare-range spill are supplied.
+- **Preserved-only, no plans to edit**: form controls / ActiveX / slicers interactivity, sheet /
+  workbook protection, print settings, outline grouping, themes.
+- **Recalc**: a large but partial function set; unsupported functions or circular refs yield an
+  error value (the file's cached value is shown as a fallback; desktop apps recompute on open).
+- **Data validation**: only list (dropdown) rules are authored; other condition types round-trip.
+- **Correctness caveat**: an edited shared-string cell is rewritten as an inline string (its
+  sharedStrings entry may become an unreferenced orphan); Excel-fidelity of authored pivots/charts
+  is verified through LibreOffice, not real Excel.
 
 ## Working notes
 - Reuse existing machinery: the chart overlay layer pattern (Phase 2), hidden-rows (Phase 1),

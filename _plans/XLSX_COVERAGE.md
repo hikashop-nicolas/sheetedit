@@ -1,7 +1,7 @@
 # sheetedit xlsx coverage report
 
-Audit of what the `.xlsx` path reads, edits and preserves, as of 2026-07-23 (Power Query
-included). Tracks the gap list and the agreed priority order for closing it.
+Audit of what the `.xlsx` path reads, edits and preserves, as of 2026-07-24 (Power Query, charts
+and pivot tables included). Tracks the gap list and the agreed priority order for closing it.
 
 ## Fully supported (read, edit in the grid, save)
 
@@ -24,15 +24,21 @@ included). Tracks the gap list and the agreed priority order for closing it.
 - Charts: read, render (Chart.js + custom plugins), full create/edit dialog and write for every
   DrawingML chart type, all option tiers (axes, labels, trendlines, error bars, stock, of-pie,
   surface, styling), pseudo-3D, xlsx + ods round-trip.
+- Pivot tables: read, outline on the grid, and create/edit/refresh. The insert dialog assigns
+  columns to Rows / Columns / Values(+function) / Report Filter with subtotals and a live preview;
+  nested row/column fields, multiple value fields (sum/count/average/min/max) and page filters are
+  supported. Emits the native pivotCache + pivotTable parts with refreshOnLoad; edit/refresh work
+  in place, for authored and file-read pivots alike (the spec is reconstructed on read). Verified
+  through LibreOffice round-trips (xlsx + ods).
 
 ## Preserved on save, but inert in the grid (round-trips, not rendered or editable)
 
 Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized
 with its sibling elements intact:
 
-- Images, shapes, drawings (charts are now fully editable, see above)
-- Pivot tables and caches (not refreshed)
-- Sparklines, form controls, slicers
+- Images, shapes, drawings (charts and pivot tables are now fully editable, see above)
+- Form controls, slicers, ActiveX
+- Sparklines authored on ods (xlsx sparklines are author + render)
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
   settings, autofilter state, outline grouping, themes
 
@@ -45,8 +51,12 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   (with a #SPILL! guard on collisions). Producers UNIQUE / SORT / FILTER / SEQUENCE are supplied
   (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
   mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
-- No editing of the preserved-only features above (charts, pivots, sparklines, protection); the
-  now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
+- No editing of the remaining preserved-only features above (images, shapes, form controls,
+  slicers, protection). The now-rendered features (hyperlinks, dropdowns, CF, comments) are
+  read/followed, not authored.
+- Pivot tables cover the common structure; not yet: calculated fields/items, "show values as"
+  (% of total / running total), pivot charts, and byte-identical layout to Excel (both apps
+  re-flow the body from the definition on open).
 - Conditional formatting: icon sets now render (arrows/traffic-lights/symbols/ratings, bucketed by
   the cfvo thresholds); arbitrary expression rules and time-period rules still round-trip only, and
   cellIs operands are numeric literals (cell-ref/formula operands skipped).
