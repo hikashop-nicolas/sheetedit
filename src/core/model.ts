@@ -131,6 +131,8 @@ export interface Cell {
   odsValueType?: string;
   /** ods: office:currency code ("EUR", ...) for currency cells. */
   odsCurrency?: string;
+  /** ods: the table:content-validation-name this cell references, re-emitted on write. */
+  odsValidationName?: string;
 }
 
 export interface Sheet {

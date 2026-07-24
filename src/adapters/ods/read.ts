@@ -173,16 +173,57 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     if (name && addr) definedNames.set(name, odfAddrToA1(addr));
   }
   if (definedNames.size) wb.definedNames = definedNames;
+  const validationDefs = parseOdsValidations(contentDoc);
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
     const fz = freezeByName.get(name);
     if (fz) sheet.freeze = fz;
     readOdsTable(sheet, table, styles);
+    buildOdsValidations(sheet, validationDefs);
     wb.sheets.push(sheet);
   }
   readOdsCharts(wb, files);
   return wb;
+}
+
+// Parse the document-level <table:content-validation> definitions (name -> list spec).
+type OdsValidationDef = { values?: string[]; rangeRef?: string; allowBlank?: boolean };
+function parseOdsValidations(doc: Document): Map<string, OdsValidationDef> {
+  const map = new Map<string, OdsValidationDef>();
+  for (const cv of Array.from(doc.getElementsByTagName("table:content-validation"))) {
+    const name = cv.getAttribute("table:name");
+    if (!name) continue;
+    const cond = cv.getAttribute("table:condition") ?? "";
+    const allowBlank = cv.getAttribute("table:allow-empty-cell") !== "false";
+    const m = /cell-content-is-in-list\((.*)\)\s*$/.exec(cond);
+    if (!m) { map.set(name, { allowBlank }); continue; }
+    const arg = m[1]!.trim();
+    if (arg.startsWith("[")) {
+      map.set(name, { rangeRef: odfAddrToA1(arg.replace(/^\[/, "").replace(/\]$/, "")), allowBlank });
+    } else {
+      const values = [...arg.matchAll(/"((?:[^"]|"")*)"/g)].map((q) => q[1]!.replace(/""/g, '"'));
+      map.set(name, { values, allowBlank });
+    }
+  }
+  return map;
+}
+
+// Group a sheet's cells by their content-validation-name into sheet.validations (one per name).
+function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>): void {
+  if (!defs.size) return;
+  const byName = new Map<string, { r: number; c: number }[]>();
+  for (const cell of sheet.cells.values()) {
+    if (!cell.odsValidationName) continue;
+    (byName.get(cell.odsValidationName) ?? byName.set(cell.odsValidationName, []).get(cell.odsValidationName)!).push({ r: cell.row, c: cell.col });
+  }
+  const out: NonNullable<Sheet["validations"]> = [];
+  for (const [name, cells] of byName) {
+    const def = defs.get(name);
+    if (!def) continue;
+    out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank });
+  }
+  if (out.length) sheet.validations = out;
 }
 
 export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
@@ -380,7 +421,8 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
     }
     const link = odsCellLink(cellEl);
     const comments = odsCellComments(cellEl);
-    const has = value !== "" || formulaRaw != null || style != null || link != null || comments != null;
+    const odsValidationName = cellEl.getAttribute("table:content-validation-name") ?? undefined;
+    const has = value !== "" || formulaRaw != null || style != null || link != null || comments != null || odsValidationName != null;
     if (!has) {
       out.push({ has: false, span: crep, startCol });
       continue;
@@ -402,6 +444,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       phonetic,
       link,
       comments,
+      odsValidationName,
     };
     out.push({ has: true, span: Math.min(crep, REPEAT_CAP), startCol, colSpan, rowSpan, cell });
   }

@@ -49,7 +49,7 @@ const ODS: WorkbookCapabilities = {
   sparklines: false,
   autofilter: false,
   hyperlinks: true,
-  dataValidation: false,
+  dataValidation: true,
   comments: true,
   conditionalFormat: false,
 };

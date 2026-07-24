@@ -17,6 +17,7 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
   }
   const c = doc.createElementNS(ODS.table, "table:table-cell");
   if (cell.style) c.setAttributeNS(ODS.table, "table:style-name", cell.style);
+  if (cell.odsValidationName) c.setAttributeNS(ODS.table, "table:content-validation-name", cell.odsValidationName);
   const formulaToWrite = edited && cell.formula != null ? a1ToOdf(cell.formula) : cell.odfFormula;
   if (formulaToWrite) c.setAttributeNS(ODS.table, "table:formula", formulaToWrite);
   // A note is an <office:annotation> child, emitted before the value text.
@@ -115,6 +116,67 @@ export function setOdsComment(sheet: Sheet, r: number, c: number, text: string |
   const cell = ensureCell(sheet, r, c);
   cell.comments = text ? [{ author, text }] : undefined;
   cell.edited = true;
+}
+
+// An A1 range ("Sheet2!A1:A9" / "A1:A9") -> an ODF list address "[Sheet2.A1:.A9]" / "[.A1:.A9]".
+function a1RangeToOdfAddr(ref: string): string {
+  const m = /^(?:'([^']+)'|([^!]+))!(.+)$/.exec(ref);
+  const sheetName = m ? (m[1] ?? m[2]) : "";
+  const body = (m ? m[3]! : ref).replace(/\$/g, "");
+  const [a, b] = body.split(":");
+  const first = sheetName ? `${sheetName}.${a}` : `.${a}`;
+  return b ? `[${first}:.${b}]` : `[${first}]`;
+}
+
+/** Add or (spec === null) remove a list data validation over the given ranges (1-based inclusive). */
+export function setOdsDataValidation(
+  wb: Workbook,
+  sheet: Sheet,
+  ranges: { r1: number; c1: number; r2: number; c2: number }[],
+  spec: { values?: string[]; rangeRef?: string; allowBlank?: boolean } | null,
+): void {
+  const doc = wb.contentDoc;
+  const inRange = (r: number, c: number): boolean => ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
+  const sameRanges = (v: NonNullable<Sheet["validations"]>[number]): boolean =>
+    JSON.stringify(v.ranges) === JSON.stringify(ranges);
+  sheet.validations = (sheet.validations ?? []).filter((v) => !sameRanges(v));
+
+  if (!spec) {
+    for (const cell of sheet.cells.values())
+      if (cell.odsValidationName && inRange(cell.row, cell.col)) { cell.odsValidationName = undefined; cell.edited = true; }
+    if (!sheet.validations.length) sheet.validations = undefined;
+    return;
+  }
+
+  sheet.validations.push({ ranges, values: spec.values, rangeRef: spec.rangeRef, allowBlank: spec.allowBlank });
+  if (!doc) return;
+  const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
+  if (!spreadsheet) return;
+  // Unique name across existing definitions.
+  const used = new Set(Array.from(doc.getElementsByTagName("table:content-validation")).map((e) => e.getAttribute("table:name")));
+  let n = 1;
+  while (used.has(`val${n}`)) n++;
+  const name = `val${n}`;
+  // Condition: an inline quoted list (ODF escapes an inner quote as ""), or a cell range.
+  const cond = spec.rangeRef
+    ? `of:cell-content-is-in-list(${a1RangeToOdfAddr(spec.rangeRef)})`
+    : `of:cell-content-is-in-list(${(spec.values ?? []).map((v) => `"${v.replace(/"/g, '""')}"`).join(";")})`;
+  let container = spreadsheet.getElementsByTagName("table:content-validations")[0];
+  if (!container) {
+    container = doc.createElementNS(ODS.table, "table:content-validations");
+    const firstTable = spreadsheet.getElementsByTagName("table:table")[0];
+    spreadsheet.insertBefore(container, firstTable ?? spreadsheet.firstChild);
+  }
+  const cv = doc.createElementNS(ODS.table, "table:content-validation");
+  cv.setAttributeNS(ODS.table, "table:name", name);
+  cv.setAttributeNS(ODS.table, "table:condition", cond);
+  cv.setAttributeNS(ODS.table, "table:allow-empty-cell", spec.allowBlank ? "true" : "false");
+  cv.setAttributeNS(ODS.table, "table:display-list", "unsorted");
+  container.appendChild(cv);
+  // Tag every cell in the range so makeOdsCell re-emits the reference.
+  for (const g of ranges)
+    for (let r = g.r1; r <= g.r2; r++)
+      for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.odsValidationName = name; cell.edited = true; }
 }
 
 // --- ods style write-back -------------------------------------------------

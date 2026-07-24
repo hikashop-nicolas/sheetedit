@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2521,8 +2521,9 @@ export function createSheetEditor(
     ], (v) => {
       const values = String(v.values).split(",").map((x) => x.trim()).filter(Boolean);
       const range = String(v.range).trim();
-      if (!values.length && !range) setXlsxDataValidation(sheet, ranges, null);
-      else setXlsxDataValidation(sheet, ranges, { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank });
+      const spec = !values.length && !range ? null : { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank };
+      if (wb.kind === "ods") setOdsDataValidation(wb, sheet, ranges, spec);
+      else setXlsxDataValidation(sheet, ranges, spec);
       mark(); renderGrid();
     });
   };
