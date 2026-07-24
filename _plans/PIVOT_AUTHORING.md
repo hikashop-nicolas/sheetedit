@@ -4,14 +4,18 @@ Status: v1 shipped. Builds on the read-only pivot support (detect / outline / pr
 Adds creating a pivot table from a source range, in both xlsx and ODS, verified through LibreOffice
 round-trips. The dialog has a live preview and guards the "no data selected" case.
 
-## Scope (v1)
+## Scope
 
-- **Fields**: any number of row fields (nested), any number of column fields (nested), one or more
-  value fields each with an aggregation. Page/report filters deferred.
-- **Aggregations**: sum, count (non-empty), countNums, average, min, max.
-- **No intermediate subtotals** (`defaultSubtotal="0"`, exactly as LibreOffice emits): only leaf
-  group combinations plus grand totals. Subtotals can be a follow-up.
-- **Output**: a new sheet by default (Excel's default; avoids relayout overlap), or a chosen anchor.
+- **Fields**: any number of nested row fields, any number of nested column fields, one or more value
+  fields each with an aggregation, and report/page filters. Assigned per-column in the dialog with a
+  live preview.
+- **Aggregations**: sum, count (non-empty), average, min, max.
+- **Subtotals**: optional per-group subtotals for the outer nested fields (toggle in the dialog);
+  emitted as `<item t="default"/>` + `<i t="default">` lines (xlsx) / `data-pilot-subtotals` (ODS).
+- **Report filters**: a field restricted to one value (or All); filters the aggregation and emits
+  `axisPage` + `<pageFields>` (xlsx) / a page field with member display flags (ODS).
+- **Output**: a new sheet (Excel's default; avoids relayout overlap).
+- Remaining: editing an existing pivot in place and an explicit in-app refresh.
 
 ## Architecture
 

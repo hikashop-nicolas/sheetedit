@@ -291,7 +291,7 @@ export function writeOdsPivotDef(
   const src = doc.createElementNS(ODS.table, "table:source-cell-range");
   src.setAttributeNS(ODS.table, "table:cell-range-address", a1RangeToOdfTarget(sourceSheetName, spec.source));
   pt.appendChild(src);
-  const emit = (fieldIdx: number, orientation: string, func: string): void => {
+  const emit = (fieldIdx: number, orientation: string, func: string, opts?: { subtotal?: boolean; pageItem?: number | null }): void => {
     const f = doc.createElementNS(ODS.table, "table:data-pilot-field");
     f.setAttributeNS(ODS.table, "table:source-field-name", computed.fields[fieldIdx]!.name);
     f.setAttributeNS(ODS.table, "table:orientation", orientation);
@@ -299,11 +299,29 @@ export function writeOdsPivotDef(
     f.setAttributeNS(ODS.table, "table:function", func);
     const level = doc.createElementNS(ODS.table, "table:data-pilot-level");
     level.setAttributeNS(ODS.table, "table:show-empty", "false");
+    if (opts?.subtotal) {
+      const subs = doc.createElementNS(ODS.table, "table:data-pilot-subtotals");
+      const one = doc.createElementNS(ODS.table, "table:data-pilot-subtotal");
+      one.setAttributeNS(ODS.table, "table:function", "auto");
+      subs.appendChild(one); level.appendChild(subs);
+    }
+    // Page filter: list members with only the selected one displayed.
+    if (orientation === "page" && opts?.pageItem != null) {
+      const members = doc.createElementNS(ODS.table, "table:data-pilot-members");
+      computed.fields[fieldIdx]!.items.forEach((it, i) => {
+        const mem = doc.createElementNS(ODS.table, "table:data-pilot-member");
+        mem.setAttributeNS(ODS.table, "table:name", String(it.value));
+        mem.setAttributeNS(ODS.table, "table:display", i === opts.pageItem ? "true" : "false");
+        members.appendChild(mem);
+      });
+      level.appendChild(members);
+    }
     f.appendChild(level);
     pt.appendChild(f);
   };
-  for (const c of spec.rows) emit(c, "row", "auto");
-  for (const c of spec.cols) emit(c, "column", "auto");
+  for (const c of spec.rows) emit(c, "row", "auto", { subtotal: !!spec.subtotals });
+  for (const c of spec.cols) emit(c, "column", "auto", { subtotal: !!spec.subtotals });
+  for (const p of spec.pages ?? []) emit(p.field, "page", "auto", { pageItem: p.item });
   for (const v of spec.values) emit(v.field, "data", ODF_FUNC[v.func] ?? "sum");
   container.appendChild(pt);
 }

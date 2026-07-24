@@ -14,7 +14,7 @@ import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellCha
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
-import { computePivot, pivotValueLabel, type PivotFunc, type PivotSpec } from "./pivot";
+import { computePivot, pivotColumnItems, pivotValueLabel, type PivotFunc, type PivotSpec } from "./pivot";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2591,22 +2591,23 @@ export function createSheetEditor(
       targetRange: { r1: 1, c1: 1, r2: computed.height, c2: computed.width },
       rowFields: spec.rows.map((c) => computed.fields[c]!.name),
       colFields: spec.cols.map((c) => computed.fields[c]!.name),
-      pageFields: [],
+      pageFields: (spec.pages ?? []).map((p) => computed.fields[p.field]!.name),
       dataFields: spec.values.map((v) => ({ name: pivotValueLabel(v.func, computed.fields[v.field]!.name), func: v.func })),
     }];
     switchSheet(destIdx);
     mark();
   };
 
-  // Read the roles/funcs state into a spec (v1 uses at most one column field).
-  const pivotSpecFrom = (range: { r1: number; c1: number; r2: number; c2: number }, roles: string[], funcs: string[]): PivotSpec => {
-    const rows: number[] = [], cols: number[] = [], values: { field: number; func: PivotFunc }[] = [];
+  // Read the dialog state (per-column role, value function, page selection, subtotals) into a spec.
+  const pivotSpecFrom = (range: { r1: number; c1: number; r2: number; c2: number }, roles: string[], funcs: string[], pageItems: (number | null)[], subtotals: boolean): PivotSpec => {
+    const rows: number[] = [], cols: number[] = [], values: { field: number; func: PivotFunc }[] = [], pages: { field: number; item: number | null }[] = [];
     for (let i = 0; i < roles.length; i++) {
       if (roles[i] === "rows") rows.push(i);
       else if (roles[i] === "columns") cols.push(i);
       else if (roles[i] === "values") values.push({ field: i, func: funcs[i] as PivotFunc });
+      else if (roles[i] === "page") pages.push({ field: i, item: pageItems[i] ?? null });
     }
-    return { source: range, rows, cols: cols.slice(0, 1), values };
+    return { source: range, rows, cols, values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined };
   };
 
   // Insert-pivot dialog: a two-pane modal. Left: assign each source column (from the selection's
@@ -2626,6 +2627,10 @@ export function createSheetEditor(
     const hasData = range.r2 > range.r1 && headerBlank.some((b) => !b);
     const roles: string[] = headers.map((_, i) => (hasData ? (i === 0 ? "rows" : i === width - 1 ? "values" : "unused") : "unused"));
     const funcs: string[] = headers.map(() => "sum");
+    const pageItems: (number | null)[] = headers.map(() => null);
+    let subtotals = false;
+    // Distinct values per column, for the page-filter pickers (aligned to the engine's item order).
+    const colItems = headers.map((_, i) => (hasData ? pivotColumnItems(sheet, range, i) : []));
 
     const modal = document.createElement("div");
     modal.className = "sheetedit-form-modal sheetedit-pivot-modal";
@@ -2643,7 +2648,7 @@ export function createSheetEditor(
     const preview = document.createElement("div"); preview.style.cssText = "border:1px solid var(--sheetedit-btn,#3a4047);border-radius:6px;padding:8px;overflow:auto;max-height:260px;font-size:12px"; right.appendChild(preview);
     const selStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:4px 6px";
 
-    const roleOpts: [string, string][] = [["unused", t("pivotUnused")], ["rows", t("pivotRows")], ["columns", t("pivotColumns")], ["values", t("pivotValues")]];
+    const roleOpts: [string, string][] = [["unused", t("pivotUnused")], ["rows", t("pivotRows")], ["columns", t("pivotColumns")], ["values", t("pivotValues")], ["page", t("pivotPageF")]];
     const funcOpts: [string, string][] = (["sum", "count", "average", "min", "max"] as const).map((f) => [f, t(`pivotFn_${f}`)]);
     const mkSelect = (opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement => {
       const sel = document.createElement("select"); sel.style.cssText = selStyle;
@@ -2654,7 +2659,7 @@ export function createSheetEditor(
 
     let insertBtn: HTMLButtonElement;
     const renderPreview = (): void => {
-      const spec = pivotSpecFrom(range, roles, funcs);
+      const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals);
       const valid = hasData && spec.rows.length > 0 && spec.values.length > 0;
       if (insertBtn) { insertBtn.disabled = !valid; insertBtn.style.opacity = valid ? "1" : "0.45"; insertBtn.style.cursor = valid ? "pointer" : "not-allowed"; }
       preview.textContent = "";
@@ -2688,10 +2693,23 @@ export function createSheetEditor(
       const funcSel = mkSelect(funcOpts, funcs[i]!, (v) => { funcs[i] = v; renderPreview(); });
       funcSel.dataset.field = `func_${i}`;
       funcSel.style.display = roles[i] === "values" ? "" : "none";
-      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; funcSel.style.display = v === "values" ? "" : "none"; renderPreview(); });
+      // Page-filter value picker (All + each distinct value of this column).
+      const pageOpts: [string, string][] = [["", t("pivotAll")], ...colItems[i]!.map((it, k): [string, string] => [String(k), it.label])];
+      const pageSel = mkSelect(pageOpts, "", (v) => { pageItems[i] = v === "" ? null : Number(v); renderPreview(); });
+      pageSel.dataset.field = `page_${i}`;
+      pageSel.style.display = roles[i] === "page" ? "" : "none";
+      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; funcSel.style.display = v === "values" ? "" : "none"; pageSel.style.display = v === "page" ? "" : "none"; renderPreview(); });
       roleSel.dataset.field = `role_${i}`;
-      row.append(roleSel, funcSel);
+      row.append(roleSel, funcSel, pageSel);
       if (hasData) left.appendChild(row);
+    }
+    // Subtotals toggle (meaningful once there are nested row/column fields).
+    if (hasData) {
+      const stRow = document.createElement("label"); stRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:6px;color:var(--sheetedit-muted,#aab2bf)";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.dataset.field = "subtotals";
+      cb.addEventListener("change", () => { subtotals = cb.checked; renderPreview(); });
+      const sp = document.createElement("span"); sp.textContent = t("pivotSubtotals");
+      stRow.append(cb, sp); left.appendChild(stRow);
     }
 
     const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:14px";
@@ -2701,7 +2719,7 @@ export function createSheetEditor(
     insertBtn = document.createElement("button"); insertBtn.textContent = t("pivotCreate"); insertBtn.dataset.role = "ok";
     insertBtn.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-accent,#6e7bff);border-radius:6px;cursor:pointer;background:var(--sheetedit-accent,#6e7bff);color:#fff";
     cancel.addEventListener("click", close);
-    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs); if (!spec.rows.length || !spec.values.length) return; close(); createPivot(spec, sheet.name); });
+    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals); if (!spec.rows.length || !spec.values.length) return; close(); createPivot(spec, sheet.name); });
     actions.append(cancel, insertBtn); card.appendChild(actions);
     modal.appendChild(card); wrap.appendChild(modal);
     modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });

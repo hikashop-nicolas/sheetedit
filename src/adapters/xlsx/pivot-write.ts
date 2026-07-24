@@ -1,6 +1,6 @@
 import type { Sheet, Workbook } from "../../core/model";
 import { colToLetters, numToStr, parseXmlOpt, serializeXml } from "../../core/model";
-import { pivotValueLabel, type PivotComputed, type PivotSpec } from "../../core/pivot";
+import { pivotValueLabel, type AxisNode, type PivotComputed, type PivotSpec } from "../../core/pivot";
 
 // xlsx pivot authoring: emit the pivotCacheDefinition + pivotCacheRecords + pivotTable parts, wire
 // them into the package (rels, [Content_Types].xml, workbook <pivotCaches>, the host worksheet's
@@ -42,20 +42,24 @@ function addRel(wb: Workbook, relsPath: string, type: string, target: string): s
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${s}`);
 
-// Delta-encoded rowItems / colItems: @r = count of leading fields unchanged from the previous line,
-// then an <x> per changed level (v omitted for item 0), plus a trailing grand-total line.
-function itemsXml(keys: number[][]): string {
-  let prev: number[] = [];
+// Encode a row/column axis into rowItems/colItems. Leaves delta-encode (@r = leading levels
+// unchanged from the previous leaf, then an <x> per changed level); subtotal lines emit their full
+// prefix with t="default"; the grand line is t="grand". Matches LibreOffice's Excel-compatible form.
+function axisXml(axis: AxisNode[]): string {
+  let prevLeaf: number[] = [];
   let out = "";
-  for (const key of keys) {
-    let r = 0; while (r < key.length && r < prev.length && key[r] === prev[r]) r++;
+  const xsFrom = (key: number[], start: number): string => {
     let xs = "";
-    for (let k = r; k < key.length; k++) xs += key[k] === 0 ? "<x/>" : `<x v="${key[k]}"/>`;
-    if (!xs) xs = "<x/>";
-    out += `<i${r > 0 ? ` r="${r}"` : ""}>${xs}</i>`;
-    prev = key;
+    for (let k = start; k < key.length; k++) xs += key[k] === 0 ? "<x/>" : `<x v="${key[k]}"/>`;
+    return xs || "<x/>";
+  };
+  for (const n of axis) {
+    if (n.kind === "grand") { out += `<i t="grand"><x/></i>`; continue; }
+    if (n.kind === "subtotal") { out += `<i t="default">${xsFrom(n.key, 0)}</i>`; continue; }
+    let r = 0; while (r < n.key.length && r < prevLeaf.length && n.key[r] === prevLeaf[r]) r++;
+    out += `<i${r > 0 ? ` r="${r}"` : ""}>${xsFrom(n.key, r)}</i>`;
+    prevLeaf = n.key;
   }
-  out += `<i t="grand"><x/></i>`;
   return out;
 }
 
@@ -105,15 +109,19 @@ export function writeXlsxPivotParts(
   const recordsPath = `xl/pivotCache/pivotCacheRecords${n}.xml`;
   const tablePath = `xl/pivotTables/pivotTable${m}.xml`;
 
+  const pages = spec.pages ?? [];
   const isRow = (c: number) => spec.rows.includes(c);
   const isCol = (c: number) => spec.cols.includes(c);
+  const isPage = (c: number) => pages.some((p) => p.field === c);
+  const isGroup = (c: number) => isRow(c) || isCol(c) || isPage(c);
   const isVal = (c: number) => spec.values.some((v) => v.field === c);
+  const sub = !!spec.subtotals;
 
-  // --- cacheDefinition: cacheFields (sharedItems for grouping fields; type flags otherwise) ---
+  // --- cacheDefinition: cacheFields (sharedItems for grouping/page fields; type flags otherwise) ---
   let cacheFields = "";
   for (let c = 0; c < width; c++) {
     const f = computed.fields[c]!;
-    if (isRow(c) || isCol(c)) {
+    if (isGroup(c)) {
       const items = f.items.map((it) => (it.num ? `<n v="${numToStr(it.value as number)}"/>` : `<s v="${esc(String(it.value))}"/>`)).join("");
       cacheFields += `<cacheField name="${esc(f.name)}" numFmtId="0"><sharedItems count="${f.items.length}">${items}</sharedItems></cacheField>`;
     } else {
@@ -134,7 +142,7 @@ export function writeXlsxPivotParts(
     for (let c = 0; c < width; c++) {
       const cv = rec.cells[c]!;
       const f = computed.fields[c]!;
-      if (isRow(c) || isCol(c)) {
+      if (isGroup(c)) {
         const v = cv.value === null ? "(empty)" : cv.value;
         r += `<x v="${f.indexOf.get((typeof v === "number" ? "n:" : "s:") + v) ?? 0}"/>`;
       } else if (cv.value === null) r += "<m/>";
@@ -150,26 +158,29 @@ export function writeXlsxPivotParts(
   for (let c = 0; c < width; c++) {
     const f = computed.fields[c]!;
     if (isRow(c) || isCol(c)) {
+      // With subtotals on, drop the defaultSubtotal="0" (default is on) and add the subtotal item.
+      const items = f.items.map((_, i) => `<item x="${i}"/>`).join("") + (sub ? `<item t="default"/>` : "");
+      pivotFields += `<pivotField axis="${isRow(c) ? "axisRow" : "axisCol"}" compact="0" showAll="0"${sub ? "" : ' defaultSubtotal="0"'}><items count="${f.items.length + (sub ? 1 : 0)}">${items}</items></pivotField>`;
+    } else if (isPage(c)) {
       const items = f.items.map((_, i) => `<item x="${i}"/>`).join("");
-      pivotFields += `<pivotField axis="${isRow(c) ? "axisRow" : "axisCol"}" compact="0" showAll="0" defaultSubtotal="0"><items count="${f.items.length}">${items}</items></pivotField>`;
+      pivotFields += `<pivotField axis="axisPage" compact="0" showAll="0" defaultSubtotal="0"><items count="${f.items.length}">${items}</items></pivotField>`;
     } else if (isVal(c)) pivotFields += `<pivotField dataField="1" compact="0" showAll="0"/>`;
     else pivotFields += `<pivotField compact="0" showAll="0"/>`;
   }
   const R = spec.rows.length, C = spec.cols.length;
-  const rowFields = `<rowFields count="${R}">${spec.rows.map((c) => `<field x="${c}"/>`).join("")}</rowFields>`;
-  const rowItems = `<rowItems count="${computed.rowKeys.length + 1}">${itemsXml(computed.rowKeys)}</rowItems>`;
-  let colFields = "", colItems: string;
-  if (C === 1) {
-    colFields = `<colFields count="1"><field x="${spec.cols[0]}"/></colFields>`;
-    colItems = `<colItems count="${computed.colKeys.length + 1}">${itemsXml(computed.colKeys)}</colItems>`;
-  } else colItems = `<colItems count="1"><i/></colItems>`;
+  const rowFields = R ? `<rowFields count="${R}">${spec.rows.map((c) => `<field x="${c}"/>`).join("")}</rowFields>` : "";
+  const rowItems = `<rowItems count="${computed.rowAxis.length}">${axisXml(computed.rowAxis)}</rowItems>`;
+  const colFields = C ? `<colFields count="${C}">${spec.cols.map((c) => `<field x="${c}"/>`).join("")}</colFields>` : "";
+  const colItems = C ? `<colItems count="${computed.colAxis.length}">${axisXml(computed.colAxis)}</colItems>` : `<colItems count="1"><i/></colItems>`;
+  const pageFields = pages.length ? `<pageFields count="${pages.length}">${pages.map((p) => `<pageField fld="${p.field}"${p.item != null ? ` item="${p.item}"` : ""} hier="-1"/>`).join("")}</pageFields>` : "";
   const dataFields = `<dataFields count="${spec.values.length}">`
     + spec.values.map((v) => `<dataField name="${esc(pivotValueLabel(v.func, computed.fields[v.field]!.name))}" fld="${v.field}" subtotal="${v.func}"/>`).join("")
     + `</dataFields>`;
   const loc = { r1: anchor.row, c1: anchor.col, r2: anchor.row + computed.height - 1, c2: anchor.col + computed.width - 1 };
-  const location = `<location ref="${rangeRef(loc)}" firstHeaderRow="1" firstDataRow="${computed.headerRows}" firstDataCol="${computed.headerCols}"/>`;
+  const pageCounts = pages.length ? ` rowPageCount="1" colPageCount="1"` : "";
+  const location = `<location ref="${rangeRef(loc)}" firstHeaderRow="1" firstDataRow="${computed.headerRows}" firstDataCol="${computed.headerCols}"${pageCounts}/>`;
   const table = `<pivotTableDefinition xmlns="${MAIN}" name="${esc(destSheet.name === "" ? "PivotTable" : "PivotTable" + m)}" cacheId="${cacheId}" dataOnRows="0" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="0" dataCaption="Values" showDrill="0" useAutoFormatting="0" itemPrintTitles="1" indent="0" outline="1" outlineData="1" compact="1" compactData="1">`
-    + location + `<pivotFields count="${width}">${pivotFields}</pivotFields>` + rowFields + rowItems + colFields + colItems + dataFields
+    + location + `<pivotFields count="${width}">${pivotFields}</pivotFields>` + rowFields + rowItems + colFields + colItems + pageFields + dataFields
     + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
 
   // --- write parts + wiring ---

@@ -39,6 +39,24 @@ describe("pivot tables", () => {
     // A new sheet holds the pivot, outlined + labelled, with the grand total materialised.
     cy.get(".sheetedit-pivotbox", { timeout: TIMEOUT }).should("exist");
     cy.get(".sheetedit-pivottag").should("contain.text", "PivotTable");
-    cy.get('input[aria-label="D5"]').should("have.value", "350");
+    cy.get('input[aria-label="D4"]').should("have.value", "350");
+  });
+
+  it("authors a nested pivot with subtotals", () => {
+    open("cypress/fixtures/pivot.xlsx");
+    cy.get('input[aria-label="A1"]').focus();
+    cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
+    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
+    // Region + Product both on rows, Sum of Sales, subtotals on.
+    cy.get('.sheetedit-form-modal [data-field="role_1"]').select("rows");
+    cy.get('.sheetedit-form-modal [data-field="subtotals"]').check();
+    cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+    cy.get(".sheetedit-form-modal").should("not.exist");
+    // The nested output carries a per-group subtotal and a grand total.
+    cy.get('input[aria-label="A4"]').should("have.value", "North Total");
+    cy.get('input[aria-label="C4"]').should("have.value", "190");
+    cy.get('input[aria-label="A8"]').should("have.value", "Grand Total");
+    cy.get('input[aria-label="C8"]').should("have.value", "350");
   });
 });

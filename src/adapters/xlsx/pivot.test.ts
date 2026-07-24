@@ -76,8 +76,8 @@ describe("xlsx pivot tables", () => {
     const host = back.sheets.find((s) => s.name === "Out")!;
     expect(host.pivotTables?.[0]?.rowFields).toEqual(["Region"]);
     expect(host.pivotTables?.[0]?.colFields).toEqual(["Product"]);
-    // Materialised grand total (D5 = 350) is present in the output cells.
-    expect(getCell(host, 5, 4)?.value).toBe("350");
+    // Materialised grand total (D4 = 350) is present in the output cells.
+    expect(getCell(host, 4, 4)?.value).toBe("350");
   });
 
   it("preserves the pivot parts verbatim through a read/write round-trip", async () => {
