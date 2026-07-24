@@ -1,6 +1,9 @@
 import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, TextRun, Workbook } from "../../core/model";
-import { formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
+import { formatNumber, getCell, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
+import { pivotColumnItems, type PivotFunc } from "../../core/pivot";
 import { durationToSerial, isoToSerial } from "../../core/dates";
+
+const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", countnums: "countNums", average: "average", min: "min", max: "max" };
 import { readOdsCharts } from "./chart-read";
 import { readOdsImages } from "./image-read";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
@@ -432,19 +435,39 @@ function readOdsPivots(wb: Workbook): void {
     const srcR = src ? odfRange(attrByLocal(src, "cell-range-address")) : null;
     if (srcR) { info.sourceSheet = srcR.sheet; info.sourceRange = { r1: srcR.r1, c1: srcR.c1, r2: srcR.r2, c2: srcR.c2 }; }
     info.hostSheet = host.name;
+    // Map source-field-name -> column offset within the source range, to reconstruct the spec.
+    const srcSheet = srcR ? wb.sheets.find((s) => s.name === srcR.sheet) : undefined;
+    const nameOff = new Map<string, number>();
+    if (srcR && srcSheet) for (let c = 0; c <= srcR.c2 - srcR.c1; c++) { const nm = (getCell(srcSheet, srcR.r1, srcR.c1 + c)?.value ?? "").trim(); if (nm && !nameOff.has(nm)) nameOff.set(nm, c); }
+    const rows: number[] = [], cols: number[] = [], values: { field: number; func: import("../../core/pivot").PivotFunc }[] = [], pages: { field: number; item: number | null }[] = [];
+    let subtotals = false, resolvable = !!(srcR && srcSheet);
+    const hasSubtotal = (f: Element): boolean => Array.from(f.getElementsByTagName("*")).some((e) => e.localName === "data-pilot-subtotal" || e.localName === "data-pilot-subtotals");
+    const pageMember = (f: Element): number | null => {
+      const mem = Array.from(f.getElementsByTagName("*")).find((e) => e.localName === "data-pilot-member" && attrByLocal(e, "display") === "true");
+      const off = nameOff.get(attrByLocal(f, "source-field-name") ?? "");
+      if (!mem || off == null || !srcSheet || !srcR) return null;
+      const nm = attrByLocal(mem, "name");
+      const items = pivotColumnItems(srcSheet, { r1: srcR.r1, c1: srcR.c1, r2: srcR.r2, c2: srcR.c2 }, off);
+      const i = items.findIndex((it) => String(it.value) === nm);
+      return i >= 0 ? i : null;
+    };
     for (const f of Array.from(pt.children)) {
       if (f.localName !== "data-pilot-field") continue;
       const name = attrByLocal(f, "source-field-name");
       if (!name) continue; // the values-layout placeholder has no source field
       const orient = attrByLocal(f, "orientation");
-      if (orient === "row") info.rowFields.push(name);
-      else if (orient === "column") info.colFields.push(name);
-      else if (orient === "page") info.pageFields.push(name);
+      const off = nameOff.get(name);
+      if (off == null) resolvable = false;
+      if (orient === "row") { info.rowFields.push(name); if (off != null) rows.push(off); if (hasSubtotal(f)) subtotals = true; }
+      else if (orient === "column") { info.colFields.push(name); if (off != null) cols.push(off); if (hasSubtotal(f)) subtotals = true; }
+      else if (orient === "page") { info.pageFields.push(name); if (off != null) pages.push({ field: off, item: pageMember(f) }); }
       else if (orient === "data") {
-        const fn = attrByLocal(f, "function");
+        const fn = (attrByLocal(f, "function") ?? "").toLowerCase();
         info.dataFields.push({ name, func: fn && fn !== "auto" ? fn : "sum" });
+        if (off != null) values.push({ field: off, func: ODF_TO_FUNC[fn] ?? "sum" });
       }
     }
+    if (resolvable && srcR && values.length) info.authorSpec = { source: { r1: srcR.r1, c1: srcR.c1, r2: srcR.r2, c2: srcR.c2 }, rows, cols, values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined };
     (host.pivotTables ??= []).push(info);
   }
 }

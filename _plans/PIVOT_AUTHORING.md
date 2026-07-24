@@ -15,10 +15,14 @@ round-trips. The dialog has a live preview and guards the "no data selected" cas
 - **Report filters**: a field restricted to one value (or All); filters the aggregation and emits
   `axisPage` + `<pageFields>` (xlsx) / a page field with member display flags (ODS).
 - **Output**: a new sheet (Excel's default; avoids relayout overlap).
-- **Edit / refresh**: clicking an authored pivot's overlay tag opens a menu. Refresh recomputes the
-  output from the current source; Edit reopens the dialog prefilled and rewrites the pivot in place
-  (old definition parts removed, new ones emitted at the same anchor). Pivots read from a file are
-  read-only in place (open them in Excel / LibreOffice to restructure).
+- **Edit / refresh**: clicking a pivot's overlay tag opens a menu. Refresh recomputes the output
+  from the current source; Edit reopens the dialog prefilled and rewrites the pivot in place (old
+  definition parts removed, new ones emitted at the same anchor). This works for pivots created
+  in-app AND for pivots read from a file: the reader reconstructs the authoring spec from the
+  definition (field roles from the pivotFields/rowFields/colFields/dataFields/pageFields for xlsx,
+  from the data-pilot-field orientations for ODS; functions, page selections and subtotals too).
+  A pivot is only read-only when its spec can't be reconstructed (e.g. an external/non-worksheet
+  cache source), in which case the menu says so.
 
 ## Architecture
 

@@ -45,6 +45,10 @@ export const ICON = {
 export interface ToolbarHandle {
   relayout(): void;
   teardown(): void;
+  /** Place trailing (authoring) controls the editor adds; they fold into a "⋯" menu when tight. */
+  setTrailing(elements: HTMLElement[]): void;
+  /** Reflect the active cell's style as pressed states on the toggle buttons (bold, align, ...). */
+  syncActive(): void;
 }
 
 export function buildToolbar(ctx: {
@@ -98,7 +102,7 @@ export function buildToolbar(ctx: {
     tbIcon(ICON.find, t("findReplace"), ctx.findReplace),
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
-  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined };
+  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined };
 
   const bold = tbBtn("B", t("bold"), () => ctx.applyStyle({ bold: !ctx.curStyle()?.bold }));
   bold.style.fontWeight = "700";
@@ -173,6 +177,14 @@ export function buildToolbar(ctx: {
   };
   document.addEventListener("click", closeFmtMenu);
 
+  const alignL = tbIcon(ICON.left, t("alignLeft"), () => ctx.applyStyle({ align: "left" }));
+  const alignC = tbIcon(ICON.center, t("alignCentre"), () => ctx.applyStyle({ align: "center" }));
+  const alignR = tbIcon(ICON.right, t("alignRight"), () => ctx.applyStyle({ align: "right" }));
+  const valignT = tbIcon(ICON.valignTop, t("valignTop"), () => ctx.applyStyle({ valign: "top" }));
+  const valignM = tbIcon(ICON.valignMiddle, t("valignMiddle"), () => ctx.applyStyle({ valign: "middle" }));
+  const valignB = tbIcon(ICON.valignBottom, t("valignBottom"), () => ctx.applyStyle({ valign: "bottom" }));
+  const wrapBtn = tbIcon(ICON.wrap, t("wrapText"), () => ctx.applyStyle({ wrap: !ctx.curStyle()?.wrap }));
+
   const styleControls: HTMLElement[] = [
     fmtBtn,
     famSel,
@@ -185,18 +197,32 @@ export function buildToolbar(ctx: {
     colorInput(t("textColour"), "#000000", (v) => ctx.applyStyle({ color: v })),
     colorInput(t("fillColour"), "#ffff00", (v) => ctx.applyStyle({ bg: v })),
     sep(),
-    tbIcon(ICON.left, t("alignLeft"), () => ctx.applyStyle({ align: "left" })),
-    tbIcon(ICON.center, t("alignCentre"), () => ctx.applyStyle({ align: "center" })),
-    tbIcon(ICON.right, t("alignRight"), () => ctx.applyStyle({ align: "right" })),
-    tbIcon(ICON.valignTop, t("valignTop"), () => ctx.applyStyle({ valign: "top" })),
-    tbIcon(ICON.valignMiddle, t("valignMiddle"), () => ctx.applyStyle({ valign: "middle" })),
-    tbIcon(ICON.valignBottom, t("valignBottom"), () => ctx.applyStyle({ valign: "bottom" })),
-    tbIcon(ICON.wrap, t("wrapText"), () => ctx.applyStyle({ wrap: !ctx.curStyle()?.wrap })),
+    alignL, alignC, alignR,
+    valignT, valignM, valignB,
+    wrapBtn,
     sep(),
     borderBtn,
     tbIcon(ICON.merge, t("merge"), ctx.toggleMerge),
     furiBtn,
   ];
+
+  // Reflect the active cell's style as pressed toggle buttons. A stateless button (fmt/font pickers)
+  // reads nothing back; only the on/off + mutually-exclusive controls surface a current value.
+  const setPressed = (btn: HTMLElement, on: boolean) => { btn.classList.toggle("is-active", on); btn.setAttribute("aria-pressed", on ? "true" : "false"); };
+  const syncActive = () => {
+    const st = ctx.curStyle();
+    setPressed(bold, !!st?.bold);
+    setPressed(italic, !!st?.italic);
+    setPressed(underline, !!st?.underline);
+    setPressed(strike, !!st?.strike);
+    setPressed(alignL, st?.align === "left");
+    setPressed(alignC, st?.align === "center");
+    setPressed(alignR, st?.align === "right");
+    setPressed(valignT, st?.valign === "top");
+    setPressed(valignM, st?.valign === "middle");
+    setPressed(valignB, st?.valign === "bottom");
+    setPressed(wrapBtn, !!st?.wrap);
+  };
 
   // Collapsible cluster: inline when it fits, otherwise one "Aa" button + popover.
   const slot = document.createElement("span");
@@ -233,9 +259,59 @@ export function buildToolbar(ctx: {
   };
   document.addEventListener("click", closeMenu);
 
+  // Overflow "⋯" menu: trailing authoring controls (added by the editor) that don't fit fold into a
+  // dropdown, each shown as an icon + label row that forwards to the original (hidden) button.
+  let trailing: HTMLElement[] = [];
+  const moreBtn = tbBtn("⋯", t("more"), () => {
+    const r = moreBtn.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    moreMenu.style.top = `${r.bottom - wr.top + 2}px`;
+    moreMenu.style.left = `${Math.max(0, r.right - wr.left - 180)}px`;
+    moreMenu.hidden = !moreMenu.hidden;
+  });
+  moreBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  moreBtn.style.display = "none";
+  const moreMenu = document.createElement("div");
+  moreMenu.className = "sheetedit-tb-groupmenu sheetedit-tb-moremenu";
+  moreMenu.hidden = true;
+  wrap.append(moreMenu);
+  const moreItem = (btn: HTMLElement): HTMLElement => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "sheetedit-btn sheetedit-more-item";
+    row.innerHTML = `${btn.innerHTML}<span>${btn.getAttribute("aria-label") ?? btn.title ?? ""}</span>`;
+    row.addEventListener("mousedown", (e) => e.preventDefault());
+    row.addEventListener("click", () => { moreMenu.hidden = true; (btn as HTMLElement).click(); });
+    return row;
+  };
+  const closeMoreMenu = (e: MouseEvent) => { if (!moreMenu.hidden && !moreMenu.contains(e.target as Node) && !moreBtn.contains(e.target as Node)) moreMenu.hidden = true; };
+  document.addEventListener("click", closeMoreMenu);
+  const setTrailing = (els: HTMLElement[]) => {
+    for (const el of trailing) el.remove();
+    trailing = els;
+    for (const el of trailing) toolbar.insertBefore(el, moreBtn);
+    relayout();
+  };
+  toolbar.append(moreBtn);
+
   const fits = () => toolbar.scrollWidth <= toolbar.clientWidth + 1;
   const relayout = () => {
+    // Reset to the fully-expanded state, then fold only as much as needed.
     expand();
+    for (const el of trailing) el.style.display = "";
+    moreMenu.replaceChildren();
+    moreBtn.style.display = "none";
+    if (fits()) return;
+    // Fold the trailing authoring controls into the "⋯" menu first (from the end).
+    moreBtn.style.display = "";
+    for (let i = trailing.length - 1; i >= 0; i--) {
+      if (fits()) break;
+      trailing[i]!.style.display = "none";
+      moreMenu.prepend(moreItem(trailing[i]!));
+    }
+    if (!moreMenu.children.length) moreBtn.style.display = "none";
+    // Only when every authoring control has folded and it still overflows, collapse the style
+    // cluster into its "Aa" menu as a last resort.
     if (!fits()) collapse();
   };
   relayout();
@@ -244,12 +320,16 @@ export function buildToolbar(ctx: {
   observer.observe(toolbar);
   return {
     relayout,
+    setTrailing,
+    syncActive,
     teardown() {
       observer.disconnect();
       document.removeEventListener("click", closeMenu);
       document.removeEventListener("click", closeFmtMenu);
+      document.removeEventListener("click", closeMoreMenu);
       menu.remove();
       fmtMenu.remove();
+      moreMenu.remove();
     },
   };
 }

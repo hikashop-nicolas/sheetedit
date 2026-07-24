@@ -1,5 +1,11 @@
 import type { PivotCacheRef, PivotTableInfo, Sheet, Workbook } from "../../core/model";
 import { parseA1Ref, parseXmlOpt, serializeXml } from "../../core/model";
+import type { PivotFunc } from "../../core/pivot";
+
+/** Map an xlsx dataField @subtotal to a supported aggregation (unknowns -> sum). */
+function subtotalToFunc(s: string | null): PivotFunc {
+  switch (s) { case "count": return "count"; case "countNums": return "countNums"; case "average": return "average"; case "min": return "min"; case "max": return "max"; default: return "sum"; }
+}
 
 // ---------------------------------------------------------------------------
 // xlsx pivot tables (read-only): detect PivotTable / PivotCache parts, model
@@ -129,6 +135,15 @@ export function readXlsxPivots(wb: Workbook, files: Record<string, Uint8Array>):
       const tr = parseRange(loc?.getAttribute("ref") ?? null);
       if (tr) info.targetRange = tr;
       if (cache?.sourceSheet && cache.source) { info.sourceSheet = cache.sourceSheet; info.sourceRange = cache.source; }
+      // Reconstruct the authoring spec from the definition so a file-read pivot is editable/refreshable.
+      if (cache?.source) {
+        const idxs = (tag: string): number[] => { const c = tdoc.getElementsByTagName(tag)[0]; return c ? Array.from(c.children).filter((f) => f.localName === "field").map((f) => Number(f.getAttribute("x") ?? "-1")).filter((x) => x >= 0) : []; };
+        const pfEls = Array.from((def.getElementsByTagName("pivotFields")[0]?.children) ?? []).filter((e) => e.localName === "pivotField");
+        const subtotals = pfEls.some((pf) => { const ax = pf.getAttribute("axis"); return (ax === "axisRow" || ax === "axisCol") && pf.getAttribute("defaultSubtotal") !== "0"; });
+        const values = Array.from(tdoc.getElementsByTagName("dataField")).map((d) => ({ field: Number(d.getAttribute("fld") ?? "-1"), func: subtotalToFunc(d.getAttribute("subtotal")) })).filter((v) => v.field >= 0);
+        const pages = Array.from(tdoc.getElementsByTagName("pageField")).map((p) => ({ field: Number(p.getAttribute("fld") ?? "-1"), item: p.getAttribute("item") != null ? Number(p.getAttribute("item")) : null })).filter((p) => p.field >= 0);
+        if (values.length) info.authorSpec = { source: cache.source, rows: idxs("rowFields"), cols: idxs("colFields"), values, pages: pages.length ? pages : undefined, subtotals: subtotals || undefined };
+      }
       info.part = tablePart;
       if (cache?.part) info.cachePart = cache.part;
       info.hostSheet = sheet.name;

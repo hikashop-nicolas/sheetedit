@@ -44,8 +44,8 @@ describe("Power Query editor", () => {
   });
 
   it("collapses the side panels into drawers on a narrow viewport", () => {
-    cy.viewport(414, 820);
-    openEditor();
+    openEditor(); // open at the default width (the toolbar's Edit-queries button is inline there)
+    cy.viewport(414, 820); // then narrow to exercise the editor's responsive drawers
     // Ribbon labels are hidden (icon-only) and the pane toggles appear.
     cy.get(".se-pqe-rbtn span").first().should("not.be.visible");
     cy.get(".se-pqe-panetoggle").should("be.visible").and("have.length", 2);
@@ -53,7 +53,9 @@ describe("Power Query editor", () => {
     cy.get(".se-pqe").should("not.have.class", "show-queries");
     cy.get(".se-pqe-panetoggle").first().click();
     cy.get(".se-pqe").should("have.class", "show-queries");
-    cy.get(".se-pqe-center").click("center");
+    // Tapping the preview dismisses the drawer. The open drawer overlays the left of the center, so
+    // force the tap on the center element itself (its handler closes the drawer).
+    cy.get(".se-pqe-center").click("center", { force: true });
     cy.get(".se-pqe").should("not.have.class", "show-queries");
   });
 });

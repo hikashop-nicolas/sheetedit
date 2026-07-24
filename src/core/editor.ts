@@ -80,6 +80,10 @@ export function injectStyles(): void {
       border-radius:6px; padding:4px 9px; cursor:pointer; min-width:32px; line-height:1.1;
     }
     .sheetedit-btn:hover { background:var(--sheetedit-btn-hover, #454b54); }
+    .sheetedit-btn.is-active { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
+    .sheetedit-btn.is-active:hover { background:var(--sheetedit-accent, #6e7bff); }
+    .sheetedit-tb-moremenu { flex-direction:column; align-items:stretch; gap:2px; max-height:70vh; overflow-y:auto; }
+    .sheetedit-more-item { display:flex; align-items:center; gap:9px; justify-content:flex-start; text-align:left; min-width:170px; }
     .sheetedit-btn:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:1px; }
     .sheetedit-tb-sep { width:1px; align-self:stretch; background:var(--sheetedit-btn-border, #4a4f57); margin:1px 3px; }
     .sheetedit-color { width:30px; height:28px; padding:0; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px; background:var(--sheetedit-btn, #3a3f47); cursor:pointer; }
@@ -441,6 +445,8 @@ export function createSheetEditor(
   // Extra rows/columns the user added beyond the sheet's used extent (per active sheet).
   let extraRows = 0;
   let extraCols = 0;
+  // Assigned once the toolbar is built; reflects the active cell's style on the toggle buttons.
+  let syncToolbar: () => void = () => undefined;
   // Selection rectangle (1-based, inclusive) and the anchor for shift-extend.
   let sel: { r1: number; c1: number; r2: number; c2: number } | null = null;
   let anchor: { r: number; c: number } | null = null;
@@ -558,6 +564,7 @@ export function createSheetEditor(
       td.classList.remove("sheetedit-fillsrc");
     }
     placeFillHandle();
+    syncToolbar();
   };
   const setSel = (r1: number, c1: number, r2: number, c2: number) => {
     sel = { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) };
@@ -769,6 +776,7 @@ export function createSheetEditor(
     // the rendered cells in place, keeping focus and scroll.
     if (change.wrap !== undefined || positions.some((p) => getCell(sheet, p.r, p.c)?.cellStyle?.wrap)) renderGrid();
     else patchStyle(positions);
+    syncToolbar(); // reflect the new state on the toggle buttons (bold, align, ...)
   };
 
   // Apply a number format preset to the selection (General when fmt is undefined).
@@ -1060,6 +1068,9 @@ export function createSheetEditor(
     toggleMerge,
     editFurigana: openFuriganaPopover,
   });
+  // Authoring controls the editor appends after the style cluster; collected so the toolbar can
+  // fold the ones that don't fit into its "⋯" overflow menu.
+  const trailingIcons: HTMLElement[] = [];
 
   // Power Query panel: only when the workbook carries a DataMashup payload. Refresh writes
   // the result through the model (undo-recorded when the target sheet is active) and the
@@ -1089,7 +1100,7 @@ export function createSheetEditor(
       void panel.runOnLoad();
       const QUERY_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v4c0 1.1 2.2 2 5 2 .7 0 1.4-.06 2-.16M3 7.5v4c0 1.1 2.2 2 5 2 .5 0 1-.03 1.4-.09"/><path d="M13 8.5v3M11.5 10l1.5 1.5L14.5 10"/></svg>`;
       const qBtn = tbIcon(QUERY_ICON, t("queries"), () => panel.open(qBtn));
-      toolbar.append(qBtn);
+      trailingIcons.push(qBtn);
     }
 
     // Full Power Query editor (Applied Steps + live preview). Always available for xlsx so the
@@ -1126,7 +1137,7 @@ export function createSheetEditor(
         editor.open(q ? q.mashup.sectionM : "section Section1;\r\n");
       });
     });
-    toolbar.append(eBtn);
+    trailingIcons.push(eBtn);
   }
 
   const mark = () => {
@@ -1638,37 +1649,40 @@ export function createSheetEditor(
     : { openInsert: () => undefined, showEdit: () => undefined, hideEdit: () => undefined, teardown: () => undefined };
   if (chartsOn) {
     const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
-    toolbar.append(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
+    trailingIcons.push(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
   }
   // Authoring controls, each advertised only when the open format supports it (see capabilities.ts).
   if (caps.autofilter) {
     const FILTER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
-    toolbar.append(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
+    trailingIcons.push(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
   }
   if (caps.pivots) {
     const PIVOT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M2 6h12M6 6v8M6 6V2"/><path d="M9 9.5l2 2M11 9.5l-2 2"/></svg>`;
-    toolbar.append(tbIcon(PIVOT_ICON, t("pivotInsert"), () => openPivotDialog()));
+    trailingIcons.push(tbIcon(PIVOT_ICON, t("pivotInsert"), () => openPivotDialog()));
   }
   if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
-    toolbar.append(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
+    trailingIcons.push(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
   }
   if (caps.dataValidation) {
     const DV_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h4M11 9l1 1 1.5-1.5"/></svg>`;
-    toolbar.append(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
+    trailingIcons.push(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
   }
   if (caps.comments) {
     const NOTE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`;
-    toolbar.append(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
+    trailingIcons.push(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
   }
   if (caps.conditionalFormat) {
     const CF_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`;
-    toolbar.append(tbIcon(CF_ICON, t("cfEdit"), () => openCfDialog()));
+    trailingIcons.push(tbIcon(CF_ICON, t("cfEdit"), () => openCfDialog()));
   }
   if (caps.sparklines) {
     const SPARK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11l3-4 3 2 3-5 3 3"/></svg>`;
-    toolbar.append(tbIcon(SPARK_ICON, t("sparkEdit"), () => openSparkDialog()));
+    trailingIcons.push(tbIcon(SPARK_ICON, t("sparkEdit"), () => openSparkDialog()));
   }
+  toolbarHandle.setTrailing(trailingIcons);
+  syncToolbar = () => toolbarHandle.syncActive();
+  syncToolbar();
 
   // A frozen-pane cell stays put when the grid scrolls: sticky to the top (a frozen row),
   // the left (a frozen column), or both (the frozen corner). z-index stacks it under the

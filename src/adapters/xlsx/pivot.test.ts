@@ -38,6 +38,16 @@ describe("xlsx pivot tables", () => {
     expect(pt.targetRange).toEqual({ r1: 3, c1: 1, r2: 7, c2: 4 });
   });
 
+  it("reconstructs the authoring spec from a file-read pivot (so it is editable)", async () => {
+    const wb = readWorkbook(await realBytes("pivot.xlsx"));
+    const pt = wb.sheets.find((s) => s.pivotTables?.length)!.pivotTables![0]!;
+    expect(pt.authorSpec).toBeTruthy();
+    expect(pt.authorSpec!.rows).toEqual([0]); // Region
+    expect(pt.authorSpec!.cols).toEqual([1]); // Product
+    expect(pt.authorSpec!.values).toEqual([{ field: 2, func: "sum" }]); // Sum of Sales
+    expect(pt.authorSpec!.source).toEqual({ r1: 1, c1: 1, r2: 7, c2: 3 });
+  });
+
   it("registers the pivot cache with its worksheet source range", async () => {
     const wb = readWorkbook(await realBytes("pivot.xlsx"));
     expect(wb.pivotCaches?.length).toBe(1);
