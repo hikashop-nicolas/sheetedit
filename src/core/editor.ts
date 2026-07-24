@@ -2740,14 +2740,14 @@ export function createSheetEditor(
     modal.className = "sheetedit-form-modal sheetedit-pivot-modal";
     modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
     const card = document.createElement("div");
-    card.style.cssText = "width:min(720px,96%);max-height:88vh;overflow:auto;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
+    card.style.cssText = "width:min(840px,96%);max-height:88vh;overflow:auto;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
     const h = document.createElement("h3"); h.textContent = t("pivotInsert"); h.style.cssText = "margin:0 0 4px;font-size:15px"; card.appendChild(h);
     const srcLine = document.createElement("div");
     srcLine.textContent = `${t("pivotSource")}: ${sheet.name}!${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`;
     srcLine.style.cssText = "color:var(--sheetedit-muted,#aab2bf);margin-bottom:12px;font-size:12px"; card.appendChild(srcLine);
     const body = document.createElement("div"); body.style.cssText = "display:flex;gap:16px;flex-wrap:wrap"; card.appendChild(body);
-    const left = document.createElement("div"); left.style.cssText = "flex:1 1 260px;min-width:240px"; body.appendChild(left);
-    const right = document.createElement("div"); right.style.cssText = "flex:1 1 300px;min-width:260px"; body.appendChild(right);
+    const left = document.createElement("div"); left.style.cssText = "flex:1 1 360px;min-width:340px"; body.appendChild(left);
+    const right = document.createElement("div"); right.style.cssText = "flex:1 1 300px;min-width:280px;overflow:hidden"; body.appendChild(right);
     const previewLbl = document.createElement("div"); previewLbl.textContent = t("pivotPreview"); previewLbl.style.cssText = "color:var(--sheetedit-muted,#aab2bf);font-size:12px;margin-bottom:6px"; right.appendChild(previewLbl);
     const preview = document.createElement("div"); preview.style.cssText = "border:1px solid var(--sheetedit-btn,#3a4047);border-radius:6px;padding:8px;overflow:auto;max-height:260px;font-size:12px"; right.appendChild(preview);
     const selStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:4px 6px";
@@ -2792,9 +2792,9 @@ export function createSheetEditor(
 
     if (!hasData) { const p = document.createElement("div"); p.textContent = t("pivotNoData"); p.style.color = "var(--sheetedit-muted,#aab2bf)"; left.appendChild(p); }
     for (let i = 0; i < width; i++) {
-      const row = document.createElement("div"); row.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px";
+      const row = document.createElement("div"); row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap";
       const name = document.createElement("span"); name.textContent = headers[i]!; name.title = headers[i]!;
-      name.style.cssText = "flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"; row.appendChild(name);
+      name.style.cssText = "flex:1 1 84px;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"; row.appendChild(name);
       const funcSel = mkSelect(funcOpts, funcs[i]!, (v) => { funcs[i] = v; renderPreview(); });
       funcSel.dataset.field = `func_${i}`;
       funcSel.style.display = roles[i] === "values" ? "" : "none";
@@ -2809,6 +2809,7 @@ export function createSheetEditor(
       pageSel.style.display = roles[i] === "page" ? "" : "none";
       const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; const val = v === "values"; funcSel.style.display = val ? "" : "none"; showSel.style.display = val ? "" : "none"; pageSel.style.display = v === "page" ? "" : "none"; renderPreview(); });
       roleSel.dataset.field = `role_${i}`;
+      for (const sel of [roleSel, funcSel, showSel, pageSel]) sel.style.maxWidth = "128px";
       row.append(roleSel, funcSel, showSel, pageSel);
       if (hasData) left.appendChild(row);
     }
