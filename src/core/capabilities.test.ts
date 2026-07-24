@@ -16,8 +16,8 @@ describe("workbook capabilities", () => {
     expect(c.conditionalFormat).toBe(true);
     expect(c.autofilter).toBe(true);
     expect(c.pivots).toBe(true);
-    // Excel-style sparklines have no interoperable ODF authoring form.
-    expect(c.sparklines).toBe(false);
+    // sparklines author via the LibreOffice calcext extension.
+    expect(c.sparklines).toBe(true);
   });
 
   it("csv advertises no advanced features", () => {

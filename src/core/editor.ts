@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
+import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, setOdsSparkline, setOdsSparklineGroup, writeOdsPivotDef } from "../adapters/ods";
 import { computePivot, pivotColumnItems, pivotValueName, type PivotFunc, type PivotShowAs, type PivotSpec, type PivotValue } from "./pivot";
 import { makeFormulaEvaluator, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
@@ -3004,10 +3004,14 @@ export function createSheetEditor(
     const sheet = wb.sheets[active]!;
     return sheet.sparklines?.some((sp) => sp.host.r === s.r1 && sp.host.c === s.c1) ? { r: s.r1, c: s.c1 } : null;
   };
+  const sparkSingle = (sheet: Sheet, host: { r: number; c: number }, spec: Parameters<typeof setXlsxSparkline>[2]): void => {
+    if (wb.kind === "ods") setOdsSparkline(sheet, host, spec);
+    else setXlsxSparkline(sheet, host, spec);
+  };
   const deleteFocusedSparkline = (): void => {
     const h = focusedSparkline();
     if (!h) return;
-    setXlsxSparkline(wb.sheets[active]!, h, null);
+    sparkSingle(wb.sheets[active]!, h, null);
     mark(); renderGrid();
   };
 
@@ -3064,10 +3068,11 @@ export function createSheetEditor(
           for (let j = 0; loc.c1 + j <= loc.c2 && dr.c1 + j <= dr.c2; j++)
             items.push({ host: { r: loc.r1, c: loc.c1 + j }, dataRef: `${sheetName}!${colToLetters(dr.c1 + j)}${dr.r1}:${colToLetters(dr.c1 + j)}${dr.r2}` });
         }
-        setXlsxSparklineGroup(sheet, style, items);
+        if (wb.kind === "ods") setOdsSparklineGroup(sheet, style, items);
+        else setXlsxSparklineGroup(sheet, style, items);
       } else {
         const dataRef = data.includes("!") ? data : `${sheet.name}!${data}`;
-        setXlsxSparkline(sheet, { r: loc.r1, c: loc.c1 }, { ...style, dataRef });
+        sparkSingle(sheet, { r: loc.r1, c: loc.c1 }, { ...style, dataRef });
       }
       mark(); renderGrid();
     });

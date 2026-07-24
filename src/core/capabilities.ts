@@ -45,12 +45,11 @@ const XLSX: WorkbookCapabilities = {
   pivots: true,
 };
 
-// ODF has native hyperlinks, comments, validation and conditional formatting, but no Excel-style
-// sparklines or the x14 autofilter model. Only charts are wired for ODS so far; the ODF authoring
-// paths flip the remaining flags on as they land.
+// ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
+// LibreOffice calcext extension) sparklines. The x14 autofilter model differs but is wired.
 const ODS: WorkbookCapabilities = {
   charts: true,
-  sparklines: false,
+  sparklines: true,
   autofilter: true,
   hyperlinks: true,
   dataValidation: true,

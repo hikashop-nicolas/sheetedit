@@ -98,7 +98,9 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   is-true-formula rules, `cellIs` cell-ref/formula operands and time-period rules all render (DONE).
   ODS authoring stays on the interoperable cellIs subset (the graphical/formula rules have no ODF
   form that survives a LibreOffice round-trip).
-- **Sparklines**: authoring on ods (xlsx is author + render; ods is render-only).
+- **Sparklines**: author + render on both xlsx and ods. ODS authoring emits the LibreOffice
+  calcext:sparkline-groups (rebuilt from the model after the rows on save; untouched groups kept
+  verbatim), verified through a LibreOffice round-trip.
 - **Rich text**: feature-complete. Per-run styling is rendered, authored (select a sub-range while
   editing, then bold/italic/underline/strike/colour/size/font) and written to xlsx + ods (DONE).
   Retyping a cell's text clears its runs (offsets shift); re-apply after the text is settled.

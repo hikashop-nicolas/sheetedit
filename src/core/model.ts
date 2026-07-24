@@ -236,6 +236,9 @@ export interface Sheet {
   odsHeaderRows?: { el: Element; from: number; to: number };
   /** ods: rows must be re-emitted (cell/merge/row-height edits); untouched sheets keep their XML. */
   odsDirty?: boolean;
+  /** ods: this sheet's sparklines were authored/edited/removed, so writeOdsSparklines rebuilds its
+      calcext:sparkline-groups from the model (untouched sheets keep their original group verbatim). */
+  sparklinesDirty?: boolean;
   /** csv: each physical row's original text (without terminator) + terminator,
       for byte-exact re-emission of untouched rows (index 0 = row 1). `width` is
       the parsed field count, so trailing empty fields survive a rewrite. */

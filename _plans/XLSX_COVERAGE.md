@@ -39,7 +39,6 @@ with its sibling elements intact:
 - Shapes and other drawings (pictures can now be moved/resized, and charts and pivot tables are
   fully editable, see above)
 - Form controls, slicers, ActiveX
-- Sparklines authored on ods (xlsx sparklines are author + render)
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
   settings, autofilter state, outline grouping, themes
 

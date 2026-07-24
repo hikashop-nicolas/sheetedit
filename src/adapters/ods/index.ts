@@ -3,3 +3,4 @@ export * from "./shared";
 export * from "./read";
 export * from "./write";
 export * from "./styles";
+export { setOdsSparkline, setOdsSparklineGroup, writeOdsSparklines } from "./sparkline-write";

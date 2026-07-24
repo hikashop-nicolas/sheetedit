@@ -8,6 +8,7 @@ import { readCsv, writeCsv } from "../adapters/csv";
 import { readOds, writeOds } from "../adapters/ods";
 import { writeOdsCharts } from "../adapters/ods/chart-write";
 import { writeOdsImages } from "../adapters/ods/image-write";
+import { writeOdsSparklines } from "../adapters/ods/sparkline-write";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -129,6 +130,7 @@ function assembleWorkbook(wb: Workbook): Packable {
   }
   writeOdsImages(wb); // patch moved/resized picture frames in contentDoc before it is serialized
   writeOds(wb);
+  writeOdsSparklines(wb); // rebuild authored sparkline-groups (after the rows) once content.xml exists
   writeOdsCharts(wb); // persist created/edited charts (embedded objects) after content.xml is built
   // ODF requires the "mimetype" entry first and stored (uncompressed).
   const repacked: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {};
