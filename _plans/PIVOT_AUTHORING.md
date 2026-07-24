@@ -15,7 +15,10 @@ round-trips. The dialog has a live preview and guards the "no data selected" cas
 - **Report filters**: a field restricted to one value (or All); filters the aggregation and emits
   `axisPage` + `<pageFields>` (xlsx) / a page field with member display flags (ODS).
 - **Output**: a new sheet (Excel's default; avoids relayout overlap).
-- Remaining: editing an existing pivot in place and an explicit in-app refresh.
+- **Edit / refresh**: clicking an authored pivot's overlay tag opens a menu. Refresh recomputes the
+  output from the current source; Edit reopens the dialog prefilled and rewrites the pivot in place
+  (old definition parts removed, new ones emitted at the same anchor). Pivots read from a file are
+  read-only in place (open them in Excel / LibreOffice to restructure).
 
 ## Architecture
 

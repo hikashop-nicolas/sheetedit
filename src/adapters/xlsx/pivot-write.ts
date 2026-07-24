@@ -99,7 +99,7 @@ export function writeXlsxPivotParts(
   sourceSheetName: string,
   spec: PivotSpec,
   computed: PivotComputed,
-): void {
+): { part: string; cachePart: string } {
   const width = spec.source.c2 - spec.source.c1 + 1;
   const cacheId = nextCacheId(wb);
   // Unique part numbers (cache def + records share n; table uses m).
@@ -200,6 +200,60 @@ export function writeXlsxPivotParts(
   addWorkbookPivotCache(wb, cacheId, wbRelId);
   // Track the cache so a later edit to the source range re-flags refreshOnLoad (already set here).
   (wb.pivotCaches ??= []).push({ part: cacheDefPath, sourceSheet: sourceSheetName, source: { ...spec.source }, refreshFlagged: true });
+  return { part: tablePath, cachePart: cacheDefPath };
+}
+
+/** Remove a pivot's parts and package wiring (its pivotTable + backing cache, rels, content-type
+    overrides, the host worksheet rel, and the workbook <pivotCache>). Used when editing/deleting an
+    authored pivot. The output cells are cleared by the caller. */
+export function deleteXlsxPivotParts(wb: Workbook, destSheet: Sheet, part: string, cachePart: string): void {
+  const rm = (p: string) => { delete wb.files[p]; };
+  rm(part); rm(part.replace(/([^/]+)$/, "_rels/$1.rels"));
+  removeContentType(wb, part);
+  // Host worksheet rel -> this pivotTable.
+  const wsRels = destSheet.path!.replace(/([^/]+)$/, "_rels/$1.rels");
+  removeRelByTarget(wb, wsRels, /pivotTable/i);
+  // Drop the cache only if no other pivotTable's rels still reference it (parts already removed).
+  const cacheFile = cachePart.replace(/.*\//, ""); // pivotCacheDefinitionN.xml
+  const otherUsesCache = Object.keys(wb.files).some((k) => /xl\/pivotTables\/_rels\/pivotTable\d+\.xml\.rels$/.test(k) && new TextDecoder().decode(wb.files[k]!).includes(cacheFile));
+  if (!otherUsesCache) {
+    rm(cachePart); rm(cachePart.replace(/([^/]+)$/, "_rels/$1.rels"));
+    const recs = cachePart.replace(/pivotCacheDefinition/, "pivotCacheRecords");
+    rm(recs);
+    removeContentType(wb, cachePart); removeContentType(wb, recs);
+    removeWorkbookPivotCache(wb, cachePart);
+    if (wb.pivotCaches) wb.pivotCaches = wb.pivotCaches.filter((c) => c.part !== cachePart);
+  }
+}
+
+function removeContentType(wb: Workbook, partPath: string): void {
+  const doc = parseXmlOpt(wb.files["[Content_Types].xml"]);
+  if (!doc) return;
+  const ov = Array.from(doc.getElementsByTagName("Override")).find((o) => o.getAttribute("PartName") === `/${partPath}`);
+  if (ov) { ov.parentNode?.removeChild(ov); wb.files["[Content_Types].xml"] = serializeXml(doc); }
+}
+
+function removeRelByTarget(wb: Workbook, relsPath: string, targetRe: RegExp): void {
+  const doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
+  if (!doc) return;
+  let changed = false;
+  for (const r of Array.from(doc.getElementsByTagName("Relationship"))) if (targetRe.test(r.getAttribute("Target") ?? "")) { r.parentNode?.removeChild(r); changed = true; }
+  if (changed) wb.files[relsPath] = serializeXml(doc);
+}
+
+function removeWorkbookPivotCache(wb: Workbook, cachePart: string): void {
+  const relsDoc = parseXmlOpt(wb.files["xl/_rels/workbook.xml.rels"]);
+  const target = cachePart.replace(/^xl\//, "");
+  let relId: string | undefined;
+  if (relsDoc) {
+    const rel = Array.from(relsDoc.getElementsByTagName("Relationship")).find((r) => (r.getAttribute("Target") ?? "").replace(/^\.\//, "") === target || (r.getAttribute("Target") ?? "") === cachePart);
+    if (rel) { relId = rel.getAttribute("Id") ?? undefined; rel.parentNode?.removeChild(rel); wb.files["xl/_rels/workbook.xml.rels"] = serializeXml(relsDoc); }
+  }
+  const wbDoc = parseXmlOpt(wb.files["xl/workbook.xml"]);
+  if (wbDoc && relId) {
+    const pc = Array.from(wbDoc.getElementsByTagName("pivotCache")).find((p) => (p.getAttributeNS(OREL, "id") ?? p.getAttribute("r:id")) === relId);
+    if (pc) { const parent = pc.parentNode as Element | null; pc.parentNode?.removeChild(pc); if (parent && parent.localName === "pivotCaches" && !parent.children.length) parent.parentNode?.removeChild(parent); wb.files["xl/workbook.xml"] = serializeXml(wbDoc); }
+  }
 }
 
 function rangeRef(r: { r1: number; c1: number; r2: number; c2: number }): string {

@@ -431,6 +431,7 @@ function readOdsPivots(wb: Workbook): void {
     const src = Array.from(pt.children).find((c) => c.localName === "source-cell-range");
     const srcR = src ? odfRange(attrByLocal(src, "cell-range-address")) : null;
     if (srcR) { info.sourceSheet = srcR.sheet; info.sourceRange = { r1: srcR.r1, c1: srcR.c1, r2: srcR.r2, c2: srcR.c2 }; }
+    info.hostSheet = host.name;
     for (const f of Array.from(pt.children)) {
       if (f.localName !== "data-pilot-field") continue;
       const name = attrByLocal(f, "source-field-name");

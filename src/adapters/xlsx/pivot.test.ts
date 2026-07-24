@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readWorkbook } from "../../index";
 import { flagXlsxPivotRefresh } from "./pivot-read";
-import { writeXlsxPivotParts } from "./pivot-write";
+import { writeXlsxPivotParts, deleteXlsxPivotParts } from "./pivot-write";
 import { computePivot, type PivotSpec } from "../../core/pivot";
 import { setCellInput, writeWorkbook } from "../../core/workbook";
 import { addSheet } from "../../core/sheet-ops";
@@ -78,6 +78,29 @@ describe("xlsx pivot tables", () => {
     expect(host.pivotTables?.[0]?.colFields).toEqual(["Product"]);
     // Materialised grand total (D4 = 350) is present in the output cells.
     expect(getCell(host, 4, 4)?.value).toBe("350");
+  });
+
+  it("deletes an authored pivot cleanly (parts, cache, wiring all removed)", async () => {
+    const spec: PivotSpec = { source: { r1: 1, c1: 1, r2: 7, c2: 3 }, rows: [0], cols: [1], values: [{ field: 2, func: "sum" }] };
+    const wb = readWorkbook(await realBytes("pivot.xlsx"));
+    const data = wb.sheets.find((s) => s.name === "Data")!;
+    const computed = computePivot(data, spec);
+    const dest = wb.sheets[addSheet(wb, "Out")]!;
+    const { part, cachePart } = writeXlsxPivotParts(wb, dest, { row: 1, col: 1 }, "Data", spec, computed);
+    const cachesBefore = wb.pivotCaches!.length;
+    expect(wb.files[part]).toBeTruthy();
+    deleteXlsxPivotParts(wb, dest, part, cachePart);
+    expect(wb.files[part]).toBeUndefined();
+    expect(wb.files[cachePart]).toBeUndefined();
+    expect(wb.files[cachePart.replace(/Definition/, "Records")]).toBeUndefined();
+    expect(wb.pivotCaches!.length).toBe(cachesBefore - 1);
+    // The original fixture's own pivot (on the "Pivot" sheet) is untouched.
+    const ct = strFromU8(wb.files["[Content_Types].xml"]!);
+    expect(ct).not.toContain(`/${part}`);
+    // Re-reading the workbook succeeds and finds only the original pivot.
+    const back = readWorkbook(writeWorkbook(wb));
+    const pivotHosts = back.sheets.filter((s) => s.pivotTables?.length);
+    expect(pivotHosts.length).toBe(1);
   });
 
   it("preserves the pivot parts verbatim through a read/write round-trip", async () => {

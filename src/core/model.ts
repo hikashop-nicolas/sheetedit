@@ -80,6 +80,14 @@ export interface PivotTableInfo {
   colFields: string[];
   pageFields: string[];
   dataFields: PivotDataField[];
+  /** Runtime (set when authored in-app): the spec that built this pivot, so it can be edited and
+      refreshed. Absent for pivots read from a file. */
+  authorSpec?: import("./pivot").PivotSpec;
+  /** xlsx part paths for this pivot (its pivotTable + backing cache definition), for edit/delete. */
+  part?: string;
+  cachePart?: string;
+  /** Host sheet name (where the output lives), so edit/refresh can find it. */
+  hostSheet?: string;
 }
 
 /** xlsx-only: a pivot cache backed by a worksheet range, tracked so a source-data edit can set

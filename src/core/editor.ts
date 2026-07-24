@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
+import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
 import { computePivot, pivotColumnItems, pivotValueLabel, type PivotFunc, type PivotSpec } from "./pivot";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
@@ -27,7 +27,7 @@ import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup, writeXlsxPivotParts } from "../adapters/xlsx";
+import { deleteXlsxPivotParts, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup, writeXlsxPivotParts } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1622,6 +1622,7 @@ export function createSheetEditor(
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
     label: (name) => t("pivotTag", { name }),
+    onTag: (pivot, x, y) => openPivotMenu(pivot, x, y),
   });
   const chartUi = chartsOn
     ? setupChartUi({
@@ -2569,33 +2570,109 @@ export function createSheetEditor(
     });
   };
 
-  // Build a pivot from a source range onto a fresh sheet: compute it, place the output cells, emit
-  // the format-specific definition, model it for the overlay, and switch to it.
-  const createPivot = (spec: PivotSpec, sourceSheetName: string): void => {
-    if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
+  // Place a matrix of output cells at an anchor; clear the given rect first (blanks stale cells).
+  const clearRegion = (sheet: Sheet, rect?: { r1: number; c1: number; r2: number; c2: number }): void => {
+    if (!rect) return;
+    for (let r = rect.r1; r <= rect.r2; r++) for (let c = rect.c1; c <= rect.c2; c++) if (getCell(sheet, r, c)) setCellInput(sheet, r, c, "");
+  };
+  const placeMatrix = (sheet: Sheet, matrix: import("./pivot").PivotOutCell[][], anchor: { r: number; c: number }): void => {
+    for (let r = 0; r < matrix.length; r++) for (let c = 0; c < matrix[r]!.length; c++) { const cell = matrix[r]![c]!; if (cell.value !== "") setCellInput(sheet, anchor.r + r, anchor.c + c, String(cell.value)); }
+  };
+  // Emit a pivot (compute + place + write the format definition) onto dest at anchor, returning the
+  // model to store on the sheet. Shared by create, edit and refresh.
+  const buildPivotOn = (spec: PivotSpec, sourceSheetName: string, dest: Sheet, anchor: { r: number; c: number }): import("./model").PivotTableInfo => {
     const srcSheet = wb.sheets.find((s) => s.name === sourceSheetName) ?? wb.sheets[active]!;
     const computed = computePivot(srcSheet, spec);
-    const destIdx = addSheet(wb, "Pivot");
-    const dest = wb.sheets[destIdx]!;
-    for (let r = 0; r < computed.matrix.length; r++)
-      for (let c = 0; c < computed.matrix[r]!.length; c++) {
-        const cell = computed.matrix[r]![c]!;
-        if (cell.value !== "") setCellInput(dest, r + 1, c + 1, String(cell.value));
-      }
-    if (wb.kind === "xlsx") writeXlsxPivotParts(wb, dest, { row: 1, col: 1 }, sourceSheetName, spec, computed);
+    placeMatrix(dest, computed.matrix, anchor);
+    let part: string | undefined, cachePart: string | undefined;
+    if (wb.kind === "xlsx") ({ part, cachePart } = writeXlsxPivotParts(wb, dest, { row: anchor.r, col: anchor.c }, sourceSheetName, spec, computed));
     else { dest.odsDirty = true; writeOdsPivotDef(wb, dest.name, sourceSheetName, spec, computed); }
-    dest.pivotTables = [{
+    return {
       name: "PivotTable",
       sourceSheet: sourceSheetName,
       sourceRange: { ...spec.source },
-      targetRange: { r1: 1, c1: 1, r2: computed.height, c2: computed.width },
+      targetRange: { r1: anchor.r, c1: anchor.c, r2: anchor.r + computed.height - 1, c2: anchor.c + computed.width - 1 },
       rowFields: spec.rows.map((c) => computed.fields[c]!.name),
       colFields: spec.cols.map((c) => computed.fields[c]!.name),
       pageFields: (spec.pages ?? []).map((p) => computed.fields[p.field]!.name),
       dataFields: spec.values.map((v) => ({ name: pivotValueLabel(v.func, computed.fields[v.field]!.name), func: v.func })),
-    }];
+      authorSpec: spec, part, cachePart, hostSheet: dest.name,
+    };
+  };
+  // Create a pivot on a fresh sheet and switch to it.
+  const createPivot = (spec: PivotSpec, sourceSheetName: string): void => {
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
+    const destIdx = addSheet(wb, "Pivot");
+    const dest = wb.sheets[destIdx]!;
+    dest.pivotTables = [buildPivotOn(spec, sourceSheetName, dest, { r: 1, c: 1 })];
     switchSheet(destIdx);
     mark();
+  };
+  // Recompute an authored pivot's output from its source (definition unchanged; the file's cache
+  // carries refreshOnLoad so the desktop apps rebuild too).
+  const refreshPivot = (host: Sheet, info: import("./model").PivotTableInfo): void => {
+    if (!info.authorSpec || !info.sourceSheet) return;
+    const srcSheet = wb.sheets.find((s) => s.name === info.sourceSheet);
+    if (!srcSheet) return;
+    const computed = computePivot(srcSheet, info.authorSpec);
+    const anchor = { r: info.targetRange?.r1 ?? 1, c: info.targetRange?.c1 ?? 1 };
+    clearRegion(host, info.targetRange);
+    placeMatrix(host, computed.matrix, anchor);
+    if (wb.kind === "ods") host.odsDirty = true;
+    info.targetRange = { r1: anchor.r, c1: anchor.c, r2: anchor.r + computed.height - 1, c2: anchor.c + computed.width - 1 };
+    mark(); renderGrid(); pivotLayer.refresh();
+  };
+  // Rewrite an authored pivot in place with a new spec: clear the old output, drop the old
+  // definition parts, and emit the new pivot at the same anchor on the same sheet.
+  const applyPivotEdit = (host: Sheet, info: import("./model").PivotTableInfo, spec: PivotSpec): void => {
+    const anchor = { r: info.targetRange?.r1 ?? 1, c: info.targetRange?.c1 ?? 1 };
+    clearRegion(host, info.targetRange);
+    if (wb.kind === "xlsx" && info.part && info.cachePart) deleteXlsxPivotParts(wb, host, info.part, info.cachePart);
+    else if (wb.kind === "ods") deleteOdsPivotDef(wb, host.name);
+    const fresh = buildPivotOn(spec, info.sourceSheet ?? host.name, host, anchor);
+    const idx = host.pivotTables?.indexOf(info) ?? -1;
+    if (host.pivotTables && idx >= 0) host.pivotTables[idx] = fresh; else (host.pivotTables ??= []).push(fresh);
+    mark(); renderGrid(); pivotLayer.refresh();
+  };
+  // Reopen the insert dialog for an authored pivot, prefilled from its spec; apply rewrites in place.
+  const editPivot = (host: Sheet, info: import("./model").PivotTableInfo): void => {
+    const spec = info.authorSpec;
+    if (!spec || !info.sourceSheet) return;
+    const srcSheet = wb.sheets.find((s) => s.name === info.sourceSheet);
+    if (!srcSheet) return;
+    const width = spec.source.c2 - spec.source.c1 + 1;
+    const roles = Array.from({ length: width }, () => "unused");
+    const funcs = Array.from({ length: width }, () => "sum");
+    const pageItems: (number | null)[] = Array.from({ length: width }, () => null);
+    for (const i of spec.rows) roles[i] = "rows";
+    for (const i of spec.cols) roles[i] = "columns";
+    for (const v of spec.values) { roles[v.field] = "values"; funcs[v.field] = v.func; }
+    for (const p of spec.pages ?? []) { roles[p.field] = "page"; pageItems[p.field] = p.item; }
+    openPivotDialog({ sheet: srcSheet, range: { ...spec.source }, initial: { roles, funcs, pageItems, subtotals: !!spec.subtotals }, onApply: (ns) => applyPivotEdit(host, info, ns) });
+  };
+  // A small action menu shown when a pivot's overlay tag is clicked: refresh or edit an authored
+  // pivot (pivots read from a file are read-only in place; open in Excel/LibreOffice to change them).
+  let pivotMenu: HTMLElement | null = null;
+  const closePivotMenu = (): void => { pivotMenu?.remove(); pivotMenu = null; };
+  const openPivotMenu = (pivot: import("./model").PivotTableInfo, x: number, y: number): void => {
+    closePivotMenu();
+    const host = wb.sheets[active]!;
+    const menu = document.createElement("div");
+    menu.className = "sheetedit-pivot-menu";
+    menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:80;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:4px;font:13px system-ui,sans-serif;min-width:150px`;
+    const item = (label: string, onClick: (() => void) | null): HTMLElement => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText = `display:block;width:100%;text-align:left;padding:6px 10px;border:0;border-radius:5px;background:none;color:inherit;font:inherit;cursor:${onClick ? "pointer" : "default"};${onClick ? "" : "opacity:.6"}`;
+      if (onClick) { b.addEventListener("mouseenter", () => (b.style.background = "var(--sheetedit-btn,#3a3f47)")); b.addEventListener("mouseleave", () => (b.style.background = "none")); b.addEventListener("click", () => { closePivotMenu(); onClick(); }); }
+      return b;
+    };
+    if (pivot.authorSpec) {
+      menu.append(item(t("pivotRefresh"), () => refreshPivot(host, pivot)), item(t("pivotEditAction"), () => editPivot(host, pivot)));
+    } else menu.append(item(t("pivotReadOnly"), null));
+    document.body.appendChild(menu);
+    pivotMenu = menu;
+    setTimeout(() => document.addEventListener("pointerdown", function h(e) { if (!menu.contains(e.target as Node)) { closePivotMenu(); document.removeEventListener("pointerdown", h, true); } }, true), 0);
   };
 
   // Read the dialog state (per-column role, value function, page selection, subtotals) into a spec.
@@ -2613,22 +2690,23 @@ export function createSheetEditor(
   // Insert-pivot dialog: a two-pane modal. Left: assign each source column (from the selection's
   // header row) to Rows / Columns / Values (with a function). Right: a live preview of the resulting
   // pivot that updates as you change roles. Needs at least one Rows field and one Values field.
-  const openPivotDialog = (): void => {
+  const openPivotDialog = (opts?: { sheet: Sheet; range: { r1: number; c1: number; r2: number; c2: number }; initial: { roles: string[]; funcs: string[]; pageItems: (number | null)[]; subtotals: boolean }; onApply: (spec: PivotSpec) => void }): void => {
     if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
-    const sheet = wb.sheets[active]!;
+    const sheet = opts?.sheet ?? wb.sheets[active]!;
     const s = getSelRect();
-    const range = s.r2 > s.r1 || s.c2 > s.c1 ? s : currentRegion(sheet, s.r1, s.c1);
+    const range = opts?.range ?? (s.r2 > s.r1 || s.c2 > s.c1 ? s : currentRegion(sheet, s.r1, s.c1));
     const width = range.c2 - range.c1 + 1;
     const headers: string[] = [];
     for (let c = 0; c < width; c++) { const cell = getCell(sheet, range.r1, range.c1 + c); headers.push((cell?.value ?? "").trim() || `Column ${c + 1}`); }
     const headerBlank: boolean[] = [];
     for (let c = 0; c < width; c++) headerBlank.push((getCell(sheet, range.r1, range.c1 + c)?.value ?? "").trim() === "");
     // A usable data region needs a header row plus at least one data row and a real header somewhere.
-    const hasData = range.r2 > range.r1 && headerBlank.some((b) => !b);
-    const roles: string[] = headers.map((_, i) => (hasData ? (i === 0 ? "rows" : i === width - 1 ? "values" : "unused") : "unused"));
-    const funcs: string[] = headers.map(() => "sum");
-    const pageItems: (number | null)[] = headers.map(() => null);
-    let subtotals = false;
+    const hasData = !!opts || (range.r2 > range.r1 && headerBlank.some((b) => !b));
+    const roles: string[] = opts?.initial.roles.slice() ?? headers.map((_, i) => (hasData ? (i === 0 ? "rows" : i === width - 1 ? "values" : "unused") : "unused"));
+    const funcs: string[] = opts?.initial.funcs.slice() ?? headers.map(() => "sum");
+    const pageItems: (number | null)[] = opts?.initial.pageItems.slice() ?? headers.map(() => null);
+    let subtotals = opts?.initial.subtotals ?? false;
+    const onApply = opts?.onApply ?? ((spec: PivotSpec) => createPivot(spec, sheet.name));
     // Distinct values per column, for the page-filter pickers (aligned to the engine's item order).
     const colItems = headers.map((_, i) => (hasData ? pivotColumnItems(sheet, range, i) : []));
 
@@ -2706,7 +2784,7 @@ export function createSheetEditor(
     // Subtotals toggle (meaningful once there are nested row/column fields).
     if (hasData) {
       const stRow = document.createElement("label"); stRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:6px;color:var(--sheetedit-muted,#aab2bf)";
-      const cb = document.createElement("input"); cb.type = "checkbox"; cb.dataset.field = "subtotals";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.dataset.field = "subtotals"; cb.checked = subtotals;
       cb.addEventListener("change", () => { subtotals = cb.checked; renderPreview(); });
       const sp = document.createElement("span"); sp.textContent = t("pivotSubtotals");
       stRow.append(cb, sp); left.appendChild(stRow);
@@ -2719,7 +2797,7 @@ export function createSheetEditor(
     insertBtn = document.createElement("button"); insertBtn.textContent = t("pivotCreate"); insertBtn.dataset.role = "ok";
     insertBtn.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-accent,#6e7bff);border-radius:6px;cursor:pointer;background:var(--sheetedit-accent,#6e7bff);color:#fff";
     cancel.addEventListener("click", close);
-    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals); if (!spec.rows.length || !spec.values.length) return; close(); createPivot(spec, sheet.name); });
+    insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, pageItems, subtotals); if (!spec.rows.length || !spec.values.length) return; close(); onApply(spec); });
     actions.append(cancel, insertBtn); card.appendChild(actions);
     modal.appendChild(card); wrap.appendChild(modal);
     modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
@@ -3119,6 +3197,7 @@ export function createSheetEditor(
       chartLayer.teardown();
       imageLayer.teardown();
       pivotLayer.teardown();
+      closePivotMenu();
       chartUi.teardown();
       closeLineMenu();
       borderPop?.remove();

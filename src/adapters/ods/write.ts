@@ -326,6 +326,21 @@ export function writeOdsPivotDef(
   container.appendChild(pt);
 }
 
+/** Remove the data-pilot-table(s) whose output lands on the named sheet (used when editing/deleting
+    an authored pilot). The output cells are cleared by the caller. */
+export function deleteOdsPivotDef(wb: Workbook, hostSheetName: string): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  for (const pt of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "data-pilot-table")) {
+    const target = pt.getAttribute("table:target-range-address") ?? "";
+    if (target.startsWith(`${hostSheetName}.`)) {
+      const parent = pt.parentNode as Element | null;
+      pt.parentNode?.removeChild(pt);
+      if (parent && parent.localName === "data-pilot-tables" && !parent.children.length) parent.parentNode?.removeChild(parent);
+    }
+  }
+}
+
 // An A1 range -> an ODF conditional-format target address "Sheet1.A1:Sheet1.A5".
 function a1RangeToOdfTarget(sheetName: string, g: { r1: number; c1: number; r2: number; c2: number }): string {
   const a1 = (r: number, c: number): string => {

@@ -12,6 +12,8 @@ export interface PivotLayerDeps {
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
   label: (name: string) => string; // localised tooltip/label text
+  /** Clicking a pivot's tag opens its actions (refresh / edit) at the given viewport point. */
+  onTag?: (pivot: NonNullable<Sheet["pivotTables"]>[number], x: number, y: number) => void;
 }
 
 const STYLE_ID = "sheetedit-pivot-style";
@@ -80,6 +82,7 @@ export function setupPivotLayer(deps: PivotLayerDeps): { refresh(): void; teardo
       if (p.dataFields.length) parts.push(`Values: ${p.dataFields.map((d) => d.name).join(", ")}`);
       if (p.sourceSheet) parts.push(`Source: ${p.sourceSheet}`);
       tag.title = `${deps.label(p.name)}\n${parts.join("\n")}`;
+      if (deps.onTag) { tag.style.cursor = "pointer"; tag.addEventListener("click", (e) => { e.stopPropagation(); deps.onTag!(p, (e as MouseEvent).clientX, (e as MouseEvent).clientY); }); }
       box.appendChild(tag);
       inner.appendChild(box);
     }

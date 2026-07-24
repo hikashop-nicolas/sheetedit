@@ -129,6 +129,9 @@ export function readXlsxPivots(wb: Workbook, files: Record<string, Uint8Array>):
       const tr = parseRange(loc?.getAttribute("ref") ?? null);
       if (tr) info.targetRange = tr;
       if (cache?.sourceSheet && cache.source) { info.sourceSheet = cache.sourceSheet; info.sourceRange = cache.source; }
+      info.part = tablePart;
+      if (cache?.part) info.cachePart = cache.part;
+      info.hostSheet = sheet.name;
       pivots.push(info);
       if (cache?.sourceSheet && cache.source && cache.part && !seenCache.has(cache.part)) {
         seenCache.add(cache.part);

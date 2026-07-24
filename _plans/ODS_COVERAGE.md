@@ -68,7 +68,8 @@ Pivot tables are detected, modelled, surfaced, preserved and (v1) authorable, in
 - **Authoring**: the Insert-pivot dialog (source range from the selection, assign each column to
   Rows / Columns / Values(+function) / Report Filter, optional subtotals, live preview) builds the
   pivot on a new sheet. Supports any number of nested row and column fields, one or more value
-  fields (sum / count / average / min / max), per-group subtotals, and report/page filters. It emits
+  fields (sum / count / average / min / max), per-group subtotals, and report/page filters. An
+  authored pivot can be refreshed or edited in place from its overlay tag menu. It emits
   the native definition
   (xlsx `pivotCache`+`pivotTable`, ODS `data-pilot-table`) with `refreshOnLoad` so Excel/LibreOffice
   rebuild from the source on open, plus the materialised output cells. Verified end-to-end through a
