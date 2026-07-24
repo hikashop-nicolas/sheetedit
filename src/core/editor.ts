@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2538,9 +2538,11 @@ export function createSheetEditor(
       { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce" },
     ], (v) => {
       const kind = String(v.kind), color = String(v.color);
-      if (kind === "colorScale") setXlsxCondFormat(wb, sheet, ranges, { kind: "colorScale", colors: ["#f8696b", "#ffeb84", "#63be7b"] });
-      else if (kind === "dataBar") setXlsxCondFormat(wb, sheet, ranges, { kind: "dataBar", color: color || "#638ec6" });
-      else setXlsxCondFormat(wb, sheet, ranges, { kind: "cellIs", operator: String(v.operator), value: String(v.value), fill: color });
+      const spec = kind === "colorScale" ? { kind: "colorScale" as const, colors: ["#f8696b", "#ffeb84", "#63be7b"] }
+        : kind === "dataBar" ? { kind: "dataBar" as const, color: color || "#638ec6" }
+        : { kind: "cellIs" as const, operator: String(v.operator), value: String(v.value), fill: color };
+      if (wb.kind === "ods") setOdsCondFormat(wb, sheet, ranges, spec);
+      else setXlsxCondFormat(wb, sheet, ranges, spec);
       mark(); renderGrid();
     });
   };

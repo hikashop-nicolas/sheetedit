@@ -7,11 +7,13 @@ describe("workbook capabilities", () => {
     expect(Object.values(c).every(Boolean)).toBe(true);
   });
 
-  it("ods advertises charts, hyperlinks and comments, but not the Excel-only features", () => {
+  it("ods advertises the ODF-native features, but not the Excel-only ones", () => {
     const c = capabilitiesFor("ods");
     expect(c.charts).toBe(true);
     expect(c.hyperlinks).toBe(true);
     expect(c.comments).toBe(true);
+    expect(c.dataValidation).toBe(true);
+    expect(c.conditionalFormat).toBe(true);
     // No Excel-style sparklines or the x14 autofilter model.
     expect(c.sparklines).toBe(false);
     expect(c.autofilter).toBe(false);

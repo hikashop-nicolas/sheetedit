@@ -1,5 +1,5 @@
-import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../../core/model";
-import { formatNumber, key, noteExtent, numToStr, parseXml, parseXmlOpt } from "../../core/model";
+import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, Workbook } from "../../core/model";
+import { formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
 import { readOdsCharts } from "./chart-read";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
@@ -174,6 +174,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   }
   if (definedNames.size) wb.definedNames = definedNames;
   const validationDefs = parseOdsValidations(contentDoc);
+  const condFormats = parseOdsCondFormats(contentDoc, styles);
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
@@ -181,6 +182,9 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     if (fz) sheet.freeze = fz;
     readOdsTable(sheet, table, styles);
     buildOdsValidations(sheet, validationDefs);
+    // Conditional formats whose target sheet is this one (empty sheet name = single-sheet target).
+    const cfs = condFormats.get(name) ?? (wb.sheets.length === 0 ? condFormats.get("") : undefined);
+    if (cfs?.length) sheet.condFormats = cfs;
     wb.sheets.push(sheet);
   }
   readOdsCharts(wb, files);
@@ -224,6 +228,81 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
     out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank });
   }
   if (out.length) sheet.validations = out;
+}
+
+// --- conditional formatting (LibreOffice calcext extension) ----------------
+const attrByLocal = (el: Element, local: string): string | null => {
+  for (const a of Array.from(el.attributes)) if (a.localName === local) return a.value;
+  return null;
+};
+const kidsByLocal = (el: Element, local: string): Element[] => Array.from(el.children).filter((c) => c.localName === local);
+
+// An ODF value expression on a condition ("&gt;5", "between(1;10)", "=5") -> operator + operands.
+function odsCfCondition(value: string): { operator: string; formulas: string[] } | null {
+  const v = value.trim();
+  const between = /^between\((.+);(.+)\)$/i.exec(v);
+  if (between) return { operator: "between", formulas: [between[1]!.trim(), between[2]!.trim()] };
+  const notBetween = /^not-between\((.+);(.+)\)$/i.exec(v);
+  if (notBetween) return { operator: "notBetween", formulas: [notBetween[1]!.trim(), notBetween[2]!.trim()] };
+  const m = /^(<=|>=|!=|<>|<|>|=)\s*(.+)$/.exec(v);
+  if (!m) return null;
+  const op = { "<": "lessThan", ">": "greaterThan", "<=": "lessThanOrEqual", ">=": "greaterThanOrEqual", "=": "equal", "!=": "notEqual", "<>": "notEqual" }[m[1]!]!;
+  return { operator: op, formulas: [m[2]!.trim()] };
+}
+
+// Parse <calcext:conditional-formats> into per-sheet CondFormat lists, resolving a condition's
+// apply-style-name to a dxf via the cell-style map, and reading colour scales / data bars / icons.
+function parseOdsCondFormats(doc: Document, styles: OdsStyles): Map<string, CondFormat[]> {
+  const bySheet = new Map<string, CondFormat[]>();
+  // Map calcext threshold types onto the ones the renderer's stopValue understands.
+  const cfvoType: Record<string, string> = { minimum: "min", maximum: "max", number: "num", value: "num", "auto-minimum": "min", "auto-maximum": "max" };
+  const cfvo = (e: Element): { type: string; val?: number } => {
+    const type = attrByLocal(e, "type") ?? "value";
+    const raw = attrByLocal(e, "value");
+    const n = raw != null ? Number(raw) : undefined;
+    return { type: cfvoType[type] ?? type, val: Number.isFinite(n) ? n : undefined };
+  };
+  const colorOf = (e: Element): string => attrByLocal(e, "color") ?? "#ffffff";
+  for (const cf of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "conditional-format")) {
+    const target = attrByLocal(cf, "target-range-address");
+    if (!target) continue;
+    // "Sheet1.A1:Sheet1.A5 Sheet1.C1" -> per-sheet rects.
+    const perSheet = new Map<string, { r1: number; c1: number; r2: number; c2: number }[]>();
+    for (const addr of target.split(/\s+/)) {
+      const a1 = odfAddrToA1(addr.replace(/^\[/, "").replace(/\]$/, ""));
+      const bang = a1.indexOf("!");
+      const sheetName = bang >= 0 ? a1.slice(0, bang) : "";
+      const body = (bang >= 0 ? a1.slice(bang + 1) : a1).replace(/\$/g, "");
+      const [a, b] = body.split(":");
+      const p1 = parseA1Ref(a ?? ""); const p2 = b ? parseA1Ref(b) : p1;
+      if (!p1 || !p2) continue;
+      (perSheet.get(sheetName) ?? perSheet.set(sheetName, []).get(sheetName)!).push({ r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) });
+    }
+    const rules: CondFormat["rules"] = [];
+    let priority = 1;
+    for (const child of Array.from(cf.children)) {
+      const l = child.localName;
+      if (l === "condition") {
+        const parsed = odsCfCondition(attrByLocal(child, "value") ?? "");
+        const styleName = attrByLocal(child, "apply-style-name") ?? "";
+        const cs = styles.cell.get(styleName);
+        if (parsed && cs) rules.push({ type: "cellIs", priority: priority++, operator: parsed.operator, formulas: parsed.formulas, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
+      } else if (l === "color-scale") {
+        const entries = kidsByLocal(child, "color-scale-entry");
+        rules.push({ type: "colorScale", priority: priority++, colorScale: { cfvo: entries.map(cfvo), colors: entries.map(colorOf) } });
+      } else if (l === "data-bar") {
+        const entries = kidsByLocal(child, "formatting-entry");
+        rules.push({ type: "dataBar", priority: priority++, dataBar: { color: attrByLocal(child, "positive-color") ?? "#638ec6", min: entries[0] ? cfvo(entries[0]) : { type: "min" }, max: entries[entries.length - 1] ? cfvo(entries[entries.length - 1]!) : { type: "max" } } });
+      } else if (l === "icon-set") {
+        const entries = kidsByLocal(child, "formatting-entry");
+        rules.push({ type: "iconSet", priority: priority++, iconSet: { set: attrByLocal(child, "icon-set-type") ?? "3TrafficLights1", cfvo: entries.map((e) => ({ ...cfvo(e), gte: true })) } });
+      }
+    }
+    if (!rules.length) continue;
+    for (const [sheetName, ranges] of perSheet)
+      (bySheet.get(sheetName) ?? bySheet.set(sheetName, []).get(sheetName)!).push({ ranges, rules });
+  }
+  return bySheet;
 }
 
 export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {

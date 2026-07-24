@@ -179,6 +179,79 @@ export function setOdsDataValidation(
       for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.odsValidationName = name; cell.edited = true; }
 }
 
+// An A1 range -> an ODF conditional-format target address "Sheet1.A1:Sheet1.A5".
+function a1RangeToOdfTarget(sheetName: string, g: { r1: number; c1: number; r2: number; c2: number }): string {
+  const a1 = (r: number, c: number): string => {
+    let s = "", n = c;
+    while (n > 0) { s = String.fromCharCode(65 + ((n - 1) % 26)) + s; n = Math.floor((n - 1) / 26); }
+    return `${s}${r}`;
+  };
+  return `${sheetName}.${a1(g.r1, g.c1)}:${sheetName}.${a1(g.r2, g.c2)}`;
+}
+
+type OdsCfSpec =
+  | { kind: "cellIs"; operator: string; value: string; fill: string }
+  | { kind: "colorScale"; colors: string[] }
+  | { kind: "dataBar"; color: string };
+
+/** Add or (spec === null) remove a conditional format over the given ranges. */
+export function setOdsCondFormat(
+  wb: Workbook,
+  sheet: Sheet,
+  ranges: { r1: number; c1: number; r2: number; c2: number }[],
+  spec: OdsCfSpec | null,
+): void {
+  const doc = wb.contentDoc;
+  const target = ranges.map((g) => a1RangeToOdfTarget(sheet.name, g)).join(" ");
+  const sameRanges = (cf: NonNullable<Sheet["condFormats"]>[number]): boolean => JSON.stringify(cf.ranges) === JSON.stringify(ranges);
+  sheet.condFormats = (sheet.condFormats ?? []).filter((cf) => !sameRanges(cf));
+  if (doc) {
+    const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
+    for (const cf of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "conditional-format"))
+      if ((cf.getAttribute("calcext:target-range-address") ?? cf.getAttribute("target-range-address")) === target) cf.parentNode?.removeChild(cf);
+    if (spec && spreadsheet) {
+      const priority = 1 + Math.max(0, ...sheet.condFormats.flatMap((cf) => cf.rules.map((r) => r.priority)));
+      const rule: import("../../core/model").CfRule = { type: spec.kind, priority };
+      let container = Array.from(spreadsheet.children).find((e) => e.localName === "conditional-formats");
+      if (!container) { container = doc.createElementNS(ODS.calcext, "calcext:conditional-formats"); spreadsheet.appendChild(container); }
+      const cfEl = doc.createElementNS(ODS.calcext, "calcext:conditional-format");
+      cfEl.setAttributeNS(ODS.calcext, "calcext:target-range-address", target);
+      if (spec.kind === "cellIs") {
+        const autoStyles = ensureOdsAutoStyles(doc);
+        const st = doc.createElementNS(ODS.style, "style:style");
+        const cp = doc.createElementNS(ODS.style, "style:table-cell-properties");
+        cp.setAttributeNS(ODS.fo, "fo:background-color", spec.fill);
+        st.appendChild(cp);
+        const styleName = internOdsStyle(doc, autoStyles, "table-cell", "ceCF", st);
+        const opStr: Record<string, string> = { greaterThan: ">", lessThan: "<", equal: "=", notEqual: "!=", greaterThanOrEqual: ">=", lessThanOrEqual: "<=" };
+        const valExpr = spec.operator === "between" ? `between(${spec.value})` : `${opStr[spec.operator] ?? ">"}${spec.value}`;
+        const cond = doc.createElementNS(ODS.calcext, "calcext:condition");
+        cond.setAttributeNS(ODS.calcext, "calcext:apply-style-name", styleName);
+        cond.setAttributeNS(ODS.calcext, "calcext:value", valExpr);
+        cond.setAttributeNS(ODS.calcext, "calcext:base-cell-address", a1RangeToOdfTarget(sheet.name, ranges[0]!).split(":")[0]!);
+        cfEl.appendChild(cond);
+        rule.operator = spec.operator; rule.formulas = [spec.value]; rule.dxf = { bg: spec.fill };
+      } else if (spec.kind === "colorScale") {
+        const cs = doc.createElementNS(ODS.calcext, "calcext:color-scale");
+        const types = spec.colors.length >= 3 ? ["minimum", "percentile", "maximum"] : ["minimum", "maximum"];
+        types.forEach((ty, i) => { const e = doc.createElementNS(ODS.calcext, "calcext:color-scale-entry"); e.setAttributeNS(ODS.calcext, "calcext:type", ty); if (ty === "percentile") e.setAttributeNS(ODS.calcext, "calcext:value", "50"); e.setAttributeNS(ODS.calcext, "calcext:color", spec.colors[i]!); cs.appendChild(e); });
+        cfEl.appendChild(cs);
+        rule.colorScale = { cfvo: types.map((ty) => ({ type: ty === "minimum" ? "min" : ty === "maximum" ? "max" : "percentile", val: ty === "percentile" ? 50 : undefined })), colors: spec.colors };
+      } else {
+        const db = doc.createElementNS(ODS.calcext, "calcext:data-bar");
+        db.setAttributeNS(ODS.calcext, "calcext:positive-color", spec.color);
+        for (const ty of ["minimum", "maximum"]) { const e = doc.createElementNS(ODS.calcext, "calcext:formatting-entry"); e.setAttributeNS(ODS.calcext, "calcext:type", ty); db.appendChild(e); }
+        cfEl.appendChild(db);
+        rule.dataBar = { color: spec.color, min: { type: "min" }, max: { type: "max" } };
+      }
+      container.appendChild(cfEl);
+      sheet.condFormats.push({ ranges, rules: [rule] });
+    }
+  }
+  if (!sheet.condFormats.length) sheet.condFormats = undefined;
+  sheet.odsDirty = true;
+}
+
 // --- ods style write-back -------------------------------------------------
 
 

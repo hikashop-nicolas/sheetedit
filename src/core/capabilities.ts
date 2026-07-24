@@ -51,7 +51,7 @@ const ODS: WorkbookCapabilities = {
   hyperlinks: true,
   dataValidation: true,
   comments: true,
-  conditionalFormat: false,
+  conditionalFormat: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */
