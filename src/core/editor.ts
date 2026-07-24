@@ -2689,9 +2689,17 @@ export function createSheetEditor(
       if (onClick) { b.addEventListener("mouseenter", () => (b.style.background = "var(--sheetedit-btn,#3a3f47)")); b.addEventListener("mouseleave", () => (b.style.background = "none")); b.addEventListener("click", () => { closePivotMenu(); onClick(); }); }
       return b;
     };
-    if (pivot.authorSpec) {
-      menu.append(item(t("pivotRefresh"), () => refreshPivot(host, pivot)), item(t("pivotEditAction"), () => editPivot(host, pivot)));
-    } else menu.append(item(t("pivotReadOnly"), null));
+    const items: HTMLElement[] = [];
+    if (pivot.authorSpec) items.push(item(t("pivotRefresh"), () => refreshPivot(host, pivot)), item(t("pivotEditAction"), () => editPivot(host, pivot)));
+    // A chart over the pivot's output (updates as the pivot recomputes). Exclude the grand total row
+    // and, when there are column fields, the grand total column, so the totals are not charted.
+    if (chartsOn && pivot.targetRange) items.push(item(t("pivotChart"), () => {
+      const tr = pivot.targetRange!;
+      const gc = pivot.colFields.length > 0 ? 1 : 0;
+      chartUi.openInsert({ r1: tr.r1, c1: tr.c1, r2: Math.max(tr.r1, tr.r2 - 1), c2: Math.max(tr.c1, tr.c2 - gc) });
+    }));
+    if (!items.length) items.push(item(t("pivotReadOnly"), null));
+    menu.append(...items);
     document.body.appendChild(menu);
     pivotMenu = menu;
     setTimeout(() => document.addEventListener("pointerdown", function h(e) { if (!menu.contains(e.target as Node)) { closePivotMenu(); document.removeEventListener("pointerdown", h, true); } }, true), 0);

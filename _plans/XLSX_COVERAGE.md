@@ -54,9 +54,11 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 - No editing of the remaining preserved-only features above (images, shapes, form controls,
   slicers, protection). The now-rendered features (hyperlinks, dropdowns, CF, comments) are
   read/followed, not authored.
-- Pivot tables cover the common structure; not yet: calculated fields/items, "show values as"
-  (% of total / running total), pivot charts, and byte-identical layout to Excel (both apps
-  re-flow the body from the definition on open).
+- Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
+  total), calculated fields, and a pivot chart (over the output) are all supported. Not yet:
+  calculated *items*, and byte-identical layout to Excel (both apps re-flow the body on open).
+  "Show values as" and calculated fields are honoured by Excel and sheetedit's display but ignored
+  by LibreOffice's xlsx pivot rebuild (a LibreOffice limitation).
 - Conditional formatting: icon sets now render (arrows/traffic-lights/symbols/ratings, bucketed by
   the cfvo thresholds); arbitrary expression rules and time-period rules still round-trip only, and
   cellIs operands are numeric literals (cell-ref/formula operands skipped).

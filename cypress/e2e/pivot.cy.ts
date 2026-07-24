@@ -80,4 +80,21 @@ describe("pivot tables", () => {
     cy.get('input[aria-label="B2"]').should("have.value", "140");
     cy.get('input[aria-label="D4"]').should("have.value", "350");
   });
+
+  it("inserts a chart over a pivot's output from its tag menu", () => {
+    open("cypress/fixtures/pivot.xlsx");
+    cy.get('input[aria-label="A1"]').focus();
+    cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
+    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
+    cy.get('.sheetedit-form-modal [data-field="role_1"]').select("columns"); // crosstab (grand col to exclude)
+    cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+    cy.get(".sheetedit-pivottag").click({ force: true });
+    cy.get(".sheetedit-pivot-menu").contains("Insert chart").click();
+    cy.get(".sheetedit-chart-modal", { timeout: TIMEOUT }).should("be.visible");
+    // The data range is the pivot output excluding the grand-total row and column.
+    cy.get(".sheetedit-chart-modal input[type=text]").first().invoke("val").should("match", /A1:C3$/);
+    cy.contains(".sheetedit-chart-foot button", "Insert").click();
+    cy.get(".sheetedit-chartbox", { timeout: TIMEOUT }).should("have.length", 1);
+  });
 });

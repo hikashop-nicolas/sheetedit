@@ -1,8 +1,17 @@
 # Pivot authoring plan
 
-Status: v1 shipped. Builds on the read-only pivot support (detect / outline / preserve / refresh).
-Adds creating a pivot table from a source range, in both xlsx and ODS, verified through LibreOffice
-round-trips. The dialog has a live preview and guards the "no data selected" case.
+Status: feature-complete for the common + advanced cases. Builds on the read-only pivot support
+(detect / outline / preserve / refresh) and adds creating, editing and refreshing a pivot in both
+xlsx and ODS, verified through LibreOffice round-trips. The dialog has a live preview and guards the
+"no data selected" case.
+
+Advanced value features (2026-07-24): **show values as** (% of grand/column/row total, running
+total), **calculated fields** (a formula over the source columns' sums, via a small in-engine
+arithmetic parser), and a **pivot chart** (chart the pivot output, grand totals excluded, from the
+tag menu; bound to the output cells so it updates on refresh). xlsx emits showDataAs + calculated
+cacheFields; both are reconstructed on read so they survive an edit. Excel and sheetedit's display
+honour them; LibreOffice's xlsx pivot rebuild does not (shows the raw aggregate). Still open:
+calculated *items*.
 
 ## Scope
 

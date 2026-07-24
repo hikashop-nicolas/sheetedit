@@ -112,14 +112,22 @@ sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`
   result, then it lands on a new sheet.
 - **Fields**: any depth of nested row and column fields, one or more value fields
   (sum / count / average / min / max), report/page filters, and per-group subtotals.
+- **Show values as**: express a value field as a % of the grand / column / row total, or a running
+  total, per field.
+- **Calculated fields**: add a value field defined by a formula over the source columns' sums
+  (e.g. `Revenue - Cost`).
+- **Pivot chart**: from the tag menu, chart the pivot's output (grand totals excluded); the chart is
+  bound to the output cells, so it updates when the pivot recomputes.
 - **Edit / refresh** from the pivot's tag menu: refresh recomputes the output from the current
   source; edit reopens the dialog prefilled and rewrites the pivot in place. This works both for
   pivots you create and for pivots opened from a file (the definition is reconstructed on read).
 - Written as the **native** structure in both formats, with `refreshOnLoad` set so Excel and
   LibreOffice re-render the pivot from the source on open; verified through LibreOffice round-trips.
 
-Not covered: calculated fields/items, "show values as" (% of total, running total), pivot charts,
-and byte-identical layout to Excel (both apps re-flow the body from the definition on open).
+Caveats: "show values as" and calculated fields are honoured by Excel (standard OOXML) and by
+sheetedit's own display, but LibreOffice's xlsx pivot rebuild ignores them (it shows the raw
+aggregate). Calculated *items* and byte-identical layout to Excel are not implemented (both apps
+re-flow the body from the definition on open).
 
 ## How preservation works
 
