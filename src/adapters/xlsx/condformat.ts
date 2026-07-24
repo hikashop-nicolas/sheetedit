@@ -1,11 +1,16 @@
 import { cellDisplay, key, type CfDxf, type CfRule, type CondFormat, type Sheet } from "../../core/model";
+import type { FormulaEvaluator } from "../../core/recalc";
 import { argbToCss, resolveColor } from "./read";
+
+/** Context that lets aggregate/expression rules evaluate cell-ref / formula operands. */
+export interface CfEvalCtx { evaluator: FormulaEvaluator; sheetName: string; r0: number; c0: number }
 
 // Conditional formatting: parse the differential formats (dxfs) and cfRules, then evaluate them
 // per cell into a visual (fill / text colour / bold / a data bar / a colour-scale fill). A
 // supported subset: cellIs and text comparisons, top/bottom N, above/below average, duplicate/
-// unique values (all applying a dxf), plus colour scales and data bars. Icon sets, arbitrary
-// expression rules and time-period rules are left to round-trip untouched (not rendered).
+// unique values (all applying a dxf), plus colour scales, data bars and icon sets. cellIs formula
+// operands and is-true-formula (expression) rules evaluate through the workbook's formula engine
+// when an evaluator is supplied. Time-period rules are left to round-trip untouched (not rendered).
 
 const firstByLocal = (parent: Element, local: string): Element | undefined =>
   Array.from(parent.children).find((e) => e.localName === local);
@@ -169,10 +174,13 @@ function iconIndex(v: number, rule: NonNullable<CfRule["iconSet"]>, min: number,
 }
 
 /** Compute the conditional-format visual for every affected cell of the sheet, once per render. */
-export function computeCondVisuals(sheet: Sheet): Map<string, CfVisual> {
+export function computeCondVisuals(sheet: Sheet, ev?: { evaluator: FormulaEvaluator; sheetName: string }): Map<string, CfVisual> {
   const out = new Map<string, CfVisual>();
   for (const cf of sheet.condFormats ?? []) {
     const inRange = (r: number, c: number): boolean => cf.ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
+    // Formula operands / expression rules evaluate relative to the range's top-left origin.
+    const origin = cf.ranges.reduce((a, g) => (g.r1 < a.r1 || (g.r1 === a.r1 && g.c1 < a.c1) ? g : a), cf.ranges[0]!);
+    const evCtx: CfEvalCtx | undefined = ev ? { ...ev, r0: origin.r1, c0: origin.c1 } : undefined;
     // Gather the range's existing cells and their numeric/text values (for aggregate rules).
     const cells: { r: number; c: number; text: string; num: number | null }[] = [];
     for (const cell of sheet.cells.values())
@@ -190,7 +198,7 @@ export function computeCondVisuals(sheet: Sheet): Map<string, CfVisual> {
       let done = false;
       for (const rule of cf.rules) {
         if (done) break;
-        const matched = matchRule(rule, cell, { min, max, avg, sorted, counts });
+        const matched = matchRule(rule, cell, { min, max, avg, sorted, counts }, evCtx);
         if (rule.type === "colorScale" && rule.colorScale && cell.num != null) {
           out.set(key(cell.r, cell.c), { bg: colorScaleAt(cell.num, rule.colorScale, min, max, sorted) });
           done = true;
@@ -225,9 +233,18 @@ export function computeCondVisuals(sheet: Sheet): Map<string, CfVisual> {
   return out;
 }
 
-function matchRule(rule: CfRule, cell: { text: string; num: number | null }, agg: { min: number; max: number; avg: number; sorted: number[]; counts: Map<string, number> }): boolean {
+function matchRule(rule: CfRule, cell: { r: number; c: number; text: string; num: number | null }, agg: { min: number; max: number; avg: number; sorted: number[]; counts: Map<string, number> }, ev?: CfEvalCtx): boolean {
   const v = cell.num;
-  const opnd = (i: number): number | null => { const f = rule.formulas?.[i]; return f != null ? numOf(f) : null; };
+  // Operands are literals in the common case; a cell-ref / formula operand ("$A$1", "AVERAGE(...)")
+  // is evaluated relative to the range origin through the workbook's formula engine when available.
+  const evalNum = (raw: string): number | null => {
+    const lit = numOf(raw);
+    if (lit != null) return lit;
+    if (!ev) return null;
+    const res = ev.evaluator.at(raw, ev.r0, ev.c0, cell.r, cell.c, ev.sheetName);
+    return typeof res === "number" ? res : numOf(String(res));
+  };
+  const opnd = (i: number): number | null => { const f = rule.formulas?.[i]; return f != null ? evalNum(f) : null; };
   switch (rule.type) {
     case "cellIs": {
       if (v == null) return false;
@@ -260,7 +277,12 @@ function matchRule(rule: CfRule, cell: { text: string; num: number | null }, agg
       const cut = rule.bottom ? agg.sorted[Math.min(n, agg.sorted.length) - 1] : agg.sorted[Math.max(0, agg.sorted.length - n)];
       return rule.bottom ? v <= cut : v >= cut;
     }
-    default: return false; // expression / iconSet / timePeriod: not evaluated
+    case "expression": {
+      if (!ev || !rule.formulas?.[0]) return false;
+      const res = ev.evaluator.at(rule.formulas[0], ev.r0, ev.c0, cell.r, cell.c, ev.sheetName);
+      return res === true || (typeof res === "number" && res !== 0) || res === "TRUE";
+    }
+    default: return false; // iconSet / timePeriod: not evaluated
   }
 }
 

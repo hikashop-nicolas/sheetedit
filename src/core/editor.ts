@@ -15,7 +15,7 @@ import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Wor
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
 import { computePivot, pivotColumnItems, pivotValueName, type PivotFunc, type PivotShowAs, type PivotSpec, type PivotValue } from "./pivot";
-import { recalc } from "./recalc";
+import { makeFormulaEvaluator, recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
@@ -3101,7 +3101,7 @@ export function createSheetEditor(
     totalCols = Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols;
     renderedRows = totalRows;
     renderedCols = totalCols;
-    condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet) : new Map();
+    condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet, { evaluator: makeFormulaEvaluator(wb), sheetName: sheet.name }) : new Map();
     sparkAt = new Map();
     for (const sp of sheet.sparklines ?? []) sparkAt.set(key(sp.host.r, sp.host.c), sp);
     computeWrapHeights(sheet); // measure wrap cells so rows grow to fit

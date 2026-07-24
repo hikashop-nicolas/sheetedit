@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 import { computeCondVisuals } from "./condformat";
+import { makeFormulaEvaluator } from "../../core/recalc";
 import { key } from "../../core/model";
 
 function xlsx(): Uint8Array {
@@ -47,5 +48,49 @@ describe("conditional formatting", () => {
     expect(vis.get(key(1, 3))?.bar?.pct).toBeCloseTo(0, 5);
     expect(vis.get(key(3, 3))?.bar?.pct).toBeCloseTo(1, 5);
     expect(vis.get(key(2, 3))?.bar?.pct).toBeCloseTo((20 - 10) / (40 - 10), 5);
+  });
+
+  it("evaluates cell-ref operands and is-true-formula rules through the engine", () => {
+    const cell = (ref: string, v: number): string => `<c r="${ref}"><v>${v}</v></c>`;
+    const sheet = strToU8(
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+        `<sheetData>` +
+        `<row r="1">${cell("A1", 5)}${cell("B1", 10)}${cell("C1", 1)}</row>` +
+        `<row r="2">${cell("A2", 15)}${cell("C2", 2)}</row>` +
+        `<row r="3">${cell("A3", 25)}${cell("C3", 3)}</row>` +
+        `</sheetData>` +
+        // cellIs > $B$1 (an absolute cell-ref operand holding 10): A2, A3 match; A1 does not.
+        `<conditionalFormatting sqref="A1:A3"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>$B$1</formula></cfRule></conditionalFormatting>` +
+        // expression $A1>10 (relative to the C1 origin): true on rows 2 and 3.
+        `<conditionalFormatting sqref="C1:C3"><cfRule type="expression" dxfId="0" priority="2"><formula>$A1&gt;10</formula></cfRule></conditionalFormatting>` +
+        `</worksheet>`,
+    );
+    const styles = strToU8(
+      `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+        `<dxfs count="1"><dxf><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
+        `</styleSheet>`,
+    );
+    const wb = readWorkbook(zipSync({
+      "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`),
+      "_rels/.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": sheet,
+      "xl/styles.xml": styles,
+    }));
+    const s = wb.sheets[0]!;
+    const vis = computeCondVisuals(s, { evaluator: makeFormulaEvaluator(wb), sheetName: s.name });
+    // cell-ref operand > $B$1(=10)
+    expect(vis.has(key(1, 1))).toBe(false);
+    expect(vis.get(key(2, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.get(key(3, 1))?.bg).toBe("#ffc7ce");
+    // is-true-formula $A1>10, re-anchored per row
+    expect(vis.has(key(1, 3))).toBe(false);
+    expect(vis.get(key(2, 3))?.bg).toBe("#ffc7ce");
+    expect(vis.get(key(3, 3))?.bg).toBe("#ffc7ce");
+    // without an evaluator the formula rules stay inert (no crash, no match)
+    const bare = computeCondVisuals(s);
+    expect(bare.has(key(2, 1))).toBe(false);
+    expect(bare.has(key(2, 3))).toBe(false);
   });
 });
