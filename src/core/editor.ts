@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { capabilitiesFor } from "./capabilities";
 import { hasTimeFmt, isDateFmt, isTimeOnlyFmt, serialToEditText } from "./dates";
 import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
@@ -355,6 +356,8 @@ export function createSheetEditor(
   // Trust the file's cached results on open (like Excel/LibreOffice); recalc only runs
   // after an edit. Recomputing on load would overwrite valid cached values whose inputs
   // are blank in this session (e.g. a DATEDIF age before a birthdate is entered).
+
+  const caps = capabilitiesFor(wb.kind);
 
   const wrap = document.createElement("div");
   wrap.className = "sheetedit-wrap";
@@ -1590,7 +1593,7 @@ export function createSheetEditor(
 
   // Chart overlay + create/edit UI: a floating Chart.js layer glued to the cells (xlsx/ods only),
   // Chart.js lazy-loaded on the first chart.
-  const chartsOn = wb.kind === "xlsx" || wb.kind === "ods";
+  const chartsOn = caps.charts;
   const getSelRect = (): { r1: number; c1: number; r2: number; c2: number } =>
     sel ?? (activeCell ? { r1: activeCell.r, c1: activeCell.c, r2: activeCell.r, c2: activeCell.c } : { r1: 1, c1: 1, r2: 1, c2: 1 });
   const chartLayer = chartsOn
@@ -1626,17 +1629,28 @@ export function createSheetEditor(
     const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
     toolbar.append(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
   }
-  if (wb.kind === "xlsx") {
+  // Authoring controls, each advertised only when the open format supports it (see capabilities.ts).
+  if (caps.autofilter) {
     const FILTER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12l-4.5 5.5V13l-3 1.5V8.5z"/></svg>`;
     toolbar.append(tbIcon(FILTER_ICON, t("filterToggle"), () => toggleAutoFilter()));
+  }
+  if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
     toolbar.append(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
+  }
+  if (caps.dataValidation) {
     const DV_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h4M11 9l1 1 1.5-1.5"/></svg>`;
     toolbar.append(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
+  }
+  if (caps.comments) {
     const NOTE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`;
     toolbar.append(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
+  }
+  if (caps.conditionalFormat) {
     const CF_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`;
     toolbar.append(tbIcon(CF_ICON, t("cfEdit"), () => openCfDialog()));
+  }
+  if (caps.sparklines) {
     const SPARK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11l3-4 3 2 3-5 3 3"/></svg>`;
     toolbar.append(tbIcon(SPARK_ICON, t("sparkEdit"), () => openSparkDialog()));
   }
@@ -2880,7 +2894,7 @@ export function createSheetEditor(
         selRect: selRectNow,
         curStyle,
         applyStyle,
-        spark: wb.kind === "xlsx" ? { has: () => !!focusedSparkline(), edit: () => openSparkDialog(), remove: () => deleteFocusedSparkline() } : undefined,
+        spark: caps.sparklines ? { has: () => !!focusedSparkline(), edit: () => openSparkDialog(), remove: () => deleteFocusedSparkline() } : undefined,
       })
     : { teardown: () => undefined };
 
