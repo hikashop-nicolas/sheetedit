@@ -94,7 +94,9 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
       const onUp = (): void => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
-        rectToAnchor(im, parseFloat(box.style.left) || 0, parseFloat(box.style.top) || 0, box.offsetWidth, box.offsetHeight);
+        const x = parseFloat(box.style.left) || 0, y = parseFloat(box.style.top) || 0;
+        if (x === x0 && y === y0 && box.offsetWidth === w0 && box.offsetHeight === h0) return; // a plain click, not a drag
+        rectToAnchor(im, x, y, box.offsetWidth, box.offsetHeight);
         deps.onEdit?.(im);
       };
       window.addEventListener("pointermove", onMove);

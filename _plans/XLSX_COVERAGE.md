@@ -36,8 +36,8 @@ and pivot tables included). Tracks the gap list and the agreed priority order fo
 Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized
 with its sibling elements intact:
 
-- Shapes and other drawings (pictures can now be moved/resized, and charts and pivot tables are
-  fully editable, see above)
+- Other drawings not modelled above (pictures, shapes, charts and pivot tables are now read +
+  rendered + editable, see above)
 - Form controls, slicers, ActiveX
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
   settings, autofilter state, outline grouping, themes
@@ -52,9 +52,9 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
   mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
 - Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
-  the media part swapped). Editing non-picture shapes is still not supported (shapes are not
-  rendered). Other preserved-only features above (form controls, slicers, protection) are not
-  editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
+  the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
+  authored on both formats too. Other preserved-only features above (form controls, slicers,
+  protection) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
   authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
   total), calculated fields, calculated items, and a pivot chart (over the output) are all

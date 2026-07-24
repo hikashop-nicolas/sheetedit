@@ -9,6 +9,7 @@ import { readOds, writeOds } from "../adapters/ods";
 import { writeOdsCharts } from "../adapters/ods/chart-write";
 import { writeOdsImages } from "../adapters/ods/image-write";
 import { writeOdsSparklines } from "../adapters/ods/sparkline-write";
+import { writeOdsShapes } from "../adapters/ods/shape-write";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -129,6 +130,7 @@ function assembleWorkbook(wb: Workbook): Packable {
     return { files: wb.files };
   }
   writeOdsImages(wb); // patch moved/resized picture frames in contentDoc before it is serialized
+  writeOdsShapes(wb); // author/patch drawing shapes on the live contentDoc (into table:shapes)
   writeOds(wb);
   writeOdsSparklines(wb); // rebuild authored sparkline-groups (after the rows) once content.xml exists
   writeOdsCharts(wb); // persist created/edited charts (embedded objects) after content.xml is built

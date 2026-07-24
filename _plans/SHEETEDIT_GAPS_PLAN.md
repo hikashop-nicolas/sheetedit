@@ -110,7 +110,14 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   draw:frame's svg:x/y/width/height relative to its anchor cell (no re-parenting). Replace swaps the
   media part in place for the same extension, or writes a new part + retargets the rel/href +
   registers the content type / manifest entry for a different one. Verified through LibreOffice
-  round-trips. Still to do: shape (non-picture) editing (shapes are not rendered today).
+  round-trips.
+- **Shapes**: read + render + author + write on both xlsx and ods. Drawing shapes (rectangle,
+  rounded rectangle, ellipse, triangle, line; unknown presets fall back to a rect but keep their
+  preset name so they round-trip) render as an SVG overlay with fill / outline / centered text.
+  Insert from the toolbar; move (drag) / resize (corner handle) / edit (double-click -> fill /
+  outline / text) / delete (the corner x). xlsx writes xdr:sp in the drawing part (patched in place
+  for edits, appended for new); ods writes draw:rect / draw:ellipse / draw:line into a table:shapes
+  container with an interned graphic style. Verified through LibreOffice round-trips on both formats.
 - **Dynamic arrays**: exotic spill producers are best-effort; only UNIQUE/SORT/FILTER/SEQUENCE +
   TRANSPOSE/bare-range spill are supplied.
 - **Preserved-only, no plans to edit**: form controls / ActiveX / slicers interactivity, sheet /

@@ -201,6 +201,9 @@ export interface Sheet {
   /** Embedded pictures anchored on this sheet (rendered on an overlay; move/resize is written back
       for xlsx, otherwise preserved on save). */
   images?: SheetImage[];
+  /** Drawing shapes (rect / ellipse / line / ...) anchored on this sheet; rendered as an SVG overlay,
+      authored + written back. */
+  shapes?: SheetShape[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
   sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
@@ -307,6 +310,38 @@ export interface SheetImage {
   replaceExt?: string;
   /** Moved/resized/replaced in the UI -> written back; otherwise the parts stay verbatim. */
   dirty?: boolean;
+}
+
+/** A supported drawing shape geometry. Anything else read from a file maps to "rect" for rendering
+    but keeps its original preset name so it round-trips. */
+export type ShapeGeom = "rect" | "roundRect" | "ellipse" | "line" | "triangle";
+
+/** A drawing shape anchored on a sheet. Rendered as an SVG box over the grid; authored + written
+    back (xlsx xdr:sp in the drawing part, ods draw:rect/ellipse/line/custom-shape). */
+export interface SheetShape {
+  geom: ShapeGeom;
+  /** The file's original preset geometry name (xlsx prst / ods class), preserved for a faithful
+      round-trip of shapes whose geometry we render approximately as `geom`. */
+  preset?: string;
+  anchor: import("./chart-model").ChartAnchor;
+  fill?: string;        // css hex, or undefined = no fill
+  stroke?: string;      // outline css hex, or undefined = no outline
+  strokeWidth?: number; // px (default 1)
+  text?: string;
+  textColor?: string;
+  /** xlsx: the drawing part path + the anchor's index, to rewrite the exact anchor on save. */
+  drawingPath?: string;
+  anchorIndex?: number;
+  /** ods: the draw shape element (in the persistent contentDoc) + its anchor cell, so a move/resize
+      patches svg:x/y/width/height relative to that cell. */
+  odsShapeEl?: Element;
+  odsAnchorCol?: number;
+  odsAnchorRow?: number;
+  odsFrame?: { x: number; y: number; w: number; h: number };
+  /** Created / moved / resized / restyled in the UI -> written back; otherwise preserved. */
+  dirty?: boolean;
+  /** A brand-new shape (authored in-app), so the writer emits it from scratch. */
+  created?: boolean;
 }
 
 export const key = (row: number, col: number): string => `${row}:${col}`;

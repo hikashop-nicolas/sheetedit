@@ -24,11 +24,12 @@ import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
+import { setupShapeLayer } from "./ui/shape-layer";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { unzipAsync } from "./zip";
-import { deleteXlsxPivotParts, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup, writeXlsxPivotParts } from "../adapters/xlsx";
+import { deleteXlsxPivotParts, deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline, setXlsxSparklineGroup, writeXlsxPivotParts } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -1695,6 +1696,28 @@ export function createSheetEditor(
     document.body.appendChild(input);
     input.click();
   };
+  const shapeLayer = setupShapeLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    editable: () => wb.kind === "xlsx" || wb.kind === "ods",
+    onEdit: () => { mark(); shapeLayer.refresh(); },
+    onActivate: (sh) => openShapeDialog(sh),
+    onDelete: (sh) => deleteShape(sh),
+  });
+  // Remove a shape: drop it from the model, and (for a saved shape) stage the drawing edit.
+  const deleteShape = (sh: import("./model").SheetShape): void => {
+    const sheet = wb.sheets[active]!;
+    const arr = sheet.shapes;
+    const i = arr?.indexOf(sh) ?? -1;
+    if (!arr || i < 0) return;
+    arr.splice(i, 1);
+    if (!arr.length) sheet.shapes = undefined;
+    if (wb.kind === "xlsx" && sh.drawingPath != null && sh.anchorIndex != null) deleteXlsxShape(wb, sheet, sh);
+    else if (wb.kind === "ods" && sh.odsShapeEl) sh.odsShapeEl.parentNode?.removeChild(sh.odsShapeEl);
+    mark(); shapeLayer.refresh();
+  };
   const pivotLayer = setupPivotLayer({
     wrap,
     gridScroll,
@@ -1747,6 +1770,10 @@ export function createSheetEditor(
   if (caps.sparklines) {
     const SPARK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11l3-4 3 2 3-5 3 3"/></svg>`;
     trailingIcons.push(tbIcon(SPARK_ICON, t("sparkEdit"), () => openSparkDialog()));
+  }
+  if (caps.shapes) {
+    const SHAPE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="7" height="7" rx="1"/><circle cx="11.5" cy="10.5" r="3.5"/></svg>`;
+    trailingIcons.push(tbIcon(SHAPE_ICON, t("shapeInsert"), () => openShapeDialog()));
   }
   toolbarHandle.setTrailing(trailingIcons);
   syncToolbar = () => toolbarHandle.syncActive();
@@ -3078,6 +3105,47 @@ export function createSheetEditor(
     });
   };
 
+  // Insert a new shape (no argument) or edit an existing one's geometry/fill/outline/text.
+  const openShapeDialog = (existing?: import("./model").SheetShape): void => {
+    const sheet = wb.sheets[active]!;
+    const s = getSelRect();
+    const geomOpts = [
+      { value: "rect", label: t("shapeRect") },
+      { value: "roundRect", label: t("shapeRoundRect") },
+      { value: "ellipse", label: t("shapeEllipse") },
+      { value: "triangle", label: t("shapeTriangle") },
+      { value: "line", label: t("shapeLine") },
+    ];
+    formDialog(existing ? t("shapeEdit") : t("shapeInsert"), [
+      ...(existing ? [] : [{ key: "geom", label: t("shapeType"), type: "select" as const, value: "rect", options: geomOpts }]),
+      { key: "fill", label: t("shapeFill"), type: "color", value: existing?.fill ?? "#4c8bf5", showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
+      { key: "noFill", label: t("shapeNoFill"), type: "checkbox", value: existing ? !existing.fill : false, showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
+      { key: "stroke", label: t("shapeOutline"), type: "color", value: existing?.stroke ?? "#1f3a5f" },
+      { key: "strokeWidth", label: t("shapeOutlineWidth"), type: "text", value: String(existing?.strokeWidth ?? 1) },
+      { key: "text", label: t("shapeText"), type: "text", value: existing?.text ?? "", showFor: { key: "geom", values: ["rect", "roundRect", "ellipse", "triangle"] } },
+    ], (v) => {
+      const geom = (existing?.geom ?? String(v.geom)) as import("./model").ShapeGeom;
+      const isLine = geom === "line";
+      const fill = isLine || v.noFill ? undefined : String(v.fill);
+      const stroke = String(v.stroke);
+      const strokeWidth = Math.max(1, Number(v.strokeWidth) || 1);
+      const text = isLine ? undefined : (String(v.text).trim() || undefined);
+      if (existing) {
+        existing.fill = fill; existing.stroke = stroke; existing.strokeWidth = strokeWidth; existing.text = text;
+        existing.preset = undefined; // our geometry is authoritative once edited
+        existing.dirty = true;
+      } else {
+        // Default location: the selection rect, or a ~3x4-cell box at the active cell.
+        const twoD = s.r2 > s.r1 || s.c2 > s.c1;
+        const anchor = twoD
+          ? { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c2 + 1, toRow: s.r2 + 1, toColOff: 0, toRowOff: 0 }
+          : { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c1 + 3, toRow: s.r1 + 4, toColOff: 0, toRowOff: 0 };
+        (sheet.shapes ??= []).push({ geom, anchor, fill, stroke, strokeWidth, text, created: true, dirty: true });
+      }
+      mark(); shapeLayer.refresh();
+    });
+  };
+
   const openNoteDialog = (): void => {
     const s = getSelRect(); const r = s.r1, c = s.c1; const sheet = wb.sheets[active]!;
     const cur = getCell(sheet, r, c)?.comments?.map((cm) => cm.text).join("\n") ?? "";
@@ -3208,6 +3276,7 @@ export function createSheetEditor(
     gridScroll.scrollLeft = keepLeft;
     chartLayer.refresh();
     imageLayer.refresh();
+    shapeLayer.refresh();
     pivotLayer.refresh();
   };
 
@@ -3394,6 +3463,7 @@ export function createSheetEditor(
       window.removeEventListener("pointercancel", endDrag);
       chartLayer.teardown();
       imageLayer.teardown();
+      shapeLayer.teardown();
       pivotLayer.teardown();
       closePivotMenu();
       chartUi.teardown();

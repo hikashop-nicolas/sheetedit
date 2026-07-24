@@ -3,6 +3,7 @@ import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, pars
 import { parseDxfs, readCondFormats } from "./condformat";
 import { readCharts } from "./chart-read";
 import { readImages } from "./image-read";
+import { readShapes } from "./shape-read";
 import { readSparklines } from "./sparkline-read";
 import { readXlsxPivots } from "./pivot-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
@@ -364,6 +365,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readComments(sheet, files, path);
       readCharts(sheet, files, path, themeMap);
       readImages(sheet, files, path);
+      readShapes(sheet, files, path, themeMap);
       readSparklines(sheet, doc);
     }
     wb.sheets.push(sheet);

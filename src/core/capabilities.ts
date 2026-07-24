@@ -21,6 +21,8 @@ export interface WorkbookCapabilities {
   conditionalFormat: boolean;
   /** Create a pivot table / data-pilot from a source range. */
   pivots: boolean;
+  /** Draw shapes (rect / ellipse / line / ...) over the grid. */
+  shapes: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -32,6 +34,7 @@ const NONE: WorkbookCapabilities = {
   comments: false,
   conditionalFormat: false,
   pivots: false,
+  shapes: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -43,6 +46,7 @@ const XLSX: WorkbookCapabilities = {
   comments: true,
   conditionalFormat: true,
   pivots: true,
+  shapes: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -56,6 +60,7 @@ const ODS: WorkbookCapabilities = {
   comments: true,
   conditionalFormat: true,
   pivots: true,
+  shapes: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

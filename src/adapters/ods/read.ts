@@ -6,6 +6,7 @@ import { durationToSerial, isoToSerial } from "../../core/dates";
 const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", countnums: "countNums", average: "average", min: "min", max: "max" };
 import { readOdsCharts } from "./chart-read";
 import { readOdsImages } from "./image-read";
+import { readOdsShapes } from "./shape-read";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
@@ -215,6 +216,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   }
   readOdsCharts(wb, files);
   readOdsImages(wb, files);
+  readOdsShapes(wb);
   readOdsSparklines(wb);
   readOdsAutoFilter(wb);
   readOdsPivots(wb);

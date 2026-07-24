@@ -274,7 +274,7 @@ const uniquePath = (wb: Workbook, dir: string, base: string, ext: string): { pat
 };
 
 /** The drawing part for a sheet (its rels reference it), creating and wiring one if absent. */
-function ensureSheetDrawing(wb: Workbook, sheet: Sheet): string {
+export function ensureSheetDrawing(wb: Workbook, sheet: Sheet): string {
   const sheetRels = sheet.path!.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
   const relsDoc = wb.files[sheetRels] ? parseXmlOpt(wb.files[sheetRels]) : undefined;
   const existing = relsDoc && Array.from(relsDoc.getElementsByTagName("Relationship")).find((r) => /drawing/i.test(r.getAttribute("Type") ?? "") && /drawings\//i.test(r.getAttribute("Target") ?? ""));
