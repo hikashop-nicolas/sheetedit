@@ -1,6 +1,6 @@
 // Shared ODS (ODF spreadsheet) namespaces, formula syntax conversion and
 // length/colour parsing, used by the read, write and style modules.
-import type { Phonetic } from "../../core/model";
+import type { Cell, Phonetic } from "../../core/model";
 
 export const ODS = {
   office: "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
@@ -9,6 +9,9 @@ export const ODS = {
   style: "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
   fo: "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
   number: "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0",
+  xlink: "http://www.w3.org/1999/xlink",
+  dc: "http://purl.org/dc/elements/1.1/",
+  calcext: "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0",
 };
 export const REPEAT_CAP = 1024;
 
@@ -89,6 +92,28 @@ export function odsCellText(cell: Element): string {
   return Array.from(cell.getElementsByTagName("text:p"))
     .map((p) => p.textContent ?? "")
     .join("\n");
+}
+
+// A cell hyperlink from an ODF <text:a xlink:href>. Internal targets are "#Sheet1.A1"
+// (converted to the "Sheet1!A1" form the editor follows); everything else is external.
+export function odsCellLink(cell: Element): Cell["link"] {
+  const a = cell.getElementsByTagName("text:a")[0];
+  if (!a) return undefined;
+  const href = a.getAttribute("xlink:href") ?? "";
+  if (!href) return undefined;
+  if (href.startsWith("#")) return { href: href.slice(1).replace(".", "!"), internal: true };
+  return { href };
+}
+
+// Cell notes from ODF <office:annotation> (dc:creator + text:p lines), newest last.
+export function odsCellComments(cell: Element): Cell["comments"] {
+  const out: NonNullable<Cell["comments"]> = [];
+  for (const an of Array.from(cell.getElementsByTagName("office:annotation"))) {
+    const author = an.getElementsByTagName("dc:creator")[0]?.textContent?.trim() || undefined;
+    const text = Array.from(an.getElementsByTagName("text:p")).map((p) => p.textContent ?? "").join("\n").trim();
+    if (text) out.push({ author, text });
+  }
+  return out.length ? out : undefined;
 }
 
 // Ruby-aware cell text: the base text (plain text + <text:ruby-base>) plus the phonetic

@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2504,7 +2504,9 @@ export function createSheetEditor(
       { key: "internal", label: t("linkInternal"), type: "checkbox", value: !!cur?.internal },
     ], (v) => {
       const href = String(v.href).trim();
-      setXlsxHyperlink(wb, sheet, r, c, href ? { href, internal: !!v.internal, tip: String(v.tip).trim() || undefined } : null);
+      const link = href ? { href, internal: !!v.internal, tip: String(v.tip).trim() || undefined } : null;
+      if (wb.kind === "ods") setOdsHyperlink(sheet, r, c, link);
+      else setXlsxHyperlink(wb, sheet, r, c, link);
       mark(); renderGrid();
     });
   };
@@ -2623,7 +2625,8 @@ export function createSheetEditor(
     const cur = getCell(sheet, r, c)?.comments?.map((cm) => cm.text).join("\n") ?? "";
     formDialog(t("noteEdit"), [{ key: "text", label: t("noteText"), type: "text", value: cur }], (v) => {
       const text = String(v.text).trim();
-      setXlsxComment(wb, sheet, r, c, text || null);
+      if (wb.kind === "ods") setOdsComment(sheet, r, c, text || null);
+      else setXlsxComment(wb, sheet, r, c, text || null);
       mark(); renderGrid();
     });
   };

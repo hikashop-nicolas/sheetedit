@@ -7,15 +7,14 @@ describe("workbook capabilities", () => {
     expect(Object.values(c).every(Boolean)).toBe(true);
   });
 
-  it("ods advertises charts only (for now)", () => {
+  it("ods advertises charts, hyperlinks and comments, but not the Excel-only features", () => {
     const c = capabilitiesFor("ods");
     expect(c.charts).toBe(true);
+    expect(c.hyperlinks).toBe(true);
+    expect(c.comments).toBe(true);
+    // No Excel-style sparklines or the x14 autofilter model.
     expect(c.sparklines).toBe(false);
     expect(c.autofilter).toBe(false);
-    expect(c.hyperlinks).toBe(false);
-    expect(c.dataValidation).toBe(false);
-    expect(c.comments).toBe(false);
-    expect(c.conditionalFormat).toBe(false);
   });
 
   it("csv advertises no advanced features", () => {

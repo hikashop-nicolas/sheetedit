@@ -1,5 +1,5 @@
 import type { Cell, Phonetic, Sheet, Workbook } from "../../core/model";
-import { getCell, key, serializeXml } from "../../core/model";
+import { ensureCell, getCell, key, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
 import { ensureOdsAutoStyles, internOdsStyle, odsColStyle } from "./styles";
@@ -19,10 +19,26 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
   if (cell.style) c.setAttributeNS(ODS.table, "table:style-name", cell.style);
   const formulaToWrite = edited && cell.formula != null ? a1ToOdf(cell.formula) : cell.odfFormula;
   if (formulaToWrite) c.setAttributeNS(ODS.table, "table:formula", formulaToWrite);
+  // A note is an <office:annotation> child, emitted before the value text.
+  for (const cm of cell.comments ?? []) {
+    const an = doc.createElementNS(ODS.office, "office:annotation");
+    if (cm.author) { const cr = doc.createElementNS(ODS.dc, "dc:creator"); cr.textContent = cm.author; an.appendChild(cr); }
+    const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = cm.text; an.appendChild(ap);
+    c.appendChild(an);
+  }
   const addText = (text: string) => {
     if (text === "") return;
     const p = doc.createElementNS(ODS.text, "text:p");
-    p.textContent = text;
+    if (cell.link) {
+      // Wrap the text in <text:a>; internal targets use the "#Sheet1.A1" ODF form.
+      const a = doc.createElementNS(ODS.text, "text:a");
+      a.setAttributeNS(ODS.xlink, "xlink:href", cell.link.internal ? `#${cell.link.href.replace("!", ".")}` : cell.link.href);
+      a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
+      a.textContent = text;
+      p.appendChild(a);
+    } else {
+      p.textContent = text;
+    }
     c.appendChild(p);
   };
   if (cell.kind === "n") {
@@ -80,6 +96,25 @@ function makeRubyP(doc: Document, base: string, runs: Phonetic[]): Element {
   }
   if (pos < base.length) p.appendChild(doc.createTextNode(base.slice(pos)));
   return p;
+}
+
+// --- ods cell-content authoring (hyperlinks, notes) -----------------------
+// The value lives in the cell element, so these mark the cell edited and let makeOdsCell re-emit
+// it with the <text:a> / <office:annotation> from the model (which the reader also populates, so
+// the link and note survive later value edits too).
+
+/** Set or (link === null) remove a cell hyperlink. */
+export function setOdsHyperlink(sheet: Sheet, r: number, c: number, link: Cell["link"] | null): void {
+  const cell = ensureCell(sheet, r, c);
+  cell.link = link ?? undefined;
+  cell.edited = true;
+}
+
+/** Add/replace or (text === null) remove a single note on a cell. */
+export function setOdsComment(sheet: Sheet, r: number, c: number, text: string | null, author = "sheetedit"): void {
+  const cell = ensureCell(sheet, r, c);
+  cell.comments = text ? [{ author, text }] : undefined;
+  cell.edited = true;
 }
 
 // --- ods style write-back -------------------------------------------------

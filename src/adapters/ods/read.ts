@@ -2,7 +2,7 @@ import type { Cell, CellKind, CellStyle, Phonetic, Sheet, Workbook } from "../..
 import { formatNumber, key, noteExtent, numToStr, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
 import { readOdsCharts } from "./chart-read";
-import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
+import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
 // ---------------------------------------------------------------------------
@@ -378,7 +378,9 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       phonetic = rich.phonetic;
       kind = value === "" ? "blank" : "s";
     }
-    const has = value !== "" || formulaRaw != null || style != null;
+    const link = odsCellLink(cellEl);
+    const comments = odsCellComments(cellEl);
+    const has = value !== "" || formulaRaw != null || style != null || link != null || comments != null;
     if (!has) {
       out.push({ has: false, span: crep, startCol });
       continue;
@@ -398,6 +400,8 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       cellStyle: style ? styles.cell.get(style) : undefined,
       el: cellEl,
       phonetic,
+      link,
+      comments,
     };
     out.push({ has: true, span: Math.min(crep, REPEAT_CAP), startCol, colSpan, rowSpan, cell });
   }

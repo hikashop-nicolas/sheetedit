@@ -48,9 +48,9 @@ const ODS: WorkbookCapabilities = {
   charts: true,
   sparklines: false,
   autofilter: false,
-  hyperlinks: false,
+  hyperlinks: true,
   dataValidation: false,
-  comments: false,
+  comments: true,
   conditionalFormat: false,
 };
 
