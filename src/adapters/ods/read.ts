@@ -230,7 +230,10 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
   const out: NonNullable<Sheet["validations"]> = [];
   for (const [name, cells] of byName) {
     const def = defs.get(name);
-    if (!def) continue;
+    // Only list validations drive a dropdown; other condition types are preserved via the untouched
+    // <table:content-validations> block and the cell's (patched) content-validation-name, but do not
+    // surface a UI list.
+    if (!def || (!def.values && !def.rangeRef)) continue;
     out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank });
   }
   if (out.length) sheet.validations = out;

@@ -28,23 +28,33 @@ ignored by it.
   Colour-scale / data-bar / contains-text authoring are NOT offered for ODS (calcext-only, which
   LibreOffice drops when externally authored); rendering them from LibreOffice files still works.
 
+## Pass-through preservation
+
+Authoring a link / note / validation, or editing a value, patches a clone of the original cell
+element (see `patchOdsCell`), so anything not explicitly changed survives: note position/size and
+formatting, a validation's condition + error/help messages, unmodelled cell structure. Only the
+aspect you change is rewritten. Verified against a LibreOffice round-trip.
+
 ## Known gaps (audited vs ODF 1.3)
 
-- **Data validation**: only `cell-content-is-in-list` (dropdowns) is surfaced/authored. Other
-  condition types (is-between, text-length, whole-number/date, is-true-formula) are not read, and
-  authoring writes a minimal validation without `table:error-message` / `table:help-message` /
-  `table:base-cell-address`. Untouched validated cells are preserved verbatim; only cells we
-  re-emit lose non-list rules. Fix direction: pass the original validation elements through.
-- **Hyperlinks**: we read the first `<text:a>` and author a whole-cell anchor. A cell with a link
-  on only part of its text, or multiple links, is flattened to one whole-cell link on re-emit.
-  Optional `text:a` attributes (target-frame, show, style-name) are not preserved.
-- **Comments**: one note per cell; `<office:annotation-end>` (range comments) and 2nd+ annotations
-  are dropped, and re-emitting a note loses its saved position/size and rich formatting. `dc:date`
-  is not written.
+- **Data validation**: only `cell-content-is-in-list` drives a dropdown / is authorable. Other
+  condition types (is-between, text-length, is-true-formula, ...) are preserved (the
+  `<table:content-validations>` block is untouched and the cell's content-validation-name is
+  re-emitted) but not surfaced in the UI, and authoring a new list does not add error/help messages.
+- **Hyperlinks**: read the first `<text:a>`; author a whole-cell anchor (verified to survive
+  LibreOffice, which requires the linked string cell to omit `office:string-value`). A link on
+  part of a cell's text, or multiple links, is preserved while the cell is untouched but flattened
+  to one whole-cell link if you edit that cell's value or link. Optional `text:a` attributes
+  (target-frame, show, style-name) are not preserved on an explicit edit.
+- **Comments**: note position/formatting and a 2nd+ annotation are preserved while untouched, and
+  are kept when you edit the cell's value; editing the note itself keeps the first annotation's
+  position/creator/date but drops extra annotations (single-note model). `dc:date` is written.
 - **CF condition grammar**: `is-true-formula(...)` and text-based conditions are not rendered.
 - **CF colour scale / data bar / icon set for ODS**: read-only (from LibreOffice files); not
   authorable (no interoperable ODF form).
 
-Overarching direction for the gaps: treat validations, hyperlink anchors, and annotations as
-pass-through XML (parse for the UI, re-emit the original nodes when unchanged) instead of
-reconstructing minimal versions.
+## Not applicable to ODF
+
+- **Power Query**: ODF has no equivalent to Power Query / the M language / DataMashup. The nearest
+  concepts (database ranges, pivot tables, DDE/external-data links) do not store a portable
+  transformation pipeline. A Power-Query workbook saved as .ods keeps only the cached result values.

@@ -114,6 +114,11 @@ export interface Cell {
   cellStyle?: CellStyle;
   /** User changed the value/formula (forces regeneration). */
   edited?: boolean;
+  /** ods: the hyperlink / note / data-validation was authored on this cell (patched on write,
+      preserving the rest of the original cell element instead of rebuilding it from scratch). */
+  linkDirty?: boolean;
+  commentsDirty?: boolean;
+  dvDirty?: boolean;
   /** Recalc changed the cached value. */
   recomputed?: boolean;
   /** xlsx: shared-formula group (@si) this cell belongs to. */

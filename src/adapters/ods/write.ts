@@ -7,31 +7,35 @@ import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } 
 // ods write: cell/row emission and the save pass
 // ---------------------------------------------------------------------------
 
+/** Any pending write for a cell (value edit, recalc, or authored link/note/validation). */
+export function odsCellDirty(cell: Cell): boolean {
+  return !!(cell.edited || cell.recomputed || cell.linkDirty || cell.commentsDirty || cell.dvDirty);
+}
+
 export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element {
-  // Untouched cell: clone the original verbatim (preserves dates, formats, rich text).
-  if (cell.el && !cell.edited && !cell.recomputed) {
+  // Untouched cell: clone the original verbatim (preserves dates, formats, rich text, notes).
+  if (cell.el && !odsCellDirty(cell)) {
     const clone = cell.el.cloneNode(true) as Element;
     clone.removeAttribute("table:number-columns-repeated");
     clone.removeAttribute("table:number-rows-repeated");
     return clone;
   }
-  const c = doc.createElementNS(ODS.table, "table:table-cell");
-  if (cell.style) c.setAttributeNS(ODS.table, "table:style-name", cell.style);
-  if (cell.odsValidationName) c.setAttributeNS(ODS.table, "table:content-validation-name", cell.odsValidationName);
-  const formulaToWrite = edited && cell.formula != null ? a1ToOdf(cell.formula) : cell.odfFormula;
-  if (formulaToWrite) c.setAttributeNS(ODS.table, "table:formula", formulaToWrite);
-  // A note is an <office:annotation> child, emitted before the value text.
-  for (const cm of cell.comments ?? []) {
-    const an = doc.createElementNS(ODS.office, "office:annotation");
-    if (cm.author) { const cr = doc.createElementNS(ODS.dc, "dc:creator"); cr.textContent = cm.author; an.appendChild(cr); }
-    const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = cm.text; an.appendChild(ap);
-    c.appendChild(an);
-  }
+  // Touched cell that has an original element: patch a clone so everything we did not explicitly
+  // change (note position/formatting, extra links, unmodelled structure) is preserved.
+  if (cell.el) return patchOdsCell(doc, cell);
+  // Brand-new cell: build from the model.
+  return buildOdsCellFresh(doc, cell, edited);
+}
+
+// Remove the value <text:p> children (leaving <office:annotation> etc.) then re-emit the value
+// attributes and text, wrapping in a hyperlink and applying furigana as needed.
+function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
+  for (const ch of Array.from(c.children)) if (ch.localName === "p") c.removeChild(ch);
+  for (const a of ["value", "value-type", "date-value", "time-value", "boolean-value", "string-value", "currency"]) c.removeAttributeNS(ODS.office, a);
   const addText = (text: string) => {
     if (text === "") return;
     const p = doc.createElementNS(ODS.text, "text:p");
     if (cell.link) {
-      // Wrap the text in <text:a>; internal targets use the "#Sheet1.A1" ODF form.
       const a = doc.createElementNS(ODS.text, "text:a");
       a.setAttributeNS(ODS.xlink, "xlink:href", cell.link.internal ? `#${cell.link.href.replace("!", ".")}` : cell.link.href);
       a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
@@ -43,8 +47,8 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
     c.appendChild(p);
   };
   if (cell.kind === "n") {
-    // Keep the cell's original ODF type (date/time/percentage/currency), or the
-    // type a typed date adopted, so an edit does not degrade the cell to a float.
+    // Keep the cell's original ODF type (date/time/percentage/currency), or the type a typed date
+    // adopted, so an edit does not degrade the cell to a float.
     const vt = cell.odsValueType ?? (isDateFmt(cell.numFmt) ? (isTimeOnlyFmt(cell.numFmt) ? "time" : "date") : undefined);
     const serial = Number(cell.value);
     if (vt === "date" && Number.isFinite(serial) && serialToIso(serial) != null) {
@@ -62,18 +66,73 @@ export function makeOdsCell(doc: Document, cell: Cell, edited: boolean): Element
       c.setAttributeNS(ODS.office, "office:value", cell.value);
     }
     addText(cell.display ?? cell.value);
-    return c;
-  }
-  if (cell.kind === "b") {
+  } else if (cell.kind === "b") {
     c.setAttributeNS(ODS.office, "office:value-type", "boolean");
     c.setAttributeNS(ODS.office, "office:boolean-value", cell.value === "TRUE" ? "true" : "false");
     addText(cell.value);
   } else if (cell.kind === "s" || cell.kind === "e") {
     c.setAttributeNS(ODS.office, "office:value-type", "string");
-    c.setAttributeNS(ODS.office, "office:string-value", cell.value);
+    // A linked cell must NOT carry office:string-value: LibreOffice treats it as authoritative and
+    // discards the rich <text:a>, so the value lives only in the text:p (the anchor text).
+    if (!cell.link) c.setAttributeNS(ODS.office, "office:string-value", cell.value);
     if (cell.phonetic?.length) c.appendChild(makeRubyP(doc, cell.value, cell.phonetic));
     else addText(cell.value);
   }
+}
+
+// Add / replace / remove a single note, preserving the first annotation's position + creator/date.
+function patchOdsAnnotations(doc: Document, c: Element, cell: Cell): void {
+  const anns = Array.from(c.children).filter((x) => x.localName === "annotation");
+  if (cell.comments?.length) {
+    const cm = cell.comments[0]!;
+    let ann = anns[0];
+    if (!ann) { ann = doc.createElementNS(ODS.office, "office:annotation"); c.insertBefore(ann, c.firstChild); }
+    for (const p of Array.from(ann.children).filter((x) => x.localName === "p")) ann.removeChild(p);
+    if (cm.author && !ann.getElementsByTagName("dc:creator").length) { const cr = doc.createElementNS(ODS.dc, "dc:creator"); cr.textContent = cm.author; ann.appendChild(cr); }
+    if (!ann.getElementsByTagName("dc:date").length) { const dt = doc.createElementNS(ODS.dc, "dc:date"); dt.textContent = new Date().toISOString().slice(0, 19); ann.appendChild(dt); }
+    const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = cm.text; ann.appendChild(ap);
+    for (let i = 1; i < anns.length; i++) c.removeChild(anns[i]!);
+  } else {
+    for (const ann of anns) c.removeChild(ann);
+  }
+}
+
+function patchOdsCell(doc: Document, cell: Cell): Element {
+  const c = cell.el!.cloneNode(true) as Element;
+  c.removeAttribute("table:number-columns-repeated");
+  c.removeAttribute("table:number-rows-repeated");
+  if (cell.style) c.setAttributeNS(ODS.table, "table:style-name", cell.style);
+  else c.removeAttributeNS(ODS.table, "style-name");
+  if (cell.dvDirty) {
+    if (cell.odsValidationName) c.setAttributeNS(ODS.table, "table:content-validation-name", cell.odsValidationName);
+    else c.removeAttributeNS(ODS.table, "content-validation-name");
+  }
+  if (cell.commentsDirty) patchOdsAnnotations(doc, c, cell);
+  if (cell.edited || cell.recomputed || cell.linkDirty) {
+    if (cell.edited) {
+      if (cell.formula != null) c.setAttributeNS(ODS.table, "table:formula", a1ToOdf(cell.formula));
+      else c.removeAttributeNS(ODS.table, "formula");
+    }
+    applyOdsValue(doc, c, cell);
+  }
+  return c;
+}
+
+function buildOdsCellFresh(doc: Document, cell: Cell, edited: boolean): Element {
+  const c = doc.createElementNS(ODS.table, "table:table-cell");
+  if (cell.style) c.setAttributeNS(ODS.table, "table:style-name", cell.style);
+  if (cell.odsValidationName) c.setAttributeNS(ODS.table, "table:content-validation-name", cell.odsValidationName);
+  const formulaToWrite = edited && cell.formula != null ? a1ToOdf(cell.formula) : cell.odfFormula;
+  if (formulaToWrite) c.setAttributeNS(ODS.table, "table:formula", formulaToWrite);
+  // A note is an <office:annotation> child, emitted before the value text.
+  for (const cm of cell.comments ?? []) {
+    const an = doc.createElementNS(ODS.office, "office:annotation");
+    if (cm.author) { const cr = doc.createElementNS(ODS.dc, "dc:creator"); cr.textContent = cm.author; an.appendChild(cr); }
+    const dt = doc.createElementNS(ODS.dc, "dc:date"); dt.textContent = new Date().toISOString().slice(0, 19); an.appendChild(dt);
+    const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = cm.text; an.appendChild(ap);
+    c.appendChild(an);
+  }
+  applyOdsValue(doc, c, cell);
   return c;
 }
 
@@ -100,22 +159,22 @@ function makeRubyP(doc: Document, base: string, runs: Phonetic[]): Element {
 }
 
 // --- ods cell-content authoring (hyperlinks, notes) -----------------------
-// The value lives in the cell element, so these mark the cell edited and let makeOdsCell re-emit
-// it with the <text:a> / <office:annotation> from the model (which the reader also populates, so
-// the link and note survive later value edits too).
+// These set a per-aspect dirty flag (not `edited`), so makeOdsCell patches the original cell
+// element in place: only the link / note / validation is changed, everything else (value, other
+// notes' position + formatting, unmodelled structure) is preserved.
 
 /** Set or (link === null) remove a cell hyperlink. */
 export function setOdsHyperlink(sheet: Sheet, r: number, c: number, link: Cell["link"] | null): void {
   const cell = ensureCell(sheet, r, c);
   cell.link = link ?? undefined;
-  cell.edited = true;
+  cell.linkDirty = true;
 }
 
 /** Add/replace or (text === null) remove a single note on a cell. */
 export function setOdsComment(sheet: Sheet, r: number, c: number, text: string | null, author = "sheetedit"): void {
   const cell = ensureCell(sheet, r, c);
   cell.comments = text ? [{ author, text }] : undefined;
-  cell.edited = true;
+  cell.commentsDirty = true;
 }
 
 // An A1 range ("Sheet2!A1:A9" / "A1:A9") -> an ODF list address "[Sheet2.A1:.A9]" / "[.A1:.A9]".
@@ -143,7 +202,7 @@ export function setOdsDataValidation(
 
   if (!spec) {
     for (const cell of sheet.cells.values())
-      if (cell.odsValidationName && inRange(cell.row, cell.col)) { cell.odsValidationName = undefined; cell.edited = true; }
+      if (cell.odsValidationName && inRange(cell.row, cell.col)) { cell.odsValidationName = undefined; cell.dvDirty = true; }
     if (!sheet.validations.length) sheet.validations = undefined;
     return;
   }
@@ -176,7 +235,7 @@ export function setOdsDataValidation(
   // Tag every cell in the range so makeOdsCell re-emits the reference.
   for (const g of ranges)
     for (let r = g.r1; r <= g.r2; r++)
-      for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.odsValidationName = name; cell.edited = true; }
+      for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.odsValidationName = name; cell.dvDirty = true; }
 }
 
 // An A1 range -> an ODF conditional-format target address "Sheet1.A1:Sheet1.A5".
@@ -374,7 +433,7 @@ export function writeOds(wb: Workbook): void {
     // row attributes, covered cells); only touched sheets are re-emitted.
     let cellsDirty = false;
     for (const cell of sheet.cells.values())
-      if (cell.edited || cell.recomputed) {
+      if (odsCellDirty(cell)) {
         cellsDirty = true;
         break;
       }
