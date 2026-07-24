@@ -9,11 +9,12 @@ import type { ChartAnchor, ChartKind, ChartModel, ChartRef, ChartSeries } from "
 
 const kids = (el: Element, local: string): Element[] => Array.from(el.children).filter((c) => c.localName === local);
 const kid = (el: Element | undefined, local: string): Element | undefined => (el ? kids(el, local)[0] : undefined);
-const descend = (root: Element, local: string): Element[] => Array.from(root.getElementsByTagName("*")).filter((e) => e.localName === local);
-const A = (el: Element, local: string): string | null => {
+export const descend = (root: Element, local: string): Element[] => Array.from(root.getElementsByTagName("*")).filter((e) => e.localName === local);
+export const attrByLocal = (el: Element, local: string): string | null => {
   for (const at of Array.from(el.attributes)) if (at.localName === local) return at.value;
   return null;
 };
+const A = attrByLocal;
 
 /** Parse an ODS length ("5cm", "127pt", "2in", "48px") to pixels at 96 dpi. */
 function lenPx(v: string | null): number {
@@ -82,7 +83,7 @@ function rowIndexOf(table: Element, rowEl: Element): number {
   return idx + 1;
 }
 
-function anchorOf(frame: Element, table: Element): ChartAnchor {
+export function anchorOf(frame: Element, table: Element): ChartAnchor {
   const cell = frame.closest ? (frame.closest("*") as Element) : frame.parentElement;
   let fromCol = 1;
   let fromRow = 1;

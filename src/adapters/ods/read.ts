@@ -2,6 +2,7 @@ import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, Workbook }
 import { formatNumber, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
 import { durationToSerial, isoToSerial } from "../../core/dates";
 import { readOdsCharts } from "./chart-read";
+import { readOdsImages } from "./image-read";
 import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
@@ -194,6 +195,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     wb.sheets.push(sheet);
   }
   readOdsCharts(wb, files);
+  readOdsImages(wb, files);
   return wb;
 }
 
