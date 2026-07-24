@@ -3,6 +3,7 @@ import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 import { computeCondVisuals } from "./condformat";
 import { makeFormulaEvaluator } from "../../core/recalc";
+import { dateToSerial } from "../../core/dates";
 import { key } from "../../core/model";
 
 function xlsx(): Uint8Array {
@@ -92,5 +93,47 @@ describe("conditional formatting", () => {
     const bare = computeCondVisuals(s);
     expect(bare.has(key(2, 1))).toBe(false);
     expect(bare.has(key(2, 3))).toBe(false);
+  });
+
+  it("evaluates time-period rules against a reference date", () => {
+    const today = dateToSerial(2026, 7, 24); // a Friday
+    const s = { d: dateToSerial(2026, 7, 24), yst: dateToSerial(2026, 7, 23), wk: dateToSerial(2026, 7, 20), old: dateToSerial(2026, 6, 20) };
+    const dcell = (ref: string, serial: number): string => `<c r="${ref}"><v>${serial}</v></c>`;
+    const sheet = strToU8(
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>` +
+        `<row r="1">${dcell("A1", s.d)}</row>` +
+        `<row r="2">${dcell("A2", s.yst)}</row>` +
+        `<row r="3">${dcell("A3", s.wk)}</row>` +
+        `<row r="4">${dcell("A4", s.old)}</row>` +
+        `</sheetData>` +
+        `<conditionalFormatting sqref="A1:A4"><cfRule type="timePeriod" dxfId="0" priority="1" timePeriod="thisMonth"><formula>AND(MONTH(A1)=MONTH(TODAY()),YEAR(A1)=YEAR(TODAY()))</formula></cfRule></conditionalFormatting>` +
+        `</worksheet>`,
+    );
+    const styles = strToU8(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dxfs count="1"><dxf><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs></styleSheet>`);
+    const wb = readWorkbook(zipSync({
+      "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`),
+      "_rels/.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": sheet,
+      "xl/styles.xml": styles,
+    }));
+    const sh = wb.sheets[0]!;
+    // thisMonth (July 2026): A1, A2, A3 match; A4 (June) does not.
+    let vis = computeCondVisuals(sh, undefined, today);
+    expect(vis.get(key(1, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.get(key(2, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.get(key(3, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.has(key(4, 1))).toBe(false);
+    // switch the rule to "today": only A1 (2026-07-24) matches.
+    sh.condFormats![0]!.rules[0]!.timePeriod = "today";
+    vis = computeCondVisuals(sh, undefined, today);
+    expect(vis.get(key(1, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.has(key(2, 1))).toBe(false);
+    // "last7Days": A1 (today), A2 (yst), A3 (2026-07-20) match; A4 does not.
+    sh.condFormats![0]!.rules[0]!.timePeriod = "last7Days";
+    vis = computeCondVisuals(sh, undefined, today);
+    expect(vis.get(key(3, 1))?.bg).toBe("#ffc7ce");
+    expect(vis.has(key(4, 1))).toBe(false);
   });
 });

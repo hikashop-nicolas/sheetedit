@@ -246,6 +246,23 @@ function addDxf(wb: Workbook, fillHex: string): number {
   return dxfs.getElementsByTagName("dxf").length - 1;
 }
 
+/** The equivalent formula Excel stores alongside a timePeriod cfRule (a is the range's top-left cell). */
+function timePeriodFormula(period: string, a: string): string {
+  switch (period) {
+    case "today": return `FLOOR(${a},1)=TODAY()`;
+    case "yesterday": return `FLOOR(${a},1)=TODAY()-1`;
+    case "tomorrow": return `FLOOR(${a},1)=TODAY()+1`;
+    case "last7Days": return `AND(TODAY()-FLOOR(${a},1)<=6,FLOOR(${a},1)<=TODAY())`;
+    case "thisWeek": return `AND(TODAY()-ROUNDDOWN(${a},0)<=WEEKDAY(TODAY())-1,ROUNDDOWN(${a},0)-TODAY()<=7-WEEKDAY(TODAY()))`;
+    case "lastWeek": return `AND(TODAY()-ROUNDDOWN(${a},0)>=(WEEKDAY(TODAY())),TODAY()-ROUNDDOWN(${a},0)<(WEEKDAY(TODAY())+7))`;
+    case "nextWeek": return `AND(ROUNDDOWN(${a},0)-TODAY()>(7-WEEKDAY(TODAY())),ROUNDDOWN(${a},0)-TODAY()<(15-WEEKDAY(TODAY())))`;
+    case "thisMonth": return `AND(MONTH(${a})=MONTH(TODAY()),YEAR(${a})=YEAR(TODAY()))`;
+    case "lastMonth": return `OR(AND(MONTH(${a})=MONTH(TODAY())-1,YEAR(${a})=YEAR(TODAY())),AND(MONTH(${a})=12,MONTH(TODAY())=1,YEAR(${a})=YEAR(TODAY())-1))`;
+    case "nextMonth": return `OR(AND(MONTH(${a})=MONTH(TODAY())+1,YEAR(${a})=YEAR(TODAY())),AND(MONTH(${a})=1,MONTH(TODAY())=12,YEAR(${a})=YEAR(TODAY())+1))`;
+    default: return `FLOOR(${a},1)=TODAY()`;
+  }
+}
+
 export type CfSpec =
   | { kind: "cellIs"; operator: string; value: string; value2?: string; fill: string }
   | { kind: "text"; operator: "containsText" | "notContainsText" | "beginsWith" | "endsWith"; text: string; fill: string }
@@ -253,6 +270,7 @@ export type CfSpec =
   | { kind: "average"; below?: boolean; equal?: boolean; fill: string }
   | { kind: "dupUnique"; unique?: boolean; fill: string }
   | { kind: "expression"; formula: string; fill: string }
+  | { kind: "timePeriod"; period: string; fill: string }
   | { kind: "colorScale"; colors: string[] }
   | { kind: "dataBar"; color: string }
   | { kind: "iconSet"; set: string; count: number };
@@ -297,6 +315,9 @@ export function setXlsxCondFormat(wb: Workbook, sheet: Sheet, ranges: { r1: numb
       dxfFill(spec.fill);
     } else if (spec.kind === "expression") {
       dxfFill(spec.fill); formula(spec.formula); rule.formulas = [spec.formula];
+    } else if (spec.kind === "timePeriod") {
+      cr.setAttribute("timePeriod", spec.period); dxfFill(spec.fill);
+      formula(timePeriodFormula(spec.period, topLeft)); rule.timePeriod = spec.period;
     } else if (spec.kind === "colorScale") {
       const cs = doc.createElementNS(ns, "colorScale");
       const cfvoTypes = spec.colors.length >= 3 ? ["min", "percentile", "max"] : ["min", "max"];

@@ -98,5 +98,10 @@ describe("authoring writers", () => {
     setXlsxCondFormat(wb, sheet, R, { kind: "iconSet", set: "3Arrows", count: 3 });
     expect(xml()).toMatch(/<cfRule type="iconSet"[\s\S]*?<iconSet iconSet="3Arrows"><cfvo type="percent" val="0"\/><cfvo type="percent" val="33"\/><cfvo type="percent" val="67"\/>/);
     expect(sheet.condFormats?.[0].rules[0].iconSet?.set).toBe("3Arrows");
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "timePeriod", period: "last7Days", fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="timePeriod"[^>]*timePeriod="last7Days"/);
+    expect(xml()).toContain("AND(TODAY()-FLOOR(A1,1)&lt;=6");
+    expect(sheet.condFormats?.[0].rules[0].timePeriod).toBe("last7Days");
   });
 });

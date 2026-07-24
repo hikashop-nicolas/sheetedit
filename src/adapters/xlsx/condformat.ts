@@ -1,5 +1,6 @@
 import { cellDisplay, key, type CfDxf, type CfRule, type CondFormat, type Sheet } from "../../core/model";
 import type { FormulaEvaluator } from "../../core/recalc";
+import { dateToSerial, serialToParts } from "../../core/dates";
 import { argbToCss, resolveColor } from "./read";
 
 /** Context that lets aggregate/expression rules evaluate cell-ref / formula operands. */
@@ -79,6 +80,7 @@ export function readCondFormats(sheet: Sheet, doc: Document, dxfs: CfDxf[], them
       const r: CfRule = { type, priority, stopIfTrue, dxf, formulas, operator: rule.getAttribute("operator") || undefined, text: rule.getAttribute("text") || undefined };
       if (type === "top10") { r.rank = Number(rule.getAttribute("rank") || "10"); r.percent = rule.getAttribute("percent") === "1"; r.bottom = rule.getAttribute("bottom") === "1"; }
       if (type === "aboveAverage") { r.aboveAverage = rule.getAttribute("aboveAverage") !== "0"; r.equalAverage = rule.getAttribute("equalAverage") === "1"; }
+      if (type === "timePeriod") { r.timePeriod = rule.getAttribute("timePeriod") || undefined; }
       if (type === "colorScale") {
         const cs = firstByLocal(rule, "colorScale");
         if (cs) r.colorScale = { cfvo: childrenByLocal(cs, "cfvo").map(cfvoOf), colors: childrenByLocal(cs, "color").map((c) => argbToCss(c.getAttribute("rgb")) ?? resolveColor(c, theme) ?? "#ffffff") };
@@ -174,17 +176,19 @@ function iconIndex(v: number, rule: NonNullable<CfRule["iconSet"]>, min: number,
 }
 
 /** Compute the conditional-format visual for every affected cell of the sheet, once per render. */
-export function computeCondVisuals(sheet: Sheet, ev?: { evaluator: FormulaEvaluator; sheetName: string }): Map<string, CfVisual> {
+export function computeCondVisuals(sheet: Sheet, ev?: { evaluator: FormulaEvaluator; sheetName: string }, today?: number): Map<string, CfVisual> {
   const out = new Map<string, CfVisual>();
+  const nowSerial = today ?? todaySerial();
   for (const cf of sheet.condFormats ?? []) {
     const inRange = (r: number, c: number): boolean => cf.ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
     // Formula operands / expression rules evaluate relative to the range's top-left origin.
     const origin = cf.ranges.reduce((a, g) => (g.r1 < a.r1 || (g.r1 === a.r1 && g.c1 < a.c1) ? g : a), cf.ranges[0]!);
     const evCtx: CfEvalCtx | undefined = ev ? { ...ev, r0: origin.r1, c0: origin.c1 } : undefined;
-    // Gather the range's existing cells and their numeric/text values (for aggregate rules).
-    const cells: { r: number; c: number; text: string; num: number | null }[] = [];
+    // Gather the range's existing cells and their numeric/text values (for aggregate rules). serial
+    // is the raw date/number value (a date cell's display text is not numeric, so num is null there).
+    const cells: { r: number; c: number; text: string; num: number | null; serial: number | null }[] = [];
     for (const cell of sheet.cells.values())
-      if (inRange(cell.row, cell.col)) { const text = cellDisplay(cell); cells.push({ r: cell.row, c: cell.col, text, num: numOf(text) }); }
+      if (inRange(cell.row, cell.col)) { const text = cellDisplay(cell); cells.push({ r: cell.row, c: cell.col, text, num: numOf(text), serial: cell.kind === "n" ? Number(cell.value) : null }); }
     const nums = cells.map((c) => c.num).filter((n): n is number => n != null);
     const sorted = [...nums].sort((a, b) => a - b);
     const min = sorted[0] ?? 0;
@@ -198,7 +202,7 @@ export function computeCondVisuals(sheet: Sheet, ev?: { evaluator: FormulaEvalua
       let done = false;
       for (const rule of cf.rules) {
         if (done) break;
-        const matched = matchRule(rule, cell, { min, max, avg, sorted, counts }, evCtx);
+        const matched = matchRule(rule, cell, { min, max, avg, sorted, counts, now: nowSerial }, evCtx);
         if (rule.type === "colorScale" && rule.colorScale && cell.num != null) {
           out.set(key(cell.r, cell.c), { bg: colorScaleAt(cell.num, rule.colorScale, min, max, sorted) });
           done = true;
@@ -233,7 +237,41 @@ export function computeCondVisuals(sheet: Sheet, ev?: { evaluator: FormulaEvalua
   return out;
 }
 
-function matchRule(rule: CfRule, cell: { r: number; c: number; text: string; num: number | null }, agg: { min: number; max: number; avg: number; sorted: number[]; counts: Map<string, number> }, ev?: CfEvalCtx): boolean {
+/** Today's date as an Excel 1900-system serial (local midnight), for time-period rules. */
+function todaySerial(): number {
+  const d = new Date();
+  return dateToSerial(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+/** A day serial -> {y, mo, d, dow} where dow is 0=Sunday .. 6=Saturday. */
+function dayInfo(serial: number): { y: number; mo: number; d: number; dow: number } {
+  const p = serialToParts(serial);
+  const y = p?.y ?? 1900, mo = p?.mo ?? 1, d = p?.d ?? 1;
+  const dow = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
+  return { y, mo, d, dow };
+}
+
+/** Excel time-period predicates (week starts Sunday), evaluated against `today`. */
+function matchTimePeriod(period: string, serial: number, today: number): boolean {
+  const d = Math.floor(serial), t = Math.floor(today);
+  const monthIdx = (s: number): number => { const i = dayInfo(s); return i.y * 12 + (i.mo - 1); };
+  const weekStart = (s: number): number => Math.floor(s) - dayInfo(s).dow; // the Sunday of s's week
+  switch (period) {
+    case "today": return d === t;
+    case "yesterday": return d === t - 1;
+    case "tomorrow": return d === t + 1;
+    case "last7Days": return d <= t && d >= t - 6;
+    case "thisWeek": return weekStart(d) === weekStart(t);
+    case "lastWeek": return weekStart(d) === weekStart(t) - 7;
+    case "nextWeek": return weekStart(d) === weekStart(t) + 7;
+    case "thisMonth": return monthIdx(d) === monthIdx(t);
+    case "lastMonth": return monthIdx(d) === monthIdx(t) - 1;
+    case "nextMonth": return monthIdx(d) === monthIdx(t) + 1;
+    default: return false;
+  }
+}
+
+function matchRule(rule: CfRule, cell: { r: number; c: number; text: string; num: number | null; serial: number | null }, agg: { min: number; max: number; avg: number; sorted: number[]; counts: Map<string, number>; now: number }, ev?: CfEvalCtx): boolean {
   const v = cell.num;
   // Operands are literals in the common case; a cell-ref / formula operand ("$A$1", "AVERAGE(...)")
   // is evaluated relative to the range origin through the workbook's formula engine when available.
@@ -282,7 +320,9 @@ function matchRule(rule: CfRule, cell: { r: number; c: number; text: string; num
       const res = ev.evaluator.at(rule.formulas[0], ev.r0, ev.c0, cell.r, cell.c, ev.sheetName);
       return res === true || (typeof res === "number" && res !== 0) || res === "TRUE";
     }
-    default: return false; // iconSet / timePeriod: not evaluated
+    case "timePeriod":
+      return cell.serial != null && !!rule.timePeriod && matchTimePeriod(rule.timePeriod, cell.serial, agg.now);
+    default: return false; // iconSet: not evaluated
   }
 }
 
