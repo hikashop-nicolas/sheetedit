@@ -247,9 +247,15 @@ function addDxf(wb: Workbook, fillHex: string): number {
 }
 
 export type CfSpec =
-  | { kind: "cellIs"; operator: string; value: string; fill: string }
+  | { kind: "cellIs"; operator: string; value: string; value2?: string; fill: string }
+  | { kind: "text"; operator: "containsText" | "notContainsText" | "beginsWith" | "endsWith"; text: string; fill: string }
+  | { kind: "top"; rank: number; percent?: boolean; bottom?: boolean; fill: string }
+  | { kind: "average"; below?: boolean; equal?: boolean; fill: string }
+  | { kind: "dupUnique"; unique?: boolean; fill: string }
+  | { kind: "expression"; formula: string; fill: string }
   | { kind: "colorScale"; colors: string[] }
-  | { kind: "dataBar"; color: string };
+  | { kind: "dataBar"; color: string }
+  | { kind: "iconSet"; set: string; count: number };
 
 /** Add (or, with spec null, clear) a conditional-formatting rule over the given ranges, writing the
     worksheet <conditionalFormatting> (+ a dxf for a highlight fill) and updating sheet.condFormats
@@ -262,30 +268,55 @@ export function setXlsxCondFormat(wb: Workbook, sheet: Sheet, ranges: { r1: numb
   sheet.condFormats = (sheet.condFormats ?? []).filter((cf) => cf.ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ") !== sqref);
   if (!spec) { sheet.layoutDirty = true; return; }
   const priority = 1 + Math.max(0, ...(sheet.condFormats.flatMap((cf) => cf.rules.map((r) => r.priority))));
-  const rule: import("../../core/model").CfRule = { type: spec.kind, priority };
+  // The cfRule @type differs from our spec.kind for text/top/average/dupUnique.
+  const cfType = spec.kind === "text" ? spec.operator : spec.kind === "top" ? "top10" : spec.kind === "average" ? "aboveAverage" : spec.kind === "dupUnique" ? (spec.unique ? "uniqueValues" : "duplicateValues") : spec.kind;
+  const rule: import("../../core/model").CfRule = { type: cfType, priority };
+  const topLeft = `${colToLetters(ranges[0]!.c1)}${ranges[0]!.r1}`;
   if (doc && ws) {
     const cf = doc.createElementNS(ns, "conditionalFormatting"); cf.setAttribute("sqref", sqref);
-    const cr = doc.createElementNS(ns, "cfRule"); cr.setAttribute("type", spec.kind); cr.setAttribute("priority", String(priority));
+    const cr = doc.createElementNS(ns, "cfRule"); cr.setAttribute("type", cfType); cr.setAttribute("priority", String(priority));
+    const dxfFill = (hex: string) => { const dxfId = addDxf(wb, hex); if (dxfId >= 0) cr.setAttribute("dxfId", String(dxfId)); rule.dxf = { bg: hex }; };
+    const formula = (text: string) => { const f = doc.createElementNS(ns, "formula"); f.textContent = text; cr.appendChild(f); };
     if (spec.kind === "cellIs") {
-      cr.setAttribute("operator", spec.operator);
-      const dxfId = addDxf(wb, spec.fill);
-      if (dxfId >= 0) cr.setAttribute("dxfId", String(dxfId));
-      const f = doc.createElementNS(ns, "formula"); f.textContent = spec.value; cr.appendChild(f);
-      rule.operator = spec.operator; rule.formulas = [spec.value]; rule.dxf = { bg: spec.fill };
+      cr.setAttribute("operator", spec.operator); dxfFill(spec.fill);
+      formula(spec.value); rule.operator = spec.operator; rule.formulas = [spec.value];
+      if ((spec.operator === "between" || spec.operator === "notBetween") && spec.value2 != null) { formula(spec.value2); rule.formulas.push(spec.value2); }
+    } else if (spec.kind === "text") {
+      cr.setAttribute("operator", spec.operator); cr.setAttribute("text", spec.text); dxfFill(spec.fill);
+      // Excel also stores the equivalent formula for the text predicate.
+      const q = spec.text.replace(/"/g, '""');
+      const fx = spec.operator === "beginsWith" ? `LEFT(${topLeft},${spec.text.length})="${q}"` : spec.operator === "endsWith" ? `RIGHT(${topLeft},${spec.text.length})="${q}"` : `${spec.operator === "notContainsText" ? "" : "NOT("}ISERROR(SEARCH("${q}",${topLeft}))${spec.operator === "notContainsText" ? "" : ")"}`;
+      formula(fx); rule.operator = spec.operator; rule.text = spec.text;
+    } else if (spec.kind === "top") {
+      cr.setAttribute("rank", String(spec.rank)); if (spec.percent) cr.setAttribute("percent", "1"); if (spec.bottom) cr.setAttribute("bottom", "1"); dxfFill(spec.fill);
+      rule.rank = spec.rank; rule.percent = spec.percent; rule.bottom = spec.bottom;
+    } else if (spec.kind === "average") {
+      if (spec.below) cr.setAttribute("aboveAverage", "0"); if (spec.equal) cr.setAttribute("equalAverage", "1"); dxfFill(spec.fill);
+      rule.aboveAverage = !spec.below; rule.equalAverage = spec.equal;
+    } else if (spec.kind === "dupUnique") {
+      dxfFill(spec.fill);
+    } else if (spec.kind === "expression") {
+      dxfFill(spec.fill); formula(spec.formula); rule.formulas = [spec.formula];
     } else if (spec.kind === "colorScale") {
       const cs = doc.createElementNS(ns, "colorScale");
       const cfvoTypes = spec.colors.length >= 3 ? ["min", "percentile", "max"] : ["min", "max"];
-      cfvoTypes.forEach((ty, i) => { const v = doc.createElementNS(ns, "cfvo"); v.setAttribute("type", ty); if (ty === "percentile") v.setAttribute("val", "50"); cs.appendChild(v); void i; });
+      cfvoTypes.forEach((ty) => { const v = doc.createElementNS(ns, "cfvo"); v.setAttribute("type", ty); if (ty === "percentile") v.setAttribute("val", "50"); cs.appendChild(v); });
       spec.colors.forEach((col) => { const co = doc.createElementNS(ns, "color"); co.setAttribute("rgb", `FF${col.replace("#", "")}`); cs.appendChild(co); });
       cr.appendChild(cs);
       rule.colorScale = { cfvo: cfvoTypes.map((ty) => ({ type: ty, val: ty === "percentile" ? 50 : undefined })), colors: spec.colors };
-    } else {
+    } else if (spec.kind === "dataBar") {
       const db = doc.createElementNS(ns, "dataBar");
       const lo = doc.createElementNS(ns, "cfvo"); lo.setAttribute("type", "min");
       const hi = doc.createElementNS(ns, "cfvo"); hi.setAttribute("type", "max");
       const co = doc.createElementNS(ns, "color"); co.setAttribute("rgb", `FF${spec.color.replace("#", "")}`);
       db.appendChild(lo); db.appendChild(hi); db.appendChild(co); cr.appendChild(db);
       rule.dataBar = { color: spec.color, min: { type: "min" }, max: { type: "max" } };
+    } else {
+      const is = doc.createElementNS(ns, "iconSet"); is.setAttribute("iconSet", spec.set);
+      const cfvo: { type: string; val?: number; gte?: boolean }[] = [];
+      for (let i = 0; i < spec.count; i++) { const v = doc.createElementNS(ns, "cfvo"); const pct = Math.round((i / spec.count) * 100); v.setAttribute("type", "percent"); v.setAttribute("val", String(pct)); is.appendChild(v); cfvo.push({ type: "percent", val: pct, gte: true }); }
+      cr.appendChild(is);
+      rule.iconSet = { set: spec.set, cfvo };
     }
     cf.appendChild(cr);
     insertWsChild(ws, cf);

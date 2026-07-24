@@ -70,4 +70,33 @@ describe("authoring writers", () => {
     // model updated so it renders
     expect(sheet.condFormats?.[0].rules[0].dxf?.bg).toBe("#ffc7ce");
   });
+
+  it("authors the extended conditional-format rule types", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    const R = [{ r1: 1, c1: 1, r2: 9, c2: 1 }];
+    const xml = () => new TextDecoder().decode(serializeXml(sheet.doc!));
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "cellIs", operator: "between", value: "1", value2: "5", fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="cellIs"[^>]*operator="between"[\s\S]*?<formula>1<\/formula><formula>5<\/formula>/);
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "text", operator: "containsText", text: "err", fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="containsText"[^>]*text="err"/);
+    expect(xml()).toContain('SEARCH("err"');
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "top", rank: 3, bottom: true, fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="top10"[^>]*rank="3"[^>]*bottom="1"/);
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "average", below: true, fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="aboveAverage"[^>]*aboveAverage="0"/);
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "dupUnique", unique: true, fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="uniqueValues"/);
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "expression", formula: "A1>AVERAGE($A$1:$A$9)", fill: "#ffc7ce" });
+    expect(xml()).toMatch(/<cfRule type="expression"[\s\S]*?<formula>A1&gt;AVERAGE/);
+
+    setXlsxCondFormat(wb, sheet, R, { kind: "iconSet", set: "3Arrows", count: 3 });
+    expect(xml()).toMatch(/<cfRule type="iconSet"[\s\S]*?<iconSet iconSet="3Arrows"><cfvo type="percent" val="0"\/><cfvo type="percent" val="33"\/><cfvo type="percent" val="67"\/>/);
+    expect(sheet.condFormats?.[0].rules[0].iconSet?.set).toBe("3Arrows");
+  });
 });

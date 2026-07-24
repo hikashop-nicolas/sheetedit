@@ -2563,21 +2563,56 @@ export function createSheetEditor(
   const openCfDialog = (): void => {
     const s = getSelRect(); const sheet = wb.sheets[active]!;
     const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
-    // Colour scales / data bars and text-contains have no interoperable ODF form (calcext-only,
-    // which LibreOffice drops when externally authored), so ODS offers only the standard highlight.
+    // The graphical rules (colour scale / data bar / icon set) and the text / rank / formula rules
+    // have no interoperable ODF form (calcext is dropped by LibreOffice on external author), so ODS
+    // offers only the standard highlight (cellIs, incl. between).
     const ods = wb.kind === "ods";
-    const kindOpts = [{ value: "cellIs", label: t("cfHighlight") }, ...(ods ? [] : [{ value: "colorScale", label: t("cfColorScale") }, { value: "dataBar", label: t("cfDataBar") }])];
-    const opOpts = [["greaterThan", "> "], ["lessThan", "< "], ["equal", "= "], ["notEqual", "≠ "], ["greaterThanOrEqual", "≥ "], ["lessThanOrEqual", "≤ "], ...(ods ? [] : [["containsText", t("cfContains")]])];
+    const kindOpts = [
+      { value: "cellIs", label: t("cfHighlight") },
+      ...(ods ? [] : [
+        { value: "text", label: t("cfTextRule") },
+        { value: "top", label: t("cfTopBottom") },
+        { value: "average", label: t("cfAverageRule") },
+        { value: "dupUnique", label: t("cfDupUnique") },
+        { value: "expression", label: t("cfFormulaRule") },
+        { value: "colorScale", label: t("cfColorScale") },
+        { value: "dataBar", label: t("cfDataBar") },
+        { value: "iconSet", label: t("cfIconSet") },
+      ]),
+    ];
+    const opOpts = [["greaterThan", "> "], ["lessThan", "< "], ["equal", "= "], ["notEqual", "≠ "], ["greaterThanOrEqual", "≥ "], ["lessThanOrEqual", "≤ "], ["between", t("cfBetween")], ["notBetween", t("cfNotBetween")]];
+    const textOps = [["containsText", t("cfContains")], ["notContainsText", t("cfNotContains")], ["beginsWith", t("cfBegins")], ["endsWith", t("cfEnds")]];
+    const iconSets = ["3TrafficLights1", "3Arrows", "3Symbols", "3Flags", "4Arrows", "4Rating", "5Arrows", "5Quarters", "5Rating"];
+    const hasFill = ["cellIs", "text", "top", "average", "dupUnique", "expression"];
     formDialog(t("cfEdit"), [
       { key: "kind", label: t("cfKind"), type: "select", value: "cellIs", options: kindOpts },
-      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: opOpts.map(([v, l]) => ({ value: v!, label: l! })) },
-      { key: "value", label: t("cfValue"), type: "text", value: "" },
-      { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce" },
+      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: opOpts.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["cellIs"] } },
+      { key: "value", label: t("cfValue"), type: "text", value: "", showFor: { key: "kind", values: ["cellIs"] } },
+      { key: "value2", label: t("cfValue2"), type: "text", value: "", showFor: { key: "operator", values: ["between", "notBetween"] } },
+      { key: "textOp", label: t("cfOperator"), type: "select", value: "containsText", options: textOps.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["text"] } },
+      { key: "text", label: t("cfText"), type: "text", value: "", showFor: { key: "kind", values: ["text"] } },
+      { key: "rank", label: t("cfRank"), type: "text", value: "10", showFor: { key: "kind", values: ["top"] } },
+      { key: "bottom", label: t("cfBottom"), type: "checkbox", value: false, showFor: { key: "kind", values: ["top"] } },
+      { key: "percent", label: t("cfPercent"), type: "checkbox", value: false, showFor: { key: "kind", values: ["top"] } },
+      { key: "below", label: t("cfBelow"), type: "checkbox", value: false, showFor: { key: "kind", values: ["average"] } },
+      { key: "equal", label: t("cfEqualAvg"), type: "checkbox", value: false, showFor: { key: "kind", values: ["average"] } },
+      { key: "unique", label: t("cfUnique"), type: "checkbox", value: false, showFor: { key: "kind", values: ["dupUnique"] } },
+      { key: "formula", label: t("cfFormula"), type: "text", value: "", showFor: { key: "kind", values: ["expression"] } },
+      { key: "iconset", label: t("cfIconSet"), type: "select", value: "3TrafficLights1", options: iconSets.map((v) => ({ value: v, label: v })), showFor: { key: "kind", values: ["iconSet"] } },
+      { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce", showFor: { key: "kind", values: [...hasFill, "dataBar"] } },
     ], (v) => {
       const kind = String(v.kind), color = String(v.color);
-      const spec = kind === "colorScale" ? { kind: "colorScale" as const, colors: ["#f8696b", "#ffeb84", "#63be7b"] }
-        : kind === "dataBar" ? { kind: "dataBar" as const, color: color || "#638ec6" }
-        : { kind: "cellIs" as const, operator: String(v.operator), value: String(v.value), fill: color };
+      const fill = color || "#ffc7ce";
+      let spec: import("../adapters/xlsx/write").CfSpec;
+      if (kind === "colorScale") spec = { kind: "colorScale", colors: ["#f8696b", "#ffeb84", "#63be7b"] };
+      else if (kind === "dataBar") spec = { kind: "dataBar", color: color || "#638ec6" };
+      else if (kind === "iconSet") { const set = String(v.iconset); spec = { kind: "iconSet", set, count: Number(set[0]) || 3 }; }
+      else if (kind === "text") spec = { kind: "text", operator: String(v.textOp) as "containsText", text: String(v.text), fill };
+      else if (kind === "top") spec = { kind: "top", rank: Math.max(1, Number(v.rank) || 10), percent: !!v.percent, bottom: !!v.bottom, fill };
+      else if (kind === "average") spec = { kind: "average", below: !!v.below, equal: !!v.equal, fill };
+      else if (kind === "dupUnique") spec = { kind: "dupUnique", unique: !!v.unique, fill };
+      else if (kind === "expression") spec = { kind: "expression", formula: String(v.formula), fill };
+      else { const op = String(v.operator); spec = { kind: "cellIs", operator: op, value: String(v.value), value2: op === "between" || op === "notBetween" ? String(v.value2) : undefined, fill }; }
       if (wb.kind === "ods") setOdsCondFormat(wb, sheet, ranges, spec);
       else setXlsxCondFormat(wb, sheet, ranges, spec);
       mark(); renderGrid();

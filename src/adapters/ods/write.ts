@@ -353,24 +353,25 @@ function a1RangeToOdfTarget(sheetName: string, g: { r1: number; c1: number; r2: 
   return `${sheetName}.${a1(g.r1, g.c1)}:${sheetName}.${a1(g.r2, g.c2)}`;
 }
 
-type OdsCfSpec =
-  | { kind: "cellIs"; operator: string; value: string; fill: string }
-  | { kind: "colorScale"; colors: string[] }
-  | { kind: "dataBar"; color: string };
-
-// A cellIs operator + operand -> a standard ODF style:condition ("cell-content()>5").
-function styleMapCondition(operator: string, value: string): string {
+// A cellIs operator + operand(s) -> a standard ODF style:condition ("cell-content()>5",
+// "cell-content-is-between(1,5)").
+function styleMapCondition(operator: string, value: string, value2?: string): string {
   const op: Record<string, string> = { greaterThan: ">", lessThan: "<", equal: "=", notEqual: "!=", greaterThanOrEqual: ">=", lessThanOrEqual: "<=" };
+  if (operator === "between") return `cell-content-is-between(${value},${value2 ?? value})`;
+  if (operator === "notBetween") return `cell-content-is-not-between(${value},${value2 ?? value})`;
   return `cell-content()${op[operator] ?? "="}${value}`;
 }
 
-/** Add or (spec === null) remove a conditional format over the given ranges. */
+/** Add or (spec === null) remove a conditional format over the given ranges. ODS authors cellIs
+    (standard style:map, incl. between) + colour scale / data bar (LibreOffice calcext); other rule
+    kinds are xlsx-only (the dialog does not offer them for ODS). */
 export function setOdsCondFormat(
   wb: Workbook,
   sheet: Sheet,
   ranges: { r1: number; c1: number; r2: number; c2: number }[],
-  spec: OdsCfSpec | null,
+  spec: import("../xlsx/write").CfSpec | null,
 ): void {
+  if (spec && spec.kind !== "cellIs" && spec.kind !== "colorScale" && spec.kind !== "dataBar") return;
   const doc = wb.contentDoc;
   const inRange = (r: number, c: number): boolean => ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
   const target = ranges.map((g) => a1RangeToOdfTarget(sheet.name, g)).join(" ");
@@ -399,7 +400,7 @@ export function setOdsCondFormat(
       cp.setAttributeNS(ODS.fo, "fo:background-color", spec.fill);
       fillSt.appendChild(cp);
       const fillName = internOdsStyle(doc, autoStyles, "table-cell", "ceCFfill", fillSt);
-      const cond = styleMapCondition(spec.operator, spec.value);
+      const cond = styleMapCondition(spec.operator, spec.value, spec.value2);
       const base = a1RangeToOdfTarget(sheet.name, ranges[0]!).split(":")[0]!;
       // One derived base style per distinct original style, inheriting it (parent) plus the map.
       const derived = new Map<string, string>();
