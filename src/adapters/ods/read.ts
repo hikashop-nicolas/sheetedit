@@ -212,6 +212,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   }
   readOdsCharts(wb, files);
   readOdsImages(wb, files);
+  readOdsSparklines(wb);
   return wb;
 }
 
@@ -351,6 +352,34 @@ function parseOdsCondFormats(doc: Document): Map<string, CondFormat[]> {
       (bySheet.get(sheetName) ?? bySheet.set(sheetName, []).get(sheetName)!).push({ ranges, rules });
   }
   return bySheet;
+}
+
+// LibreOffice sparklines: <calcext:sparkline-groups> is a child of <table:table> (after the rows).
+// Each group carries the type + colours; each <calcext:sparkline> binds a host cell-address to a
+// data-range. Populates sheet.sparklines (rendered by the same mini-chart drawer as xlsx).
+function readOdsSparklines(wb: Workbook): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  for (const group of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "sparkline-group")) {
+    let t: Element | null = group.parentElement;
+    while (t && t.localName !== "table") t = t.parentElement;
+    const sheet = t ? wb.sheets.find((s) => s.tableEl === t) : undefined;
+    if (!sheet) continue;
+    const type = (attrByLocal(group, "type") as "line" | "column" | "stacked") || "line";
+    const colorRaw = attrByLocal(group, "color-series") || "#376092";
+    const color = colorRaw.startsWith("#") ? colorRaw : `#${colorRaw}`;
+    const negRaw = attrByLocal(group, "color-negative");
+    const negColor = negRaw ? (negRaw.startsWith("#") ? negRaw : `#${negRaw}`) : undefined;
+    for (const sp of Array.from(group.getElementsByTagName("*")).filter((e) => e.localName === "sparkline")) {
+      const addr = attrByLocal(sp, "cell-address");
+      const data = attrByLocal(sp, "data-range");
+      if (!addr || !data) continue;
+      const hostA1 = odfRefToA1(addr.replace(/\$/g, ""));
+      const p = parseA1Ref((hostA1.includes("!") ? hostA1.split("!")[1]! : hostA1).split(":")[0]!);
+      if (!p) continue;
+      (sheet.sparklines ??= []).push({ type, color, negColor, host: { r: p.row, c: p.col }, dataRef: odfAddrToA1(data.replace(/\$/g, "")) });
+    }
+  }
 }
 
 export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): void {
