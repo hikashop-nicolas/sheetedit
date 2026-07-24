@@ -33,10 +33,12 @@ We render/follow these; now let the user create/edit them.
   `<dataValidations>`; the existing dropdown UI then drives it.
 
 ### Phase 4 - Conditional formatting: author + close render sub-gaps (DONE)
-- Author: a dialog to add common CF rules on the selection (cellIs comparison, colour scale, data
-  bar, top/bottom, text-contains); writes `<conditionalFormatting>` + dxf.
-- Render sub-gaps: icon sets (draw the icon per threshold), and allow `cellIs` operands that are
-  cell references / simple formulas (evaluate via the formula engine), not just numeric literals.
+- Author: a dialog covering every CF rule kind on the selection (cellIs incl. between, text,
+  top/bottom, above/below average, duplicate/unique, is-true-formula, time-period, colour scale,
+  data bar, icon set); writes `<conditionalFormatting>` + dxf.
+- Render: icon sets (icon per cfvo threshold); `cellIs` cell-ref/formula operands and is-true-formula
+  rules evaluate through the workbook formula engine; time-period rules match a cell's date serial
+  against a window derived from today. ODS keeps the interoperable cellIs subset.
 
 ### Phase 5 - Sparklines (in-cell mini charts) (DONE)
 Read the `x14:sparklineGroups` from the worksheet extLst (line / column / win-loss + colours) and
@@ -87,8 +89,10 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   items are honoured by Excel and sheetedit's display but ignored by LibreOffice's xlsx pivot
   rebuild; the calculated-item OOXML is emitted per spec but unverified in Excel (only that the file
   opens cleanly in LibreOffice).
-- **Conditional formatting**: icon-set authoring, `is-true-formula` / text-period rule authoring,
-  and cell-reference / formula operands for `cellIs` (numeric literals only today; these round-trip).
+- **Conditional formatting**: feature-complete. Authoring covers every rule kind; icon sets,
+  is-true-formula rules, `cellIs` cell-ref/formula operands and time-period rules all render (DONE).
+  ODS authoring stays on the interoperable cellIs subset (the graphical/formula rules have no ODF
+  form that survives a LibreOffice round-trip).
 - **Sparklines**: authoring on ods (xlsx is author + render; ods is render-only).
 - **Rich text**: full in-cell rich-text *editing* (per-run styling is rendered + preserved, not
   authored from the UI).

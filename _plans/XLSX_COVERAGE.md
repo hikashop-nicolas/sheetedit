@@ -60,9 +60,12 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   Show-values-as / calculated fields / calculated items are honoured by Excel and sheetedit's
   display but ignored by LibreOffice's xlsx pivot rebuild; the calculated-item OOXML is emitted per
   spec but unverified in Excel (only that the file opens cleanly in LibreOffice).
-- Conditional formatting: icon sets now render (arrows/traffic-lights/symbols/ratings, bucketed by
-  the cfvo thresholds); arbitrary expression rules and time-period rules still round-trip only, and
-  cellIs operands are numeric literals (cell-ref/formula operands skipped).
+- Conditional formatting: full authoring and rendering. Icon sets render (arrows/traffic-lights/
+  symbols/ratings, bucketed by the cfvo thresholds); is-true-formula (expression) rules and cellIs
+  cell-ref/formula operands evaluate through the workbook's formula engine; time-period rules (dates
+  occurring) author + render against today. The authoring dialog covers every rule kind; ODS keeps
+  the interoperable subset (cellIs incl. between) since the graphical/formula rules have no ODF form
+  that survives a LibreOffice round-trip.
 - Rich text within one cell renders each run's own style (bold/italic/colour/etc.); editing a
   rich cell keeps the plain text (per-run style is preserved, not authored from the UI).
 - Recalc is a subset: unsupported functions or circular refs yield an error value (cached value
@@ -90,5 +93,5 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 - (DONE) 2. Hyperlinks - read external+internal, render blue link + open button, click opens/navigates
 - (DONE) 3. Data validation dropdowns - list type: caret picker (inline + range values) + invalid-value outline
 - (DONE) 4. Shift CF/DV/hyperlink/autofilter ranges (sqref/ref) + model validations on insert/delete
-- (DONE) 5. Conditional formatting rendering - cellIs/text/top-bottom/average/dup dxf + colour scales + data bars (icon sets, expression, time-period round-trip only)
+- (DONE) 5. Conditional formatting - full author + render: cellIs/text/top-bottom/average/dup dxf + colour scales + data bars + icon sets + is-true-formula + cell-ref/formula operands + time-period rules
 - (DONE) 6. Comments display - legacy + threaded comments: corner marker + hover popover (author + text)
