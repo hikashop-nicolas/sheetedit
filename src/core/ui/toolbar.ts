@@ -13,6 +13,7 @@ export const tbBtn = (label: string, title: string, onClick: () => void): HTMLBu
   b.textContent = label;
   b.title = title;
   b.setAttribute("aria-label", title);
+  b.addEventListener("mousedown", (e) => e.preventDefault()); // keep the edited cell's focus + text selection
   b.addEventListener("click", onClick);
   return b;
 };

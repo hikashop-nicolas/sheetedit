@@ -16,6 +16,7 @@ import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from 
 import { deleteOdsPivotDef, setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight, writeOdsPivotDef } from "../adapters/ods";
 import { computePivot, pivotColumnItems, pivotValueName, type PivotFunc, type PivotShowAs, type PivotSpec, type PivotValue } from "./pivot";
 import { makeFormulaEvaluator, recalc } from "./recalc";
+import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
@@ -763,18 +764,56 @@ export function createSheetEditor(
     return out;
   };
 
+  // In-cell rich text: while a single cell is being edited with a sub-range of its text selected,
+  // a run-applicable style change (bold/italic/underline/strike/colour/size/font) formats just that
+  // range as a run rather than the whole cell. Returns the target, or null to fall through.
+  const richRunTarget = (change: StyleChange): { r: number; c: number; start: number; end: number } | null => {
+    if (!isRunStyleChange(change) || !activeCell) return null;
+    const inp = inputs.get(key(activeCell.r, activeCell.c));
+    if (!inp || document.activeElement !== inp) return null; // must be actively editing this cell
+    const start = inp.selectionStart ?? 0, end = inp.selectionEnd ?? 0;
+    if (start >= end || (start === 0 && end === inp.value.length)) return null; // whole/none -> cell style
+    return { r: activeCell.r, c: activeCell.c, start, end };
+  };
+  const applyRichRun = (rt: { r: number; c: number; start: number; end: number }, change: StyleChange) => {
+    const sheet = wb.sheets[active]!;
+    const inp = inputs.get(key(rt.r, rt.c));
+    // Commit any uncommitted typing first so the run offsets match the model's text.
+    if (inp && inp.value !== rawOf(rt.r, rt.c)) commitValue(rt.r, rt.c, inp.value);
+    const cell = getCell(sheet, rt.r, rt.c);
+    if (!cell || cell.kind === "n" || cell.kind === "b" || cell.formula != null || cell.value === "") { syncToolbar(); return; }
+    recordCells([{ r: rt.r, c: rt.c }], () => {
+      const runs = applyRunStyle(cellRuns(cell), rt.start, rt.end, change);
+      cell.richRuns = runsUniform(runs, cell) ? undefined : runs;
+      cell.edited = true;
+    });
+    mark();
+    renderGrid();
+    const inp2 = inputs.get(key(rt.r, rt.c)); // re-render replaced the input; restore the edit selection
+    if (inp2) { inp2.focus(); try { inp2.setSelectionRange(rt.start, rt.end); } catch { /* ignore */ } }
+    syncToolbar();
+  };
+
   const applyStyle = (change: StyleChange) => {
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
+    const rt = richRunTarget(change);
+    if (rt) { applyRichRun(rt, change); return; }
     const sheet = wb.sheets[active];
     if (!sheet) return;
     const positions = selPositions(sheet);
+    const foldRuns = isRunStyleChange(change); // a run-applicable change must also update rich cells
+    let touchedRuns = false;
     recordCells(positions, () => {
-      for (const pos of positions) setCellStyle(sheet, ensureCell(sheet, pos.r, pos.c), change);
+      for (const pos of positions) {
+        const cell = ensureCell(sheet, pos.r, pos.c);
+        setCellStyle(sheet, cell, change);
+        if (foldRuns && cell.richRuns?.length) { const runs = setRunStyle(cell.richRuns, 0, cell.value.length, change); cell.richRuns = runsUniform(runs, cell) ? undefined : runs; cell.edited = true; touchedRuns = true; }
+      }
     });
     mark();
-    // Wrap toggles or wrap cells change row heights, so full re-render; everything else patches
-    // the rendered cells in place, keeping focus and scroll.
-    if (change.wrap !== undefined || positions.some((p) => getCell(sheet, p.r, p.c)?.cellStyle?.wrap)) renderGrid();
+    // Wrap toggles or wrap cells change row heights, so full re-render; a rich-cell run update needs
+    // its overlay rebuilt; everything else patches the rendered cells in place, keeping focus/scroll.
+    if (touchedRuns || change.wrap !== undefined || positions.some((p) => getCell(sheet, p.r, p.c)?.cellStyle?.wrap)) renderGrid();
     else patchStyle(positions);
     syncToolbar(); // reflect the new state on the toggle buttons (bold, align, ...)
   };

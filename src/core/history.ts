@@ -1,4 +1,4 @@
-import type { Cell, CellKind, CellStyle, Sheet } from "./model";
+import type { Cell, CellKind, CellStyle, Phonetic, Sheet, TextRun } from "./model";
 import { ensureCell, getCell } from "./model";
 
 // Undo/redo for the grid. Each user action records the affected cells' mutable
@@ -18,6 +18,8 @@ export interface CellFields {
   numFmt?: string | number;
   odsValueType?: string;
   odsCurrency?: string;
+  richRuns?: TextRun[];
+  phonetic?: Phonetic[];
 }
 
 export interface UndoCellChange {
@@ -51,6 +53,8 @@ export function snapFields(cell: Cell | undefined): CellFields | null {
     numFmt: cell.numFmt,
     odsValueType: cell.odsValueType,
     odsCurrency: cell.odsCurrency,
+    richRuns: cell.richRuns ? cell.richRuns.map((r) => ({ ...r })) : undefined,
+    phonetic: cell.phonetic ? cell.phonetic.map((p) => ({ ...p })) : undefined,
   };
 }
 
@@ -69,6 +73,8 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
     cur.numFmt = undefined;
     cur.odsValueType = undefined;
     cur.odsCurrency = undefined;
+    cur.richRuns = undefined;
+    cur.phonetic = undefined;
     cur.edited = true;
     cur.fDirty = cur.fDirty || hadFormula;
     return;
@@ -86,6 +92,8 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
   cell.numFmt = f.numFmt;
   cell.odsValueType = f.odsValueType;
   cell.odsCurrency = f.odsCurrency;
+  cell.richRuns = f.richRuns ? f.richRuns.map((r) => ({ ...r })) : undefined;
+  cell.phonetic = f.phonetic ? f.phonetic.map((p) => ({ ...p })) : undefined;
   cell.edited = true;
   cell.fDirty = cell.fDirty || f.fDirty || formulaChanges;
 }

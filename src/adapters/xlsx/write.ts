@@ -7,6 +7,22 @@ import { setXlsxCellNumFmt } from "./styles";
 // xlsx write: surgical cell/layout writers and the save pass
 // ---------------------------------------------------------------------------
 
+/** Build an <rPr> for a rich-text run, or null when the run has no formatting. Children follow the
+    CT_RPrElt schema order (rFont, b, i, strike, color, sz, u). */
+function xlsxRunPr(doc: Document, ns: string, run: import("../../core/model").TextRun): Element | null {
+  if (!run.bold && !run.italic && !run.underline && !run.strike && !run.size && !run.color && !run.font) return null;
+  const rPr = doc.createElementNS(ns, "rPr");
+  const flag = (name: string) => { const e = doc.createElementNS(ns, name); rPr.appendChild(e); };
+  if (run.font) { const e = doc.createElementNS(ns, "rFont"); e.setAttribute("val", run.font); rPr.appendChild(e); }
+  if (run.bold) flag("b");
+  if (run.italic) flag("i");
+  if (run.strike) flag("strike");
+  if (run.color) { const e = doc.createElementNS(ns, "color"); e.setAttribute("rgb", "FF" + run.color.replace(/^#/, "").toUpperCase()); rPr.appendChild(e); }
+  if (run.size) { const e = doc.createElementNS(ns, "sz"); e.setAttribute("val", String(run.size)); rPr.appendChild(e); }
+  if (run.underline) { const e = doc.createElementNS(ns, "u"); rPr.appendChild(e); }
+  return rPr;
+}
+
 export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): void {
   const doc = sheet.doc!;
   const ns = doc.documentElement.namespaceURI || SS_MAIN;
@@ -62,6 +78,21 @@ export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): v
   } else {
     c.setAttribute("t", "inlineStr");
     const is = doc.createElementNS(ns, "is");
+    if (cell.richRuns?.length) {
+      // Rich text: one <r> per run, each with its own <rPr> formatting.
+      for (const run of cell.richRuns) {
+        const r = doc.createElementNS(ns, "r");
+        const rPr = xlsxRunPr(doc, ns, run);
+        if (rPr) r.appendChild(rPr);
+        const rt = doc.createElementNS(ns, "t");
+        rt.setAttribute("xml:space", "preserve");
+        rt.textContent = run.text;
+        r.appendChild(rt);
+        is.appendChild(r);
+      }
+      c.appendChild(is);
+      return;
+    }
     const t = doc.createElementNS(ns, "t");
     t.setAttribute("xml:space", "preserve");
     t.textContent = cell.value;

@@ -74,9 +74,15 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
     c.setAttributeNS(ODS.office, "office:value-type", "string");
     // A linked cell must NOT carry office:string-value: LibreOffice treats it as authoritative and
     // discards the rich <text:a>, so the value lives only in the text:p (the anchor text).
-    if (!cell.link) c.setAttributeNS(ODS.office, "office:string-value", cell.value);
-    if (cell.phonetic?.length) c.appendChild(makeRubyP(doc, cell.value, cell.phonetic));
-    else addText(cell.value);
+    if (cell.richRuns?.length && !cell.link) {
+      // Rich text: one <text:span> per formatted run, plain text for unformatted runs.
+      c.removeAttributeNS(ODS.office, "string-value"); // spans are authoritative; a string-value would flatten them
+      c.appendChild(makeRunsP(doc, cell.richRuns));
+    } else {
+      if (!cell.link) c.setAttributeNS(ODS.office, "office:string-value", cell.value);
+      if (cell.phonetic?.length) c.appendChild(makeRubyP(doc, cell.value, cell.phonetic));
+      else addText(cell.value);
+    }
   }
 }
 
@@ -155,6 +161,34 @@ function makeRubyP(doc: Document, base: string, runs: Phonetic[]): Element {
     pos = eb;
   }
   if (pos < base.length) p.appendChild(doc.createTextNode(base.slice(pos)));
+  return p;
+}
+
+// A <text:p> for rich text: each formatted run becomes a <text:span> with an interned text-family
+// automatic style; unformatted runs stay as bare text nodes.
+function makeRunsP(doc: Document, runs: import("../../core/model").TextRun[]): Element {
+  const p = doc.createElementNS(ODS.text, "text:p");
+  const autoStyles = ensureOdsAutoStyles(doc);
+  for (const run of runs) {
+    if (run.text === "") continue;
+    const hasStyle = run.bold || run.italic || run.underline || run.strike || run.size || run.color || run.font;
+    if (!hasStyle) { p.appendChild(doc.createTextNode(run.text)); continue; }
+    const st = doc.createElementNS(ODS.style, "style:style");
+    const tp = doc.createElementNS(ODS.style, "style:text-properties");
+    if (run.bold) tp.setAttributeNS(ODS.fo, "fo:font-weight", "bold");
+    if (run.italic) tp.setAttributeNS(ODS.fo, "fo:font-style", "italic");
+    if (run.underline) { tp.setAttributeNS(ODS.style, "style:text-underline-style", "solid"); tp.setAttributeNS(ODS.style, "style:text-underline-width", "auto"); tp.setAttributeNS(ODS.style, "style:text-underline-color", "font-color"); }
+    if (run.strike) tp.setAttributeNS(ODS.style, "style:text-line-through-style", "solid");
+    if (run.size) tp.setAttributeNS(ODS.fo, "fo:font-size", `${run.size}pt`);
+    if (run.color) tp.setAttributeNS(ODS.fo, "fo:color", run.color);
+    if (run.font) tp.setAttributeNS(ODS.style, "style:font-name", run.font);
+    st.appendChild(tp);
+    const name = internOdsStyle(doc, autoStyles, "text", "T", st);
+    const span = doc.createElementNS(ODS.text, "text:span");
+    span.setAttributeNS(ODS.text, "text:style-name", name);
+    span.textContent = run.text;
+    p.appendChild(span);
+  }
   return p;
 }
 

@@ -47,9 +47,14 @@ mini-renderer to stay light). Preserve on save. Render-only first; authoring lat
 
 ### Phase 6 - Rich text within a cell (DONE)
 Read multi-run strings (`<is>`/sharedStrings `<r><rPr>...`) into a run model and render each run
-with its own style in the cell (currently flattened to one style). Editing: keep it simple - on
-edit, a cell with rich runs either preserves the runs if the text is unchanged, or collapses to the
-predominant style (documented). Full in-cell rich editing is out of scope for this phase.
+with its own style in the cell. Authoring (2026-07-24): while a cell is being edited, selecting a
+sub-range of its text and clicking a run-applicable style (bold/italic/underline/strike/colour/size/
+font) formats just that range as a run; the whole style toolbar drives it (buttons preserve the
+edit selection via a mousedown preventDefault). The runs are serialised to xlsx `<r><rPr>` and ODS
+`<text:span>` + interned text styles, and survive a LibreOffice round-trip. A pure `core/richtext.ts`
+splits/merges/normalises runs (toggle by selection state; drop richRuns when uniform with the base);
+undo/redo now snapshots richRuns/phonetic. Retyping a cell's text still clears its runs (offsets
+would shift) - documented; re-apply after the text is settled.
 
 ### Phase 7 - Dynamic arrays / spill (MVP) (DONE)
 The formula engine preserves legacy array formulas but does not spill modern dynamic arrays. Add
@@ -94,8 +99,9 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   ODS authoring stays on the interoperable cellIs subset (the graphical/formula rules have no ODF
   form that survives a LibreOffice round-trip).
 - **Sparklines**: authoring on ods (xlsx is author + render; ods is render-only).
-- **Rich text**: full in-cell rich-text *editing* (per-run styling is rendered + preserved, not
-  authored from the UI).
+- **Rich text**: feature-complete. Per-run styling is rendered, authored (select a sub-range while
+  editing, then bold/italic/underline/strike/colour/size/font) and written to xlsx + ods (DONE).
+  Retyping a cell's text clears its runs (offsets shift); re-apply after the text is settled.
 - **Images / shapes**: move / resize / replace editing (render-only + preserved today).
 - **Dynamic arrays**: exotic spill producers are best-effort; only UNIQUE/SORT/FILTER/SEQUENCE +
   TRANSPOSE/bare-range spill are supplied.

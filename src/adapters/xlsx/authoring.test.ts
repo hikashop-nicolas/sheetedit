@@ -60,6 +60,24 @@ describe("authoring writers", () => {
     expect(srels).toMatch(/vmlDrawing/);
   });
 
+  it("writes rich-text runs (inlineStr <r><rPr>) that round-trip to richRuns", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    const cell = { row: 1, col: 1, value: "hello world", kind: "s" as const,
+      richRuns: [{ text: "hello " }, { text: "world", bold: true, color: "#ff0000", size: 14 }] };
+    sheet.cells.set("1:1", cell as never);
+    cell.edited = true as never;
+    writeXlsx(wb);
+    const xml = new TextDecoder().decode(sheet.doc ? serializeXml(sheet.doc) : new Uint8Array());
+    expect(xml).toContain('t="inlineStr"');
+    expect(xml).toMatch(/<r><t[^>]*>hello <\/t><\/r>/);
+    expect(xml).toMatch(/<rPr><b\/><color rgb="FFFF0000"\/><sz val="14"\/><\/rPr><t[^>]*>world<\/t>/);
+    // read back
+    const re = readWorkbook(zipSync(wb.files));
+    const runs = re.sheets[0].cells.get("1:1")?.richRuns;
+    expect(runs?.map((r) => r.text)).toEqual(["hello ", "world"]);
+    expect(runs?.[1]).toMatchObject({ bold: true, color: "#ff0000", size: 14 });
+  });
+
   it("authors a cellIs conditional format (dxf + cfRule) that round-trips", () => {
     const wb = base(); const sheet = wb.sheets[0];
     setXlsxCondFormat(wb, sheet, [{ r1: 2, c1: 1, r2: 9, c2: 1 }], { kind: "cellIs", operator: "greaterThan", value: "5", fill: "#ffc7ce" });

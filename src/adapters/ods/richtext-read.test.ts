@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
+import { writeWorkbook } from "../../core/workbook";
 import { getCell } from "../../core/model";
 
 const NS = `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"`;
@@ -37,5 +38,17 @@ describe("ods rich text", () => {
   it("leaves richRuns undefined for a single unstyled string", () => {
     const wb = readWorkbook(ods(`<table:table-cell office:value-type="string"><text:p>plain</text:p></table:table-cell>`));
     expect(getCell(wb.sheets[0], 1, 1)?.richRuns).toBeUndefined();
+  });
+
+  it("authors richRuns and round-trips them through text:span styles", () => {
+    const wb = readWorkbook(ods(`<table:table-cell office:value-type="string"><text:p>plain</text:p></table:table-cell>`));
+    const cell = getCell(wb.sheets[0], 1, 1)!;
+    cell.value = "hello world"; cell.kind = "s"; cell.edited = true;
+    cell.richRuns = [{ text: "hello " }, { text: "world", bold: true, italic: true, color: "#ff0000", size: 14 }];
+    const re = readWorkbook(writeWorkbook(wb));
+    const runs = getCell(re.sheets[0], 1, 1)?.richRuns;
+    expect(runs?.map((r) => r.text)).toEqual(["hello ", "world"]);
+    expect(runs?.[1]).toMatchObject({ bold: true, italic: true, size: 14 });
+    expect(runs?.[1].color?.toLowerCase()).toContain("ff0000");
   });
 });

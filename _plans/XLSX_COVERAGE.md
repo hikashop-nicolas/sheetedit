@@ -66,8 +66,10 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   occurring) author + render against today. The authoring dialog covers every rule kind; ODS keeps
   the interoperable subset (cellIs incl. between) since the graphical/formula rules have no ODF form
   that survives a LibreOffice round-trip.
-- Rich text within one cell renders each run's own style (bold/italic/colour/etc.); editing a
-  rich cell keeps the plain text (per-run style is preserved, not authored from the UI).
+- Rich text within one cell renders each run's own style (bold/italic/colour/etc.) and is authored
+  from the UI: select part of a cell's text while editing and apply a style to just that run. Runs
+  are written to xlsx (`<r><rPr>`) and ods (`<text:span>`) and survive a LibreOffice round-trip.
+  Retyping a cell's text clears its runs (offsets would shift).
 - Recalc is a subset: unsupported functions or circular refs yield an error value (cached value
   shown as fallback); exotic custom number-format codes may render slightly differently (SSF).
 
