@@ -36,7 +36,8 @@ and pivot tables included). Tracks the gap list and the agreed priority order fo
 Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized
 with its sibling elements intact:
 
-- Images, shapes, drawings (charts and pivot tables are now fully editable, see above)
+- Shapes and other drawings (pictures can now be moved/resized, and charts and pivot tables are
+  fully editable, see above)
 - Form controls, slicers, ActiveX
 - Sparklines authored on ods (xlsx sparklines are author + render)
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
@@ -51,9 +52,10 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   (with a #SPILL! guard on collisions). Producers UNIQUE / SORT / FILTER / SEQUENCE are supplied
   (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
   mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
-- No editing of the remaining preserved-only features above (images, shapes, form controls,
-  slicers, protection). The now-rendered features (hyperlinks, dropdowns, CF, comments) are
-  read/followed, not authored.
+- Pictures can be moved and resized (xlsx; the two-cell anchor is written back); replacing an
+  image's bytes and editing non-picture shapes are still not supported. Other preserved-only
+  features above (form controls, slicers, protection) are not editable. The now-rendered features
+  (hyperlinks, dropdowns, CF, comments) are read/followed, not authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
   total), calculated fields, calculated items, and a pivot chart (over the output) are all
   supported. Not attempted: byte-identical layout to Excel (both apps re-flow the body on open).

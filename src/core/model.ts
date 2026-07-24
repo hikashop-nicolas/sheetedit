@@ -198,8 +198,9 @@ export interface Sheet {
   condFormats?: CondFormat[];
   /** Charts anchored on this sheet (rendered as an overlay; created/edited ones are written back). */
   charts?: import("./chart-model").ChartModel[];
-  /** Embedded pictures anchored on this sheet (rendered on an overlay; preserved on save). */
-  images?: { anchor: import("./chart-model").ChartAnchor; dataUri: string }[];
+  /** Embedded pictures anchored on this sheet (rendered on an overlay; move/resize is written back
+      for xlsx, otherwise preserved on save). */
+  images?: SheetImage[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
   sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
@@ -278,6 +279,19 @@ export interface StyleChange {
 
 /** A styled run within a rich-text (multi-format) cell string. */
 export interface TextRun { text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; size?: number; color?: string; font?: string; }
+
+/** An embedded picture anchored on a sheet. Rendered on an overlay; a move/resize updates `anchor`
+    and sets `dirty`, which the xlsx writer flushes back into the drawing part. */
+export interface SheetImage {
+  anchor: import("./chart-model").ChartAnchor;
+  dataUri: string;
+  /** xlsx: the drawing part path + the anchor's index among the drawing's anchors, so a dirty
+      move/resize can find and rewrite the exact anchor element on save. */
+  drawingPath?: string;
+  anchorIndex?: number;
+  /** Moved/resized in the UI -> written back; otherwise the drawing part stays verbatim. */
+  dirty?: boolean;
+}
 
 export const key = (row: number, col: number): string => `${row}:${col}`;
 

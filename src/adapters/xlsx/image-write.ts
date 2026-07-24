@@ -1,0 +1,67 @@
+import { parseXmlOpt, serializeXml, type Sheet, type SheetImage, type Workbook } from "../../core/model";
+import { pxToEmu } from "../../core/chart-model";
+
+// Persist a moved/resized picture back into its worksheet drawing part. Only images flagged dirty
+// by the overlay are touched; every other drawing (and untouched image) stays verbatim. The anchor
+// element is patched in place for a twoCellAnchor, or converted to one (from + to) for a
+// oneCellAnchor / absoluteAnchor so the new position and size round-trip.
+
+const XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+const kid = (parent: Element, local: string): Element | undefined => Array.from(parent.children).find((c) => c.localName === local);
+
+/** Build an <xdr:from>/<xdr:to> point element for the given cell + pixel offset. */
+function pointEl(doc: Document, tag: string, col: number, colOff: number, row: number, rowOff: number): Element {
+  const p = doc.createElementNS(XDR, `xdr:${tag}`);
+  const add = (local: string, v: number) => { const e = doc.createElementNS(XDR, `xdr:${local}`); e.textContent = String(v); p.appendChild(e); };
+  add("col", col - 1); add("colOff", pxToEmu(colOff)); add("row", row - 1); add("rowOff", pxToEmu(rowOff));
+  return p;
+}
+
+function patchAnchorEl(doc: Document, anchorEl: Element, im: SheetImage): void {
+  const a = im.anchor;
+  const from = kid(anchorEl, "from");
+  const to = kid(anchorEl, "to");
+  if (from && to) {
+    // twoCellAnchor: rewrite the from/to children's col/colOff/row/rowOff.
+    const setPt = (p: Element, col: number, colOff: number, row: number, rowOff: number): void => {
+      const set = (local: string, v: number): void => { const e = kid(p, local); if (e) e.textContent = String(v); };
+      set("col", col - 1); set("colOff", pxToEmu(colOff)); set("row", row - 1); set("rowOff", pxToEmu(rowOff));
+    };
+    setPt(from, a.fromCol, a.fromColOff, a.fromRow, a.fromRowOff);
+    setPt(to, a.toCol, a.toColOff, a.toRow, a.toRowOff);
+    return;
+  }
+  // oneCellAnchor / absoluteAnchor: rebuild as a twoCellAnchor, keeping the object + clientData.
+  const two = doc.createElementNS(XDR, "xdr:twoCellAnchor");
+  const editAs = anchorEl.getAttribute("editAs"); if (editAs) two.setAttribute("editAs", editAs);
+  two.appendChild(pointEl(doc, "from", a.fromCol, a.fromColOff, a.fromRow, a.fromRowOff));
+  two.appendChild(pointEl(doc, "to", a.toCol, a.toColOff, a.toRow, a.toRowOff));
+  // Carry over the drawing object (pic/sp/graphicFrame) and clientData; drop from/pos/ext.
+  for (const ch of Array.from(anchorEl.children)) {
+    if (ch.localName === "from" || ch.localName === "to" || ch.localName === "pos" || ch.localName === "ext") continue;
+    two.appendChild(ch);
+  }
+  anchorEl.parentNode?.replaceChild(two, anchorEl);
+}
+
+function rewriteImage(wb: Workbook, im: SheetImage): void {
+  if (!im.drawingPath || im.anchorIndex == null || !wb.files[im.drawingPath]) return;
+  const doc = parseXmlOpt(wb.files[im.drawingPath]);
+  if (!doc) return;
+  const anchors = Array.from(doc.documentElement.children).filter((e) => /Anchor$/.test(e.localName));
+  const anchorEl = anchors[im.anchorIndex];
+  if (!anchorEl) return;
+  patchAnchorEl(doc, anchorEl, im);
+  wb.files[im.drawingPath] = serializeXml(doc);
+}
+
+/** Persist all dirty images to the workbook's drawing parts. */
+export function writeXlsxImages(wb: Workbook): void {
+  for (const sheet of wb.sheets as Sheet[]) {
+    for (const im of sheet.images ?? []) {
+      if (!im.dirty) continue;
+      rewriteImage(wb, im);
+      im.dirty = false;
+    }
+  }
+}

@@ -1665,6 +1665,8 @@ export function createSheetEditor(
     gridScroll,
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    editable: () => wb.kind === "xlsx", // ods drawing write-back is not implemented yet
+    onEdit: () => { mark(); imageLayer.refresh(); },
   });
   const pivotLayer = setupPivotLayer({
     wrap,

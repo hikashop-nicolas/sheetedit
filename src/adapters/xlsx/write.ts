@@ -2,6 +2,7 @@ import type { Cell, DataValidation, Sheet, Workbook } from "../../core/model";
 import { colToLetters, ensureCell, firstByLocal, parseXmlOpt, removeByLocal, serializeXml } from "../../core/model";
 import { SS_MAIN, ensureXlsxCellEl } from "./shared";
 import { writeXlsxCharts } from "./chart-write";
+import { writeXlsxImages } from "./image-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -707,6 +708,7 @@ export function setXlsxMerge(
 
 export function writeXlsx(wb: Workbook): void {
   writeXlsxCharts(wb); // persist created/edited charts (DrawingML parts) before serializing sheets
+  writeXlsxImages(wb); // persist moved/resized pictures into their drawing parts
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to

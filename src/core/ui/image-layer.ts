@@ -1,15 +1,20 @@
-import type { Sheet } from "../model";
+import type { Sheet, SheetImage } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
-// A read-only overlay that floats a sheet's embedded pictures over the grid, anchored to cells and
-// glued while scrolling (the same layer pattern the chart overlay uses, minus interaction). Images
-// are preserved on save; this only renders them.
+// An overlay that floats a sheet's embedded pictures over the grid, anchored to cells and glued
+// while scrolling (the same layer pattern the chart overlay uses). xlsx images can be moved (drag
+// the box) and resized (drag the corner handle); the new cell anchor is committed back to the model
+// and the host persists it. ods images are render-only (no drawing write-back yet).
 
 export interface ImageLayerDeps {
   wrap: HTMLElement;
   gridScroll: HTMLElement;
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
+  /** After a move/resize: the image's anchor was updated + dirty set; the host marks + persists. */
+  onEdit?: (im: SheetImage) => void;
+  /** True when the active sheet's images can be written back (xlsx); gates the drag handles. */
+  editable?: () => boolean;
 }
 
 const STYLE_ID = "sheetedit-image-style";
@@ -21,7 +26,12 @@ function injectStyles(): void {
     .sheetedit-imagelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
     .sheetedit-imagelayer-inner { position:absolute; inset:0; }
     .sheetedit-imagebox { position:absolute; }
-    .sheetedit-imagebox img { width:100%; height:100%; object-fit:contain; display:block; }
+    .sheetedit-imagebox img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
+    .sheetedit-imagebox.editable { pointer-events:auto; cursor:move; }
+    .sheetedit-imagebox.selected { outline:1.5px solid var(--sheetedit-accent,#4c8bf5); outline-offset:1px; }
+    .sheetedit-image-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
+      background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid #fff; cursor:nwse-resize; pointer-events:auto; display:none; }
+    .sheetedit-imagebox.selected .sheetedit-image-resize { display:block; }
   `;
   document.head.appendChild(s);
 }
@@ -36,6 +46,8 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
   layer.appendChild(inner);
   wrap.appendChild(layer);
 
+  let selected: SheetImage | null = null;
+
   const positionLayer = (): void => {
     const g = deps.geom();
     const gr = gridScroll.getBoundingClientRect();
@@ -47,12 +59,58 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
   };
   const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
 
+  // Commit a dragged/resized pixel rect (content coords) back to the image's cell anchor.
+  const rectToAnchor = (im: SheetImage, x: number, y: number, w: number, h: number): void => {
+    const g = deps.geom();
+    const set = (px: number, at: (p: number) => number, of: (i: number) => number): [number, number] => { const i = Math.max(1, at(px)); return [i, Math.max(0, px - of(i))]; };
+    const [fc, fco] = set(x, g.colAt, g.xOfCol);
+    const [fr, fro] = set(y, g.rowAt, g.yOfRow);
+    const [tc, tco] = set(x + w, g.colAt, g.xOfCol);
+    const [tr, tro] = set(y + h, g.rowAt, g.yOfRow);
+    im.anchor = { fromCol: fc, fromRow: fr, fromColOff: fco, fromRowOff: fro, toCol: tc, toRow: tr, toColOff: tco, toRowOff: tro };
+    im.dirty = true;
+  };
+
+  const attachDrag = (box: HTMLElement, handle: HTMLElement, im: SheetImage): void => {
+    const start = (e: PointerEvent, mode: "move" | "resize"): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      select(im);
+      const sx = e.clientX, sy = e.clientY;
+      const x0 = parseFloat(box.style.left) || 0, y0 = parseFloat(box.style.top) || 0;
+      const w0 = box.offsetWidth, h0 = box.offsetHeight;
+      const onMove = (ev: PointerEvent): void => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (mode === "move") { box.style.left = `${Math.max(0, x0 + dx)}px`; box.style.top = `${Math.max(0, y0 + dy)}px`; }
+        else { box.style.width = `${Math.max(12, w0 + dx)}px`; box.style.height = `${Math.max(12, h0 + dy)}px`; }
+      };
+      const onUp = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        rectToAnchor(im, parseFloat(box.style.left) || 0, parseFloat(box.style.top) || 0, box.offsetWidth, box.offsetHeight);
+        deps.onEdit?.(im);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    };
+    box.addEventListener("pointerdown", (e) => { if (e.target !== handle) start(e, "move"); });
+    handle.addEventListener("pointerdown", (e) => start(e, "resize"));
+  };
+
+  const boxes = new Map<SheetImage, HTMLElement>();
+  const select = (im: SheetImage | null): void => {
+    selected = im;
+    for (const [i, b] of boxes) b.classList.toggle("selected", i === im);
+  };
+
   const refresh = (): void => {
     inner.textContent = "";
+    boxes.clear();
     const sheet = deps.getSheet();
     const images = sheet?.images ?? [];
     layer.style.display = images.length ? "block" : "none";
-    if (!images.length) return;
+    if (!images.length) { selected = null; return; }
+    const editable = deps.editable?.() ?? false;
     const g = deps.geom();
     for (const im of images) {
       const a = im.anchor;
@@ -61,7 +119,7 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
       const x2 = g.xOfCol(a.toCol) + a.toColOff;
       const y2 = g.yOfRow(a.toRow) + a.toRowOff;
       const box = document.createElement("div");
-      box.className = "sheetedit-imagebox";
+      box.className = "sheetedit-imagebox" + (editable ? " editable" : "") + (im === selected ? " selected" : "");
       box.style.left = `${x}px`;
       box.style.top = `${y}px`;
       box.style.width = `${Math.max(1, x2 - x)}px`;
@@ -70,15 +128,25 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
       img.src = im.dataUri;
       img.alt = "";
       box.appendChild(img);
+      if (editable) {
+        const handle = document.createElement("div");
+        handle.className = "sheetedit-image-resize";
+        box.appendChild(handle);
+        attachDrag(box, handle, im);
+      }
       inner.appendChild(box);
+      boxes.set(im, box);
     }
     positionLayer();
     syncScroll();
   };
 
   gridScroll.addEventListener("scroll", syncScroll, { passive: true });
+  // Tap on empty grid deselects.
+  const onGridDown = (): void => { if (selected) select(null); };
+  gridScroll.addEventListener("pointerdown", onGridDown);
   return {
     refresh,
-    teardown() { gridScroll.removeEventListener("scroll", syncScroll); layer.remove(); },
+    teardown() { gridScroll.removeEventListener("scroll", syncScroll); gridScroll.removeEventListener("pointerdown", onGridDown); layer.remove(); },
   };
 }
