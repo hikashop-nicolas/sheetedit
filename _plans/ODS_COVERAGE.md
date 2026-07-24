@@ -11,6 +11,12 @@ against the OASIS ODF 1.3 spec.
 - Charts (read + author).
 - Hyperlinks (`<text:a>`), notes (`<office:annotation>`), list data validation
   (`<table:content-validation>` cell-content-is-in-list), and conditional formatting.
+- Embedded images (`<draw:frame>`/`<draw:image>` from `Pictures/` or inline base64), rendered on
+  the overlay layer and preserved verbatim.
+- Per-run rich text in a cell (`<text:span>` styles resolved to bold/italic/colour/etc.).
+- LibreOffice sparklines (`<calcext:sparkline-groups>`) rendered; render-only.
+- AutoFilter (`<table:database-range>` with filter buttons): toggle, per-column filter menu, sort,
+  and row hiding persisted as `table:visibility`. Verified through a LibreOffice round-trip.
 
 ## Conditional formatting (how ODF represents it)
 

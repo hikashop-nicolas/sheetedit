@@ -238,6 +238,32 @@ export function setOdsDataValidation(
       for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.odsValidationName = name; cell.dvDirty = true; }
 }
 
+/** Add (range) or remove (null) an autofilter as an ODF <table:database-range> with filter buttons. */
+export function setOdsAutoFilter(wb: Workbook, sheet: Sheet, range: { r1: number; c1: number; r2: number; c2: number } | null): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
+  if (!spreadsheet) return;
+  // Remove any existing "unnamed" filter database-range for this sheet (LibreOffice names the
+  // autofilter range "__Anonymous_Sheet_DB__...").
+  let container = Array.from(spreadsheet.children).find((e) => e.localName === "database-ranges");
+  if (container)
+    for (const dr of Array.from(container.children))
+      if (dr.localName === "database-range" && dr.getAttribute("table:display-filter-buttons") === "true" && (dr.getAttribute("table:target-range-address") ?? "").startsWith(`${sheet.name}.`))
+        container.removeChild(dr);
+  if (range) {
+    if (!container) { container = doc.createElementNS(ODS.table, "table:database-ranges"); const firstTable = spreadsheet.getElementsByTagName("table:table")[0]; spreadsheet.insertBefore(container, firstTable ?? spreadsheet.firstChild); }
+    const dr = doc.createElementNS(ODS.table, "table:database-range");
+    dr.setAttributeNS(ODS.table, "table:name", "__Anonymous_Sheet_DB__0");
+    dr.setAttributeNS(ODS.table, "table:display-filter-buttons", "true");
+    dr.setAttributeNS(ODS.table, "table:target-range-address", a1RangeToOdfTarget(sheet.name, range));
+    container.appendChild(dr);
+  } else if (container && !container.children.length) {
+    container.parentNode?.removeChild(container);
+  }
+  sheet.odsDirty = true;
+}
+
 // An A1 range -> an ODF conditional-format target address "Sheet1.A1:Sheet1.A5".
 function a1RangeToOdfTarget(sheetName: string, g: { r1: number; c1: number; r2: number; c2: number }): string {
   const a1 = (r: number, c: number): string => {
@@ -493,6 +519,10 @@ export function writeOds(wb: Workbook): void {
       rowEl.removeAttribute("table:number-rows-repeated");
       const rowStyle = sheet.odsRowStyles?.get(r);
       if (rowStyle) rowEl.setAttributeNS(ODS.table, "table:style-name", rowStyle);
+      // Row visibility from the model (manual hide + filter). Authoritative so a filter that hides
+      // or re-shows a row is persisted.
+      if (sheet.filterHidden?.has(r) || sheet.hiddenRows?.has(r)) rowEl.setAttributeNS(ODS.table, "table:visibility", "collapse");
+      else rowEl.removeAttributeNS(ODS.table, "visibility");
       // The last column needing an explicit cell: content or a merge edge on this row.
       let lastContent = 0;
       for (let c = maxCol; c >= 1; c--) {

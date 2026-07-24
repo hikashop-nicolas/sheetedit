@@ -14,9 +14,9 @@ describe("workbook capabilities", () => {
     expect(c.comments).toBe(true);
     expect(c.dataValidation).toBe(true);
     expect(c.conditionalFormat).toBe(true);
-    // No Excel-style sparklines or the x14 autofilter model.
+    expect(c.autofilter).toBe(true);
+    // Excel-style sparklines have no interoperable ODF authoring form.
     expect(c.sparklines).toBe(false);
-    expect(c.autofilter).toBe(false);
   });
 
   it("csv advertises no advanced features", () => {

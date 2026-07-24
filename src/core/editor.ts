@@ -13,7 +13,7 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
-import { setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
+import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsMerge, setOdsRowHeight } from "../adapters/ods";
 import { recalc } from "./recalc";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -2327,6 +2327,8 @@ export function createSheetEditor(
       if (!show !== wasHidden && wb.kind === "xlsx") setXlsxRowHidden(sheet, r, !show);
     }
     sheet.filterHidden = hidden.size ? hidden : undefined;
+    // ODS persists row visibility from the model on save; flag the sheet so it is re-emitted.
+    if (wb.kind === "ods") sheet.odsDirty = true;
     mark();
     renderGrid();
   };
@@ -2426,17 +2428,18 @@ export function createSheetEditor(
 
   const toggleAutoFilter = (): void => {
     const sheet = wb.sheets[active]!;
-    if (wb.kind !== "xlsx") return;
+    if (wb.kind !== "xlsx" && wb.kind !== "ods") return;
     if (sheet.autoFilter) {
-      if (wb.kind === "xlsx") setXlsxAutoFilter(sheet, null);
-      if (sheet.filterHidden) for (const r of sheet.filterHidden) setXlsxRowHidden(sheet, r, false);
+      if (wb.kind === "xlsx") { setXlsxAutoFilter(sheet, null); if (sheet.filterHidden) for (const r of sheet.filterHidden) setXlsxRowHidden(sheet, r, false); }
+      else setOdsAutoFilter(wb, sheet, null);
       sheet.autoFilter = undefined; sheet.filters = undefined; sheet.filterHidden = undefined;
     } else {
       const s = getSelRect();
       // Explicit multi-cell selection wins; otherwise scope to the data region around the cell.
       const range = (s.r2 > s.r1 || s.c2 > s.c1) ? s : currentRegion(sheet, s.r1, s.c1);
       sheet.autoFilter = range;
-      setXlsxAutoFilter(sheet, `${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`);
+      if (wb.kind === "xlsx") setXlsxAutoFilter(sheet, `${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`);
+      else setOdsAutoFilter(wb, sheet, range);
     }
     mark();
     renderGrid();

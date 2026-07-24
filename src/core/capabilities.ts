@@ -47,7 +47,7 @@ const XLSX: WorkbookCapabilities = {
 const ODS: WorkbookCapabilities = {
   charts: true,
   sparklines: false,
-  autofilter: false,
+  autofilter: true,
   hyperlinks: true,
   dataValidation: true,
   comments: true,

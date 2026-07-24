@@ -213,6 +213,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   readOdsCharts(wb, files);
   readOdsImages(wb, files);
   readOdsSparklines(wb);
+  readOdsAutoFilter(wb);
   return wb;
 }
 
@@ -352,6 +353,26 @@ function parseOdsCondFormats(doc: Document): Map<string, CondFormat[]> {
       (bySheet.get(sheetName) ?? bySheet.set(sheetName, []).get(sheetName)!).push({ ranges, rules });
   }
   return bySheet;
+}
+
+// AutoFilter: an ODF <table:database-range table:display-filter-buttons="true"> whose
+// target-range-address names the sheet + range -> sheet.autoFilter (shows the filter carets).
+function readOdsAutoFilter(wb: Workbook): void {
+  const doc = wb.contentDoc;
+  if (!doc) return;
+  for (const dr of Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "database-range")) {
+    if (dr.getAttribute("table:display-filter-buttons") !== "true" && attrByLocal(dr, "display-filter-buttons") !== "true") continue;
+    const target = attrByLocal(dr, "target-range-address");
+    if (!target) continue;
+    const a1 = odfAddrToA1(target.replace(/\$/g, ""));
+    const bang = a1.indexOf("!");
+    const sheetName = bang >= 0 ? a1.slice(0, bang) : "";
+    const body = (bang >= 0 ? a1.slice(bang + 1) : a1).split(":");
+    const p1 = parseA1Ref(body[0] ?? ""); const p2 = body[1] ? parseA1Ref(body[1]) : p1;
+    const sheet = wb.sheets.find((s) => s.name === sheetName) ?? (sheetName === "" ? wb.sheets[0] : undefined);
+    if (!sheet || !p1 || !p2) continue;
+    sheet.autoFilter = { r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
+  }
 }
 
 // LibreOffice sparklines: <calcext:sparkline-groups> is a child of <table:table> (after the rows).
