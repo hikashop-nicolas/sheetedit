@@ -141,6 +141,15 @@ the raw aggregate). Calculated items are emitted per the OOXML spec but could no
 Excel here, only that the file still opens cleanly in LibreOffice. Byte-identical layout to Excel is
 not attempted (both apps re-flow the body from the definition on open).
 
+## Freeze panes
+
+Pin a header row and/or the first columns so they stay put while the rest of the sheet scrolls. The
+toolbar's freeze button offers **freeze at this cell**, **freeze top row**, **freeze first column**
+and **unfreeze**; the row and column header menus also carry **freeze rows above** / **freeze columns
+to the left**. Existing freezes in a file are read and rendered, and a change is written back:
+`.xlsx` as `<pane state="frozen">` in the sheet view, `.ods` into the view settings in
+`settings.xml` (created, with its manifest entry, when the file has none).
+
 ## Outline grouping
 
 Row and column groups are read, rendered and authored in both formats. Grouped rows get an

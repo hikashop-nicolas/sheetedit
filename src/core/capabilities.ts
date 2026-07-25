@@ -25,6 +25,8 @@ export interface WorkbookCapabilities {
   shapes: boolean;
   /** Row / column outline grouping (gutter + group / ungroup / collapse). */
   outline: boolean;
+  /** Freeze panes (author + write back the view settings). */
+  freezePanes: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -38,6 +40,7 @@ const NONE: WorkbookCapabilities = {
   pivots: false,
   shapes: false,
   outline: false,
+  freezePanes: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -51,6 +54,7 @@ const XLSX: WorkbookCapabilities = {
   pivots: true,
   shapes: true,
   outline: true,
+  freezePanes: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -68,6 +72,8 @@ const ODS: WorkbookCapabilities = {
   // ODF groups ROWS with table:table-row-group; column groups are read and preserved but a
   // rebuilt column run is not re-nested, so authoring them is xlsx-only.
   outline: true,
+  // ODF keeps frozen panes in settings.xml (the view settings), not in the table itself.
+  freezePanes: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

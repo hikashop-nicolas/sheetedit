@@ -7,6 +7,7 @@ import { writeXlsxShapes } from "./shape-write";
 import { writeXlsxSlicers } from "./slicer-write";
 import { writeXlsxTimelines } from "./timeline-write";
 import { writeXlsxOutlines } from "./outline-write";
+import { writeXlsxFreezes } from "./freeze-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -727,6 +728,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxSlicers(wb); // persist slicer selections into their cache parts
   writeXlsxTimelines(wb); // persist timeline ranges into their cache parts
   writeXlsxOutlines(wb); // persist row/column grouping levels
+  writeXlsxFreezes(wb); // persist frozen panes
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to

@@ -291,6 +291,8 @@ export interface Sheet {
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
       view settings). Rendered as sticky; preserved on save via the untouched view XML. */
   freeze?: { rows: number; cols: number };
+  /** The freeze changed in the UI -> the view settings are rewritten on save. */
+  freezeDirty?: boolean;
   /** Autofilter range (1-based inclusive; first row = header). Drives sort/filter UI. */
   autoFilter?: { r1: number; c1: number; r2: number; c2: number };
   /** Pivot tables / data-pilots whose output lands on this sheet (read-only; rendered as cells). */

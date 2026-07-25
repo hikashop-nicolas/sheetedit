@@ -3,6 +3,7 @@ import { ensureCell, getCell, key, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
 import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } from "./styles";
+import { writeOdsFreezes } from "./freeze-write";
 // ---------------------------------------------------------------------------
 // ods write: cell/row emission and the save pass
 // ---------------------------------------------------------------------------
@@ -594,6 +595,7 @@ export function setOdsMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2
 }
 
 export function writeOds(wb: Workbook): void {
+  writeOdsFreezes(wb); // frozen panes live in settings.xml, not content.xml
   const doc = wb.contentDoc!;
   for (const sheet of wb.sheets) {
     const table = sheet.tableEl;

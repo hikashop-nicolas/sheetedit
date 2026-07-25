@@ -1357,6 +1357,16 @@ export function createSheetEditor(
     lineMenu?.remove();
     lineMenu = null;
   };
+  /** Set (or clear) the frozen panes and re-render; the write path picks it up from freezeDirty. */
+  const setFreeze = (rows: number, cols: number): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    sheet.freeze = rows > 0 || cols > 0 ? { rows, cols } : undefined;
+    sheet.freezeDirty = true;
+    mark();
+    renderGrid();
+  };
+
   const openLineMenu = (e: MouseEvent, axisOf: "row" | "col", line: number) => {
     const axis = axisOf;
     e.preventDefault();
@@ -1424,6 +1434,27 @@ export function createSheetEditor(
         act(t("outlineExpand"), () => setGroupCollapsed(sheet, axis, base, level, false, limit));
       }
       if (sheet && maxOutlineLevel(sheet, axis) > 0) act(t("outlineClear"), () => clearOutline(sheet, axis));
+    }
+    // Freeze panes, expressed on the axis whose header was clicked.
+    if (caps.freezePanes) {
+      const sheet = wb.sheets[active];
+      const fr = sheet?.freeze?.rows ?? 0, fc = sheet?.freeze?.cols ?? 0;
+      const sep2 = document.createElement("div");
+      sep2.className = "sheetedit-pop-sep";
+      pop.appendChild(sep2);
+      const item = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); run(); });
+        pop.appendChild(b);
+      };
+      // "Freeze rows above" pins everything before the clicked line, which is what you want when
+      // you right-click the first row of the body.
+      if (axis === "row") item(t("freezeRowsAbove"), () => setFreeze(Math.max(0, base - 1), fc));
+      else item(t("freezeColsLeft"), () => setFreeze(fr, Math.max(0, base - 1)));
+      if (fr > 0 || fc > 0) item(t("unfreeze"), () => setFreeze(0, 0));
     }
     document.body.appendChild(pop);
     lineMenu = pop;
@@ -1837,6 +1868,40 @@ export function createSheetEditor(
   if (caps.pivots && wb.kind === "xlsx") {
     const SLICER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="2" width="10" height="12" rx="1.5"/><rect x="5" y="5" width="6" height="2.2" rx="0.6"/><rect x="5" y="9" width="6" height="2.2" rx="0.6"/></svg>`;
     trailingIcons.push(tbIcon(SLICER_ICON, t("slicerInsert"), () => addTableSlicer()));
+  }
+  if (caps.freezePanes) {
+    const FREEZE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M2 6h12M6 2v12"/></svg>`;
+    // A small menu, like Excel's: freeze at the cursor, or just the top row / first column.
+    const freezeBtn: HTMLButtonElement = tbIcon(FREEZE_ICON, t("freezePanes"), () => {
+      closeLineMenu();
+      const sheet = wb.sheets[active];
+      const cur = sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: 1 };
+      const pop = document.createElement("div");
+      pop.className = "sheetedit-pop";
+      const item = (text: string, rows: number, cols: number) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); setFreeze(rows, cols); });
+        pop.appendChild(b);
+      };
+      // "Freeze at this cell" pins everything above and left of the selection, as Excel does.
+      item(t("freezeHere"), Math.max(0, cur.r - 1), Math.max(0, cur.c - 1));
+      item(t("freezeTopRow"), 1, 0);
+      item(t("freezeFirstCol"), 0, 1);
+      if ((sheet?.freeze?.rows ?? 0) > 0 || (sheet?.freeze?.cols ?? 0) > 0) item(t("unfreeze"), 0, 0);
+      document.body.appendChild(pop);
+      lineMenu = pop;
+      const r = freezeBtn.getBoundingClientRect();
+      pop.style.left = `${Math.round(Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))}px`;
+      pop.style.top = `${Math.round(r.bottom + 4)}px`;
+      const onOutside = (ev: Event) => {
+        if (!pop.contains(ev.target as Node)) { closeLineMenu(); document.removeEventListener("pointerdown", onOutside, true); }
+      };
+      setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+    });
+    trailingIcons.push(freezeBtn);
   }
   if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;

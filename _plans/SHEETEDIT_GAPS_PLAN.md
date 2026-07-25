@@ -203,6 +203,22 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   heights, because a row's content can be taller than its <row ht>.
   Fixed on the way: an ODS file with row groups duplicated its rows on every save, because the
   rebuild treated <table:table-row-group> as a structural child to keep.
+- **Freeze panes**: read + render + author + write on both formats. The toolbar button opens Excel's
+  little menu (freeze at the cursor / top row / first column / unfreeze) and the row and column
+  header menus carry "freeze rows above" / "freeze columns to the left". xlsx writes
+  <pane xSplit ySplit topLeftCell activePane state="frozen"> into the first <sheetView>, updating an
+  existing pane in place and removing it (plus the selections' stale @pane) on unfreeze, leaving the
+  rest of the view (zoom, gridlines, selection) untouched. ODF keeps this in settings.xml, not in
+  content.xml: per sheet, Horizontal/VerticalSplitMode = 2 with the counts in *SplitPosition and
+  PositionRight / PositionBottom; a workbook with no settings.xml gets a minimal one plus its
+  manifest entry.
+  VERIFICATION CAVEAT: LibreOffice's headless converter DROPS per-sheet view settings on every
+  output it writes, including ods -> ods, so a freeze cannot be round-tripped through it. What it
+  does prove: an xlsx -> xlsx pass keeps the written <pane> verbatim AND makes LibreOffice expand
+  the per-pane <selection> entries, which it only does after parsing the frozen panes; and its xlsx
+  export of the written ods picks up that sheet's scroll position, so it parsed the settings entry.
+  Split (non-frozen) panes are read past and left alone: they are a pure view artefact with no
+  model here.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
   print settings, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
