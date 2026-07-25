@@ -27,6 +27,8 @@ export interface PivotUiCtx {
   refreshPivotLayer: () => void;
   /** Re-render the slicer overlay after one is created. */
   refreshSlicers: () => void;
+  /** Hide/show one row (a table slicer filters rows, not a pivot). */
+  setRowHidden: (sheet: Sheet, row: number, hidden: boolean) => void;
   currentRegion: (sheet: Sheet, r: number, c: number) => Rect;
   chartsOn: boolean;
   chartInsert: (rect: Rect) => void;
@@ -372,6 +374,25 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
   const applySlicer = (sl: import("../model").SheetSlicer): void => {
     const wanted = new Set(sl.items.filter((i) => i.selected).map((i) => i.label));
     const allOn = sl.items.every((i) => i.selected);
+    // A table slicer filters the table's ROWS rather than a pivot: hide the ones it excludes.
+    if (sl.kind === "table" && sl.table) {
+      const t = sl.table;
+      const sheet = wb.sheets[t.sheetIndex];
+      if (sheet) {
+        const hidden = new Set<number>(sheet.filterHidden ?? []);
+        for (let r = t.r1 + t.headerRows; r <= t.r2; r++) {
+          const cell = getCell(sheet, r, t.c1 + t.col);
+          const label = cell ? (cell.display ?? cell.value) : "";
+          const show = allOn || wanted.has(label);
+          if (show) hidden.delete(r); else hidden.add(r);
+          ctx.setRowHidden(sheet, r, !show);
+        }
+        sheet.filterHidden = hidden.size ? hidden : undefined;
+        ctx.mark(); ctx.renderGrid();
+      }
+      return;
+    }
+    if (sl.kind === "olap") return; // no modelled OLAP source to filter
     for (const host of wb.sheets) {
       for (const info of host.pivotTables ?? []) {
         // An empty pivotTables list on the cache means "every pivot on this cache".

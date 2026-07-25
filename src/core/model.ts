@@ -61,6 +61,12 @@ export interface SheetSlicer {
   sourceName: string;
   /** Names of the pivot tables this slicer drives. */
   pivotTables: string[];
+  /** What the slicer filters. "olap" is rendered read-only: we model no OLAP source to filter. */
+  kind?: "pivot" | "table" | "olap";
+  /** Built-in or custom slicer style name (SlicerStyleLight1 .. SlicerStyleDark6, or a custom one). */
+  style?: string;
+  /** Table slicers (x15:tableSlicerCache): the bound table's grid range and the column inside it. */
+  table?: { sheetIndex: number; r1: number; c1: number; r2: number; c2: number; headerRows: number; col: number };
   /** Every item, in cache order, with its label and selected state. */
   items: { x: number; label: string; selected: boolean }[];
   anchor?: import("./chart-model").ChartAnchor;

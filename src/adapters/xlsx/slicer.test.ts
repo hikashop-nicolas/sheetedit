@@ -165,3 +165,97 @@ describe("creating a slicer from scratch", () => {
     expect(re!.anchor?.fromCol).toBe(6);
   });
 });
+
+const X15 = "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main";
+const EXT_TSC = "{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}";
+
+describe("slicer kinds", () => {
+  /** Swap in a cache of a given flavour on the c-pivot fixture. */
+  function withCache(cacheXmlInner: string): Uint8Array {
+    const files = unzipSync(withSlicer([0, 1]));
+    files["xl/slicerCaches/slicerCache1.xml"] = strToU8(
+      `<x14:slicerCacheDefinition xmlns:x14="${X14}" xmlns:x15="${X15}" name="Slicer_Region" sourceName="Region">${cacheXmlInner}</x14:slicerCacheDefinition>`);
+    return zipSync(files);
+  }
+  const first = (b: Uint8Array) => readWorkbook(b).sheets.flatMap((s) => s.slicers ?? [])[0]!;
+
+  it("reads a table slicer (x15:tableSlicerCache) and binds it to the table column", () => {
+    // c-pivot.xlsx has no table part, so the binding falls back to no table; assert the KIND and
+    // that the cache's tableId/column were parsed rather than mistaken for a pivot cache.
+    const sl = first(withCache(
+      `<x14:data><x14:tabular pivotCacheId="1"><x14:items count="2"><x14:i x="0" s="1"/><x14:i x="1" s="1"/></x14:items></x14:tabular></x14:data>` +
+      `<x14:extLst><x14:ext uri="${EXT_TSC}"><x15:tableSlicerCache tableId="1" column="1"/></x14:ext></x14:extLst>`));
+    expect(sl.kind).toBe("table");
+  });
+
+  it("reads an OLAP slicer's captions and marks it read-only", () => {
+    const sl = first(withCache(
+      `<x14:data><x14:olap pivotCacheId="1"><x14:levels count="1"><x14:level uniqueName="[Geo].[Region]" sourceCaption="Region" count="2">` +
+      `<x14:ranges><x14:range startItem="0">` +
+      `<x14:i n="[Geo].[Region].&amp;[North]" c="North"/><x14:i n="[Geo].[Region].&amp;[South]" c="South"/>` +
+      `</x14:range></x14:ranges></x14:level></x14:levels>` +
+      `<x14:selections count="1"><x14:selection n="North"/></x14:selections>` +
+      `</x14:olap></x14:data>`));
+    expect(sl.kind).toBe("olap");
+    expect(sl.items.map((i) => i.label)).toEqual(["North", "South"]);
+    // only the selected caption is on
+    expect(sl.items.map((i) => i.selected)).toEqual([true, false]);
+  });
+
+  it("reads the slicer style name", () => {
+    const files = unzipSync(withSlicer([0, 1]));
+    files["xl/slicers/slicer1.xml"] = strToU8(
+      `<x14:slicers xmlns:x14="${X14}"><x14:slicer name="Region" cache="Slicer_Region" caption="Region" columnCount="1" style="SlicerStyleDark3" rowHeight="234950"/></x14:slicers>`);
+    expect(first(zipSync(files)).style).toBe("SlicerStyleDark3");
+  });
+});
+
+describe("slicer style accents", () => {
+  it("maps the built-in style families to an accent colour", async () => {
+    const { styleAccent } = await import("../../core/ui/slicer-layer");
+    expect(styleAccent(undefined)).toBeUndefined();
+    expect(styleAccent("NotAStyle")).toBeUndefined();
+    expect(styleAccent("SlicerStyleLight1")).toBe("#7f7f7f");   // the neutral one
+    expect(styleAccent("SlicerStyleLight2")).toBe("#ed7d31");   // accent2
+    // Dark uses a deeper tone of the same accent than Light.
+    expect(styleAccent("SlicerStyleDark2")).not.toBe(styleAccent("SlicerStyleLight2"));
+    expect(styleAccent("SlicerStyleDark2")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+describe("table slicer bound to a real table", () => {
+  const RELNS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  /** A one-sheet workbook with a ListObject over A1:B5 and a table slicer on its 2nd column. */
+  function tableBook(): Uint8Array {
+    const rows = [["Item", "Region"], ["a", "North"], ["b", "South"], ["c", "North"], ["d", "West"]]
+      .map((cells, i) => `<row r="${i + 1}">${cells.map((v, c) => `<c r="${String.fromCharCode(65 + c)}${i + 1}" t="inlineStr"><is><t>${v}</t></is></c>`).join("")}</row>`).join("");
+    return zipSync({
+      "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>`),
+      "_rels/.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${R}"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`),
+      "xl/worksheets/_rels/sheet1.xml.rels": strToU8(`<Relationships xmlns="${RELNS}">` +
+        `<Relationship Id="rId1" Type="${R}/table" Target="../tables/table1.xml"/>` +
+        `<Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2007/relationships/slicer" Target="../slicers/slicer1.xml"/>` +
+        `</Relationships>`),
+      "xl/tables/table1.xml": strToU8(`<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Tbl" displayName="Tbl" ref="A1:B5" headerRowCount="1"><tableColumns count="2"><tableColumn id="1" name="Item"/><tableColumn id="2" name="Region"/></tableColumns></table>`),
+      "xl/slicers/slicer1.xml": strToU8(`<x14:slicers xmlns:x14="${X14}"><x14:slicer name="Region" cache="Slicer_Region" caption="Region" columnCount="1" rowHeight="234950"/></x14:slicers>`),
+      "xl/slicerCaches/slicerCache1.xml": strToU8(
+        `<x14:slicerCacheDefinition xmlns:x14="${X14}" xmlns:x15="${X15}" name="Slicer_Region" sourceName="Region">` +
+        `<x14:data><x14:tabular><x14:items count="3"><x14:i x="0" s="1"/><x14:i x="1" s="1"/><x14:i x="2" s="1"/></x14:items></x14:tabular></x14:data>` +
+        `<x14:extLst><x14:ext uri="${EXT_TSC}"><x15:tableSlicerCache tableId="1" column="2"/></x14:ext></x14:extLst>` +
+        `</x14:slicerCacheDefinition>`),
+      "xl/styles.xml": strToU8(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`),
+    });
+  }
+
+  it("takes its items from the bound table column's distinct values", () => {
+    const sl = readWorkbook(tableBook()).sheets.flatMap((s) => s.slicers ?? [])[0]!;
+    expect(sl.kind).toBe("table");
+    // column id 2 -> the 2nd table column ("Region"), whose body holds North/South/North/West
+    expect(sl.table).toMatchObject({ sheetIndex: 0, r1: 1, c1: 1, r2: 5, c2: 2, headerRows: 1, col: 1 });
+    expect(sl.items.map((i) => i.label)).toEqual(["North", "South", "West"]); // distinct, first-seen order
+    expect(sl.items.every((i) => i.selected)).toBe(true);
+  });
+});

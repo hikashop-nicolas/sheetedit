@@ -1,5 +1,6 @@
-import { parseXmlOpt, type SheetSlicer, type Workbook } from "../../core/model";
+import { getCell, parseXmlOpt, type SheetSlicer, type Workbook } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
+import { listWorkbookTables } from "./tables";
 
 // Slicers: Excel's interactive pivot filters. Three parts are involved -
 //   xl/slicers/slicerN.xml       the views  (<x14:slicer name cache caption columnCount .../>)
@@ -54,7 +55,9 @@ function slicerAnchors(files: Record<string, Uint8Array>, sheetPath: string): Ma
     have been read, so a slicer can borrow its pivot's cache part to label the items. */
 export function readSlicers(wb: Workbook, files: Record<string, Uint8Array>): void {
   // cache name -> parsed cache definition
-  const caches = new Map<string, { path: string; sourceName: string; pivotTables: string[]; sel: Map<number, boolean> }>();
+  type Cache = { path: string; sourceName: string; pivotTables: string[]; sel: Map<number, boolean>;
+    kind: "pivot" | "table" | "olap"; tableId?: number; tableCol?: number; olapLabels?: string[] };
+  const caches = new Map<string, Cache>();
   for (const path of Object.keys(files)) {
     if (!/^xl\/slicerCaches\/.*\.xml$/i.test(path)) continue;
     const doc = parseXmlOpt(files[path]!);
@@ -63,19 +66,45 @@ export function readSlicers(wb: Workbook, files: Record<string, Uint8Array>): vo
     const name = attr(root, "name");
     if (!name) continue;
     const sel = new Map<number, boolean>();
-    for (const i of descend(root, "i")) {
+    // A tabular cache lists <x14:i x s>; an OLAP one lists <x14:i n c> under its level ranges.
+    const tabular = descend(root, "tabular")[0];
+    if (tabular) for (const i of descend(tabular, "i")) {
       const x = Number(attr(i, "x") ?? "-1");
-      const s = attr(i, "s");
-      if (x >= 0) sel.set(x, s === "1" || s === "true");
+      if (x >= 0) sel.set(x, attr(i, "s") === "1" || attr(i, "s") === "true");
+    }
+    // A table slicer carries an x15:tableSlicerCache in the cache's extLst (tableId + column).
+    const tsc = descend(root, "tableSlicerCache")[0];
+    const olap = descend(root, "olap")[0];
+    let kind: Cache["kind"] = "pivot";
+    let olapLabels: string[] | undefined;
+    if (tsc) kind = "table";
+    else if (olap && !tabular) {
+      kind = "olap";
+      // OLAP caches carry their own captions, so the items can at least be listed.
+      const seen: string[] = [];
+      for (const i of descend(olap, "i")) { const c = attr(i, "c") ?? attr(i, "n"); if (c) seen.push(c); }
+      const selected = new Set(descend(olap, "selection").map((sn) => attr(sn, "n") ?? "").filter(Boolean));
+      olapLabels = seen;
+      seen.forEach((lbl, k) => sel.set(k, selected.size === 0 || selected.has(lbl)));
     }
     caches.set(name, {
       path,
       sourceName: attr(root, "sourceName") ?? "",
       pivotTables: descend(root, "pivotTable").map((p) => attr(p, "name") ?? "").filter(Boolean),
-      sel,
+      sel, kind,
+      tableId: tsc ? Number(attr(tsc, "tableId") ?? "0") : undefined,
+      tableCol: tsc ? Number(attr(tsc, "column") ?? "0") : undefined,
+      olapLabels,
     });
   }
   if (!caches.size) return;
+  // Resolve table slicers against the workbook's tables (matching the table part's @id).
+  const tables = listWorkbookTables(wb).map((t) => {
+    const doc = wb.files[t.path] ? parseXmlOpt(wb.files[t.path]) : undefined;
+    const id = Number(doc?.documentElement.getAttribute("id") ?? "0");
+    const cols = doc ? Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "tableColumn").map((e) => Number(e.getAttribute("id") ?? "0")) : [];
+    return { ...t, id, cols };
+  });
 
   for (const sheet of wb.sheets) {
     if (!sheet.path) continue;
@@ -91,12 +120,35 @@ export function readSlicers(wb: Workbook, files: Record<string, Uint8Array>): vo
         if (!name || !cacheName) continue;
         const cache = caches.get(cacheName);
         if (!cache) continue;
-        // Label the items from the cache field of a pivot this slicer drives.
-        let cachePart: string | undefined;
-        for (const s2 of wb.sheets)
-          for (const pt of s2.pivotTables ?? [])
-            if (!cachePart && (cache.pivotTables.length === 0 || cache.pivotTables.includes(pt.name))) cachePart = pt.cachePart;
-        const labels = sharedItemsOf(files, cachePart, cache.sourceName);
+        // Item labels come from a different place per kind.
+        let labels: string[] = [];
+        let table: SheetSlicer["table"];
+        if (cache.kind === "olap") {
+          labels = cache.olapLabels ?? [];
+        } else if (cache.kind === "table") {
+          const t = tables.find((x) => x.id === cache.tableId) ?? tables[0];
+          if (t) {
+            // `column` is a tableColumn @id; map it to a 0-based offset inside the table range.
+            const ci = Math.max(0, t.cols.indexOf(cache.tableCol ?? 0));
+            table = { sheetIndex: t.sheetIndex, r1: t.r1, c1: t.c1, r2: t.r2, c2: t.c2, headerRows: t.headerRows, col: ci };
+            const ts = wb.sheets[t.sheetIndex];
+            if (ts) {
+              const seen = new Set<string>();
+              for (let r = t.r1 + t.headerRows; r <= t.r2; r++) {
+                const v = getCell(ts, r, t.c1 + ci);
+                const s = v ? (v.display ?? v.value) : "";
+                if (!seen.has(s)) { seen.add(s); labels.push(s); }
+              }
+            }
+          }
+        } else {
+          // Pivot: labels are the cache field's sharedItems.
+          let cachePart: string | undefined;
+          for (const s2 of wb.sheets)
+            for (const pt of s2.pivotTables ?? [])
+              if (!cachePart && (cache.pivotTables.length === 0 || cache.pivotTables.includes(pt.name))) cachePart = pt.cachePart;
+          labels = sharedItemsOf(files, cachePart, cache.sourceName);
+        }
         const count = Math.max(labels.length, ...[...cache.sel.keys()].map((k) => k + 1), 0);
         const anySelected = [...cache.sel.values()].some(Boolean);
         const items = Array.from({ length: count }, (_, x) => ({
@@ -110,6 +162,9 @@ export function readSlicers(wb: Workbook, files: Record<string, Uint8Array>): vo
           cache: cacheName,
           caption: attr(sl, "caption") ?? undefined,
           columnCount: Number(attr(sl, "columnCount") ?? "1") || 1,
+          style: attr(sl, "style") ?? undefined,
+          kind: cache.kind,
+          table,
           sourceName: cache.sourceName,
           pivotTables: cache.pivotTables,
           items,

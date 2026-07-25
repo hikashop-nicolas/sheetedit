@@ -2594,6 +2594,7 @@ export function createSheetEditor(
     switchSheet: (i) => switchSheet(i),
     refreshPivotLayer: () => pivotLayer.refresh(),
     refreshSlicers: () => slicerLayer.refresh(),
+    setRowHidden: (sheet, row, hidden) => { if (wb.kind === "xlsx") setXlsxRowHidden(sheet, row, hidden); else { (sheet.hiddenRows ??= new Set())[hidden ? "add" : "delete"](row); sheet.odsDirty = true; } },
     currentRegion: (sheet, r, c) => currentRegion(sheet, r, c),
     chartsOn,
     chartInsert: (rect) => chartUi.openInsert(rect),

@@ -38,10 +38,38 @@ function injectStyles(): void {
       background:transparent; color:inherit; font:inherit; padding:3px 6px; cursor:pointer;
       text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.45; }
     .sheetedit-slicer-item:hover { border-color:var(--sheetedit-accent,#4c8bf5); }
-    .sheetedit-slicer-item.on { opacity:1; background:var(--sheetedit-accent,#4c8bf5); color:#fff;
-      border-color:var(--sheetedit-accent,#4c8bf5); }
+    .sheetedit-slicer-item.on { opacity:1; background:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); color:#fff;
+      border-color:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); }
+    /* OLAP slicers have no source we can filter, so they show their items but do not react. */
+    .sheetedit-slicerbox.readonly .sheetedit-slicer-item { cursor:default; }
+    .sheetedit-slicerbox.readonly .sheetedit-slicer-clear { display:none; }
   `;
   document.head.appendChild(s);
+}
+
+/** The accent colour of a built-in slicer style (SlicerStyleLight1..6 / Dark1..6 / Other1..2).
+    Excel's built-ins differ mainly by accent, so the family index picks a theme-ish accent. */
+export function styleAccent(style: string | undefined): string | undefined {
+  if (!style) return undefined;
+  const m = /^SlicerStyle(Light|Dark|Other)(\d+)$/i.exec(style.trim());
+  if (!m) return undefined;
+  const n = Math.max(1, Math.min(6, Number(m[2]) || 1));
+  // Accent1..6 of the default Office theme; Light1 is the neutral grey one.
+  const accents = ["#4472c4", "#ed7d31", "#a5a5a5", "#ffc000", "#5b9bd5", "#70ad47"];
+  const family = m[1]!.toLowerCase();
+  if (family === "light" && n === 1) return "#7f7f7f";
+  const base = accents[(n - 1) % accents.length]!;
+  // The Dark family uses a deeper tone of the same accent.
+  return family === "dark" ? shade(base, -0.25) : base;
+}
+function shade(hex: string, amount: number): string {
+  const c = hex.replace("#", "");
+  const ch = (i: number): string => {
+    const v = parseInt(c.slice(i, i + 2), 16);
+    const out = amount < 0 ? v * (1 + amount) : v + (255 - v) * amount;
+    return Math.max(0, Math.min(255, Math.round(out))).toString(16).padStart(2, "0");
+  };
+  return `#${ch(0)}${ch(2)}${ch(4)}`;
 }
 
 export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; teardown(): void } {
@@ -79,9 +107,13 @@ export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; tear
       const y = a ? g.yOfRow(a.fromRow) + a.fromRowOff : 20;
       const w = a ? Math.max(120, g.xOfCol(a.toCol) + a.toColOff - x) : 160;
       const h = a ? Math.max(80, g.yOfRow(a.toRow) + a.toRowOff - y) : 180;
+      const readonly = sl.kind === "olap";
       const box = document.createElement("div");
-      box.className = "sheetedit-slicerbox";
+      box.className = "sheetedit-slicerbox" + (readonly ? " readonly" : "");
       box.style.cssText += `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+      // Excel's built-in slicer styles only differ by accent; map the family to a colour.
+      const accent = styleAccent(sl.style);
+      if (accent) box.style.setProperty("--se-slicer-accent", accent);
       box.dataset.slicer = sl.name;
 
       const head = document.createElement("div");
@@ -114,6 +146,7 @@ export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; tear
         b.textContent = item.label === "" ? "(blank)" : item.label;
         b.title = b.textContent;
         b.dataset.item = String(item.x);
+        if (readonly) { b.title = `${b.textContent} (OLAP slicer: shown for reference, not filterable here)`; list.appendChild(b); continue; }
         b.addEventListener("click", (e) => {
           const additive = e.ctrlKey || e.metaKey;
           const allOn = sl.items.every((i) => i.selected);
