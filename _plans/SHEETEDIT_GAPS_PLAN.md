@@ -242,6 +242,15 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   GOTCHA: the divider's drag handler must restore the bar IN PLACE on a no-op click rather than
   re-render, or the element is swapped out between the two clicks and dblclick never fires - the same
   trap the image and shape layers hit.
+  GOTCHA: NOTHING about the dividers may come from the layout model. The bars were placed at
+  headerH + yOfRow(n), which put the horizontal one ~10px above the real gridline (the model's
+  uniform ROW_H disagrees with the rendered rows, and there is no <thead>, so every headerH read fell
+  back to a constant), and their length came from a container rect that can still be stale, so the
+  vertical one ran past the scrollbar into the sheet tabs. Both now measure the rendered
+  th.rownum / th.colhead edges, and the bars live in a clipping box sized from the panes' CLIENT box
+  so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
+  above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
+  snapped to the first row past the boundary, once, at creation.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
   print settings, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled

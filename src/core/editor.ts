@@ -1687,10 +1687,13 @@ export function createSheetEditor(
     syncingX = false;
   };
 
+  /** A freshly opened split has to be snapped to the rendered boundary once its rows exist. */
+  let snapSplit = false;
   /** Lay the panes out for the sheet's boundary: one viewport, or two split at the boundary. */
   const layoutPanes = (sheet: Sheet): void => {
     const rows = sheet.paneSplit ? sheet.freeze?.rows ?? 0 : 0;
     const on = rows > 0;
+    if (on && panes.length < 2) snapSplit = true;
     splitScroll.style.display = on ? "block" : "none";
     panes = on ? [mainPane, splitPane] : [mainPane];
     if (!on) {
@@ -1699,9 +1702,33 @@ export function createSheetEditor(
       splitScroll.innerHTML = "";
       return;
     }
-    // The top viewport is exactly as tall as the boundary: header + the rows above it.
+    // The top viewport is as tall as the boundary. This runs before the rows exist, so start from
+    // the layout model and correct it against the rendered rows once they are there.
     const headerH = (gridScroll.querySelector("thead, tr") as HTMLElement | null)?.offsetHeight ?? ROW_H;
     gridScroll.style.flex = `0 0 ${Math.max(ROW_H * 2, headerH + yOfRow(rows + 1))}px`;
+  };
+
+  /**
+   * Trim the top viewport to the rendered bottom of its last row, so a split does not leave a
+   * sliver of the next row showing. The declared row heights and the rendered ones differ, which is
+   * exactly the gap this closes.
+   */
+  const fitSplitHeight = (): void => {
+    const sheet = wb.sheets[active];
+    const rows = sheet?.paneSplit ? sheet.freeze?.rows ?? 0 : 0;
+    if (!rows || panes.length < 2) return;
+    const last = gridScroll.querySelector(`th.rownum[data-r="${rows}"]`) as HTMLElement | null;
+    if (!last) return;
+    const h = last.getBoundingClientRect().bottom - gridScroll.getBoundingClientRect().top;
+    if (h > ROW_H) gridScroll.style.flex = `0 0 ${Math.round(h)}px`;
+    // Line the lower viewport up with the first row past the boundary, so it does not open showing
+    // the tail of the row above. Only on creation: after that the pane scrolls where the user puts it.
+    if (!snapSplit) return;
+    const firstBelow = splitScroll.querySelector(`th.rownum[data-r="${rows + 1}"]`) as HTMLElement | null;
+    if (!firstBelow) return;
+    const delta = firstBelow.getBoundingClientRect().top - splitScroll.getBoundingClientRect().top;
+    if (Math.abs(delta) > 0.5) splitScroll.scrollTop += delta;
+    snapSplit = false;
   };
 
   let coveredSet = new Set<string>();
@@ -1893,21 +1920,21 @@ export function createSheetEditor(
       mark(); renderGrid();
     },
   });
-  // The frozen / split boundary bars: drag to move, double-click to remove.
+  // The frozen / split boundary bars: drag to move, double-click to remove. Every measurement comes
+  // off the rendered headers, since the declared line sizes and the rendered ones differ.
   const paneDividers = setupPaneDividers({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
     geom: () => {
-      const headerH = (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H;
-      // The nearest line EDGE to a pointer position, read off the rendered headers so a scrolled
-      // pane maps correctly; the boundary lands just before the line whose top/left edge is closest.
+      const headEl = (sel: string): HTMLElement | null => wrap.querySelector(sel) as HTMLElement | null;
       const nearest = (sel: string, attr: string, coord: (r: DOMRect) => number, size: (r: DOMRect) => number, client: number): number => {
         let best = 0, bestD = Infinity;
         for (const el of Array.from(wrap.querySelectorAll(sel)) as HTMLElement[]) {
           const line = Number(el.dataset[attr] ?? "0");
           if (!line) continue;
-          for (const [edge, n] of [[coord(el.getBoundingClientRect()), line - 1], [coord(el.getBoundingClientRect()) + size(el.getBoundingClientRect()), line]] as const) {
+          const r = el.getBoundingClientRect();
+          for (const [edge, n] of [[coord(r), line - 1], [coord(r) + size(r), line]] as const) {
             const d = Math.abs(edge - client);
             if (d < bestD) { bestD = d; best = n; }
           }
@@ -1915,9 +1942,25 @@ export function createSheetEditor(
         return best;
       };
       return {
-        headerH,
-        gutterW: rnW(),
-        boundary: (rows: number, cols: number) => ({ x: rnW() + xOfCol(cols + 1), y: headerH + yOfRow(rows + 1) }),
+        // A row split's boundary is the seam between the two containers; a freeze's is the top edge
+        // of the first row below it, or the bottom edge of the last row above when that is offscreen.
+        rowBoundaryY: (rows: number) => {
+          if (panes.length > 1) return splitScroll.getBoundingClientRect().top;
+          const below = headEl(`th.rownum[data-r="${rows + 1}"]`);
+          if (below) return below.getBoundingClientRect().top;
+          const above = headEl(`th.rownum[data-r="${rows}"]`);
+          return above ? above.getBoundingClientRect().bottom : null;
+        },
+        colBoundaryX: (cols: number) => {
+          const after = headEl(`th.colhead[data-c="${cols + 1}"]`);
+          if (after) return after.getBoundingClientRect().left;
+          const before = headEl(`th.colhead[data-c="${cols}"]`);
+          return before ? before.getBoundingClientRect().right : null;
+        },
+        bodyTop: () => {
+          const r1 = headEl('th.rownum[data-r="1"]');
+          return r1 ? r1.getBoundingClientRect().top : gridScroll.getBoundingClientRect().top;
+        },
         nearestRow: (clientY: number) => nearest("th.rownum", "r", (r) => r.top, (r) => r.height, clientY),
         nearestCol: (clientX: number) => nearest("th.colhead", "c", (r) => r.left, (r) => r.width, clientX),
       };
@@ -3026,6 +3069,7 @@ export function createSheetEditor(
       splitScroll.scrollTop = keepSplitTop;
       splitScroll.scrollLeft = keepLeft;
       cur = mainPane;
+      fitSplitHeight(); // the rows exist now, so the boundary can be measured for real
     }
     chartLayer.refresh();
     imageLayer.refresh();
