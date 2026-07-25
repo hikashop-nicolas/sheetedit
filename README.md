@@ -187,6 +187,34 @@ per column, `.ods` nests the rows in `<table:table-row-group>` (with `table:disp
 collapsed one). Verified through LibreOffice round-trips both ways. ODS **column** groups are read
 and preserved but not authored.
 
+## Sheet and workbook protection
+
+Protection is read, **enforced in the grid** and authored, in both formats. On a protected sheet a
+locked cell is selectable and copyable but refuses typing, and every write path that could go around
+that (paste, fill handle, clear, insert/delete rows and columns, sort, formatting, and adding,
+deleting, renaming or moving sheets) is gated too. A refused action shows a short notice rather than
+doing nothing silently.
+
+Both formats default every cell to **locked**, so protection alone freezes the whole sheet: unlocking
+the input range is what makes it usable. The toolbar's lock button offers **Protect sheet** (with the
+allowances: select locked cells, format, insert / delete rows and columns, sort, autofilter),
+**Unprotect sheet**, **Lock** / **Unlock cells** for the selection, and **Protect workbook
+structure**. Cell locking is only offered while the sheet is unprotected, as in Excel.
+
+**This is not a security feature.** Neither format encrypts anything; they store at most a password
+*hash*, and any spreadsheet tool can lift the flag. sheetedit therefore never computes or checks a
+password. A hash already in the file is preserved verbatim when you re-save, and removing protection
+drops it without asking for it, which the dialog states plainly.
+
+`.xlsx` writes `<sheetProtection>` (only the flags that differ from their spec defaults, as Excel
+does), `<workbookProtection lockStructure="1"/>`, and per-cell `<protection locked="0"/>` in the style
+pool. `.ods` writes `table:protected` with LibreOffice's `<loext:table-protection>` permission flags,
+`table:structure-protected`, and `style:cell-protect`. The two are inverses (OOXML names what is
+blocked, ODF what is allowed) and the adapters convert. ODF has no equivalent for the format / sort /
+autofilter / pivot flags, so those fall back to their blocked defaults on an `.ods` round-trip.
+Verified through LibreOffice both ways; LibreOffice itself drops workbook structure protection on its
+OOXML export, so that flag was checked within ODF only.
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the

@@ -19,6 +19,8 @@ import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } f
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
+import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
+import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
@@ -325,6 +327,14 @@ export function injectStyles(): void {
     .sheetedit-floatbar[hidden] { display:none; }
     .sheetedit-floatbar-sep { width:1px; align-self:stretch; margin:2px 3px; background:var(--sheetedit-border, #1c1f24); }
     .sheetedit-error { background:#7a2b2b; color:#ffd7d7; padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
+    .sheetedit-notice {
+      position:absolute; left:50%; bottom:44px; transform:translateX(-50%); z-index:60; max-width:min(90%,420px);
+      padding:7px 13px; border-radius:7px; background:#4a3410; color:#ffe2b0; border:1px solid #6d4c16;
+      font:12.5px/1.45 system-ui,sans-serif; box-shadow:0 6px 18px rgba(0,0,0,.35); pointer-events:none;
+    }
+    .sheetedit-notice[hidden] { display:none; }
+    /* A locked cell on a protected sheet: still selectable and copyable, just not typeable. */
+    .sheetedit-grid td.locked > input { cursor:default; }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
     .sheetedit-tab {
       font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-bottom:none;
@@ -393,6 +403,34 @@ export function createSheetEditor(
   tabs.className = "sheetedit-tabs";
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", t("sheets"));
+  // A transient message for an action protection refused, so a blocked edit is never silent.
+  const notice = document.createElement("div");
+  notice.className = "sheetedit-notice";
+  notice.setAttribute("role", "status");
+  notice.hidden = true;
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  const showNotice = (text: string): void => {
+    notice.textContent = text;
+    notice.hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => { notice.hidden = true; }, 3200);
+  };
+  /**
+   * Protection gate: true when the action may proceed. A refusal explains itself, because a
+   * control that silently does nothing reads as a bug.
+   */
+  const allow = (ok: boolean, message: string): boolean => {
+    if (!ok) showNotice(t(message));
+    return ok;
+  };
+  const sheetAt = () => wb.sheets[active];
+  /** Cell edits: allowed unless the sheet is protected and the target cell is locked. */
+  const allowCellEdit = (r: number, c: number): boolean => allow(canEditCell(sheetAt(), r, c), "protectedCell");
+  const allowRangeEdit = (g: { r1: number; c1: number; r2: number; c2: number }): boolean =>
+    allow(canEditRange(sheetAt(), g), "protectedCell");
+  /** Non-cell actions gated by one of the sheet's per-action flags. */
+  const allowAction = (flag: SheetLock, message = "protectedSheet"): boolean => allow(!isBlocked(sheetAt(), flag), message);
+
   // --- formula bar + range picking state -------------------------------------
   let activeCell: { r: number; c: number } | null = null;
   let barGrab = false; // pointerdown on the bar: skip the cell's blur-commit
@@ -453,6 +491,7 @@ export function createSheetEditor(
   });
   if (wb.kind === "csv") wrap.append(toolbar, fxbar.el, gridScroll);
   else wrap.append(toolbar, fxbar.el, gridScroll, tabs);
+  wrap.appendChild(notice); // absolute, over the grid: never shifts the layout
   container.appendChild(wrap);
 
   let active = 0;
@@ -540,6 +579,11 @@ export function createSheetEditor(
         const vals = computeFill(source, count, dir, "col");
         vals.forEach((raw, n) => positions.push({ r, c: dir === 1 ? c2 + 1 + n : c1 - 1 - n, raw }));
       }
+    }
+    // The fill only writes outside the source range, so gate exactly the cells it would touch.
+    if (positions.some((p2) => !canEditCell(sheet, p2.r, p2.c))) {
+      showNotice(t("protectedCell"));
+      return;
     }
     recordCells(positions.map((p2) => ({ r: p2.r, c: p2.c })), () => {
       for (const p2 of positions) setCellInput(sheet, p2.r, p2.c, p2.raw);
@@ -831,6 +875,11 @@ export function createSheetEditor(
 
   const applyStyle = (change: StyleChange) => {
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
+    // Changing which cells are locked is protection management, not formatting: like Excel, it
+    // requires the sheet to be unprotected first. Everything else is gated on formatCells.
+    if (change.locked !== undefined) {
+      if (!allow(!isProtected(wb.sheets[active]), "protectedUnprotectFirst")) return;
+    } else if (!allowAction("formatCells")) return;
     const rt = richRunTarget(change);
     if (rt) { applyRichRun(rt, change); return; }
     const sheet = wb.sheets[active];
@@ -856,6 +905,7 @@ export function createSheetEditor(
   // Apply a number format preset to the selection (General when fmt is undefined).
   const applyNumFmt = (fmt: string | number | undefined, currency?: string) => {
     if ((wb.kind !== "xlsx" && wb.kind !== "ods") || !sel) return;
+    if (!allowAction("formatCells")) return;
     const sheet = wb.sheets[active];
     if (!sheet) return;
     const positions = selPositions(sheet);
@@ -1366,6 +1416,11 @@ export function createSheetEditor(
   };
   const lineOp = (op: LineOp) => {
     const si = active;
+    // Each of the four insert/delete actions has its own protection flag.
+    const flag: SheetLock = op.axis === "row"
+      ? (op.kind === "insert" ? "insertRows" : "deleteRows")
+      : (op.kind === "insert" ? "insertColumns" : "deleteColumns");
+    if (!allowAction(flag)) return;
     const snap = captureLineSnap(op);
     applyLineOp(wb, si, op);
     history.clear();
@@ -1394,6 +1449,54 @@ export function createSheetEditor(
     sheet.freezeDirty = true;
     mark();
     renderGrid();
+  };
+
+  /** Set (or clear) this sheet's protection and re-render; the write path picks it up from the flag. */
+  const setSheetProtection = (prot: SheetProtection | undefined): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    // Unprotecting drops the file's password hash with it, which the dialog warns about.
+    sheet.protection = prot;
+    sheet.protectionDirty = true;
+    mark();
+    renderGrid();
+  };
+  const setStructureProtection = (on: boolean): void => {
+    wb.protection = on ? { ...wb.protection, structure: true } : { ...wb.protection, structure: undefined };
+    wb.protectionDirty = true;
+    mark();
+    renderTabs();
+  };
+  // Protect-sheet dialog: the allowances, phrased as permissions the way Excel and Calc phrase
+  // them, then stored as the formats' blocked-action flags.
+  const PROT_ALLOWANCES: { key: string; label: string; flag: SheetLock; on: boolean }[] = [
+    { key: "selectLocked", label: "protAllowSelectLocked", flag: "selectLockedCells", on: true },
+    { key: "format", label: "protAllowFormat", flag: "formatCells", on: false },
+    { key: "insertRows", label: "protAllowInsertRows", flag: "insertRows", on: false },
+    { key: "insertCols", label: "protAllowInsertCols", flag: "insertColumns", on: false },
+    { key: "deleteRows", label: "protAllowDeleteRows", flag: "deleteRows", on: false },
+    { key: "deleteCols", label: "protAllowDeleteCols", flag: "deleteColumns", on: false },
+    { key: "sort", label: "protAllowSort", flag: "sort", on: false },
+    { key: "filter", label: "protAllowFilter", flag: "autoFilter", on: false },
+  ];
+  const openProtectDialog = (): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const cur = sheet.protection;
+    const fields: FormField[] = [{ key: "note", label: t("protectNote"), type: "note" }];
+    if (hasPassword(cur)) fields.push({ key: "pwnote", label: t("protectPasswordNote"), type: "note" });
+    fields.push({ key: "allowHead", label: t("protectAllow"), type: "note" });
+    for (const a of PROT_ALLOWANCES) {
+      // Pre-tick from the current state when re-opening on an already-protected sheet.
+      const blocked = cur?.locks?.[a.flag] ?? SHEET_LOCK_DEFAULTS[a.flag];
+      fields.push({ key: a.key, label: t(a.label), type: "checkbox", value: cur ? !blocked : a.on });
+    }
+    formDialog(wrap, t("protectSheet"), fields, (vals) => {
+      const locks: Partial<Record<SheetLock, boolean>> = {};
+      for (const a of PROT_ALLOWANCES) locks[a.flag] = !vals[a.key]; // allowed here = not blocked in the file
+      // Excel's default protect also blocks objects and scenarios; match it.
+      setSheetProtection({ sheet: true, locks: { ...locks, objects: true, scenarios: true }, ...(cur?.password ? { password: cur.password } : {}) });
+    });
   };
 
   const openLineMenu = (e: MouseEvent, axisOf: "row" | "col", line: number) => {
@@ -1501,6 +1604,7 @@ export function createSheetEditor(
   // Commit a raw value into a cell and refresh (shared by the grid and the formula bar).
   const commitValue = (r: number, c: number, raw: string) => {
     const sheet = wb.sheets[active]!;
+    if (!allowCellEdit(r, c)) return;
     recordCells([{ r, c }], () => setCellInput(sheet, r, c, raw));
     recalc(wb);
     mark();
@@ -1588,6 +1692,7 @@ export function createSheetEditor(
   // Clear every cell in a selection rectangle (multi-cell Delete).
   const clearRange = (range: { r1: number; c1: number; r2: number; c2: number }) => {
     const sheet = wb.sheets[active]!;
+    if (!allowRangeEdit(range)) return;
     // Only existing cells matter (clearing a blank cell is a no-op), so a
     // whole-column selection over a virtualized grid stays bounded.
     const positions: { r: number; c: number }[] = [];
@@ -1636,6 +1741,8 @@ export function createSheetEditor(
     const rows = text.replace(/\r\n?/g, "\n").split("\n");
     if (rows.length && rows[rows.length - 1] === "") rows.pop(); // Excel's trailing newline
     const grid2 = rows.map((line) => line.split("\t"));
+    const height = grid2.length, width = Math.max(...grid2.map((g) => g.length));
+    if (!allowRangeEdit({ r1: r0, c1: c0, r2: r0 + height - 1, c2: c0 + width - 1 })) return;
     const positions: { r: number; c: number }[] = [];
     grid2.forEach((vals, i) => vals.forEach((_v, j) => positions.push({ r: r0 + i, c: c0 + j })));
     recordCells(positions, () => {
@@ -2121,6 +2228,48 @@ export function createSheetEditor(
     });
     trailingIcons.push(freezeBtn);
   }
+  if (caps.protection) {
+    const LOCK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/></svg>`;
+    const protBtn: HTMLButtonElement = tbIcon(LOCK_ICON, t("protection"), () => {
+      closeLineMenu();
+      const sheet = wb.sheets[active];
+      const pop = document.createElement("div");
+      pop.className = "sheetedit-pop";
+      const item = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); run(); });
+        pop.appendChild(b);
+      };
+      if (isProtected(sheet)) item(t("unprotectSheet"), () => setSheetProtection(undefined));
+      else item(t("protectSheet"), () => openProtectDialog());
+      // Cell locking only makes sense while the sheet is unprotected (Excel behaves the same).
+      if (!isProtected(sheet)) {
+        const sep = document.createElement("div");
+        sep.className = "sheetedit-pop-sep";
+        pop.appendChild(sep);
+        item(t("lockCells"), () => applyStyle({ locked: true }));
+        item(t("unlockCells"), () => applyStyle({ locked: false }));
+      }
+      const sep2 = document.createElement("div");
+      sep2.className = "sheetedit-pop-sep";
+      pop.appendChild(sep2);
+      if (isStructureLocked(wb)) item(t("unprotectStructure"), () => setStructureProtection(false));
+      else item(t("protectStructure"), () => setStructureProtection(true));
+      document.body.appendChild(pop);
+      lineMenu = pop;
+      const r = protBtn.getBoundingClientRect();
+      pop.style.left = `${Math.round(Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))}px`;
+      pop.style.top = `${Math.round(r.bottom + 4)}px`;
+      const onOutside = (ev: Event) => {
+        if (!pop.contains(ev.target as Node)) { closeLineMenu(); document.removeEventListener("pointerdown", onOutside, true); }
+      };
+      setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+    });
+    trailingIcons.push(protBtn);
+  }
   if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
     trailingIcons.push(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
@@ -2254,10 +2403,18 @@ export function createSheetEditor(
       }
       const cell = getCell(sheet, r, c);
       if (cell?.kind === "n") td.classList.add("num");
+      const sheetProtected = isProtected(sheet);
       const input = document.createElement("input");
       input.type = "text";
       input.value = cellDisplay(cell);
       input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
+      // A locked cell on a protected sheet stays selectable and copyable (Excel's default) but
+      // refuses typing. readOnly does that natively, keyboard navigation included.
+      if (sheetProtected && !cell?.cellStyle?.unlocked) {
+        input.readOnly = true;
+        td.classList.add("locked");
+        input.title = t("protectedCell");
+      }
       if (cell?.calcFailed) {
         td.classList.add("sheetedit-calcerr");
         input.title = t(cell.calcFailed === "circular" ? "calcCircular" : cell.calcFailed === "name" ? "calcName" : "calcEval");
@@ -2866,6 +3023,9 @@ export function createSheetEditor(
     const af = sheet.autoFilter; if (!af) return;
     const r0 = af.r1 + 1;
     if (af.r2 <= r0) return;
+    // Sorting rewrites the data rows, so it needs both the sort permission and writable cells.
+    if (!allowAction("sort")) return;
+    if (!allowRangeEdit({ r1: r0, c1: af.c1, r2: af.r2, c2: af.c2 })) return;
     const cols: number[] = []; for (let c = af.c1; c <= af.c2; c++) cols.push(c);
     const order: { key: string; texts: Map<number, string> }[] = [];
     for (let r = r0; r <= af.r2; r++) { const texts = new Map<number, string>(); for (const c of cols) texts.set(c, cellEditText(sheet, r, c)); order.push({ key: cellText(sheet, r, col), texts }); }
@@ -3177,7 +3337,11 @@ export function createSheetEditor(
   // marks the workbook dirty; there is no undo step (close without saving to discard).
   const canManageSheets = sheetsEditable(wb);
 
+  /** Workbook structure protection blocks the whole add / delete / rename / reorder set. */
+  const allowSheetOps = (): boolean => allow(!isStructureLocked(wb), "protectedStructure");
+
   const doAddSheet = (): void => {
+    if (!allowSheetOps()) return;
     try {
       const i = addSheet(wb);
       mark();
@@ -3187,6 +3351,7 @@ export function createSheetEditor(
   };
   const doDeleteSheet = (i: number): void => {
     if (wb.sheets.length <= 1) return;
+    if (!allowSheetOps()) return;
     deleteSheet(wb, i);
     if (active === i) active = Math.min(i, wb.sheets.length - 1);
     else if (active > i) active -= 1;
@@ -3196,6 +3361,7 @@ export function createSheetEditor(
   };
   const doMoveSheet = (from: number, to: number): void => {
     if (to < 0 || to >= wb.sheets.length || from === to) return;
+    if (!allowSheetOps()) return;
     const cur = wb.sheets[active];
     moveSheet(wb, from, to);
     active = wb.sheets.indexOf(cur);
@@ -3215,7 +3381,7 @@ export function createSheetEditor(
       if (done) return;
       done = true;
       const v = input.value.trim();
-      if (commit && v && v !== wb.sheets[i]?.name) { renameSheet(wb, i, v); mark(); }
+      if (commit && v && v !== wb.sheets[i]?.name && allowSheetOps()) { renameSheet(wb, i, v); mark(); }
       renderTabs();
     };
     input.addEventListener("keydown", (e) => {

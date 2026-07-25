@@ -8,6 +8,7 @@ import { writeXlsxSlicers } from "./slicer-write";
 import { writeXlsxTimelines } from "./timeline-write";
 import { writeXlsxOutlines } from "./outline-write";
 import { writeXlsxFreezes } from "./freeze-write";
+import { writeXlsxProtections } from "./protection-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -253,7 +254,7 @@ const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 // Canonical CT_Worksheet child order, so inserted elements land in a schema-valid position.
 const WS_ORDER = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "sheetCalcPr", "sheetProtection", "protectedRanges", "scenarios", "autoFilter", "sortState", "dataConsolidate", "customSheetViews", "mergeCells", "phoneticPr", "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks", "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing", "drawingHF", "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"];
 /** Insert a worksheet child in canonical order (before the first later-ordered sibling). */
-function insertWsChild(ws: Element, el: Element): void {
+export function insertWsChild(ws: Element, el: Element): void {
   const idx = WS_ORDER.indexOf(el.localName);
   let before: ChildNode | null = null;
   for (const ch of Array.from(ws.children)) { const ci = WS_ORDER.indexOf(ch.localName); if (ci !== -1 && ci > idx) { before = ch; break; } }
@@ -729,6 +730,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxTimelines(wb); // persist timeline ranges into their cache parts
   writeXlsxOutlines(wb); // persist row/column grouping levels
   writeXlsxFreezes(wb); // persist frozen panes
+  writeXlsxProtections(wb); // persist sheet / workbook protection
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to

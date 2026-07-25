@@ -2,6 +2,7 @@ import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, TextRun, W
 import { formatNumber, getCell, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
 import { pivotColumnItems, type PivotFunc } from "../../core/pivot";
 import { durationToSerial, isoToSerial } from "../../core/dates";
+import type { SheetLock, SheetProtection } from "../../core/protection";
 
 const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", countnums: "countNums", average: "average", min: "min", max: "max" };
 import { readOdsCharts } from "./chart-read";
@@ -71,6 +72,13 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       if (cp.getAttribute("fo:wrap-option") === "wrap") s.wrap = true;
       const va = cp.getAttribute("style:vertical-align");
       if (va === "top" || va === "middle" || va === "bottom") s.valign = va;
+      // style:cell-protect is a space-separated set; "none" (or no "protected") = unlocked.
+      const cprot = cp.getAttribute("style:cell-protect");
+      if (cprot != null) {
+        const parts = cprot.split(/\s+/);
+        if (!parts.includes("protected") && !parts.includes("hidden-and-protected")) s.unlocked = true;
+        if (parts.includes("formula-hidden") || parts.includes("hidden-and-protected")) s.formulaHidden = true;
+      }
     }
     const tp = el.getElementsByTagName("style:text-properties")[0];
     if (tp) {
@@ -169,6 +177,35 @@ function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: n
   return out;
 }
 
+// Sheet protection: table:protected on the table, with the granular flags in a LibreOffice
+// extension element. Those state PERMISSIONS, the inverse of the model's blocked-action flags, and
+// ODF covers only a subset (the rest keep their defaults, i.e. blocked).
+const ODF_LOCK_BY_PERMISSION: Record<string, SheetLock> = {
+  "select-protected-cells": "selectLockedCells",
+  "select-unprotected-cells": "selectUnlockedCells",
+  "insert-columns": "insertColumns",
+  "insert-rows": "insertRows",
+  "delete-columns": "deleteColumns",
+  "delete-rows": "deleteRows",
+};
+
+function readOdsProtection(table: Element): SheetProtection | undefined {
+  if (table.getAttribute("table:protected") !== "true") return undefined;
+  const prot: SheetProtection = { sheet: true };
+  const key = table.getAttribute("table:protection-key");
+  if (key) prot.password = { hash: key, algorithmName: table.getAttribute("table:protection-key-digest-algorithm") ?? undefined };
+  const ext = Array.from(table.children).find((e) => e.localName === "table-protection");
+  if (ext) {
+    const locks: Partial<Record<SheetLock, boolean>> = {};
+    for (const [perm, flag] of Object.entries(ODF_LOCK_BY_PERMISSION)) {
+      const v = ext.getAttribute(`loext:${perm}`);
+      if (v != null) locks[flag] = !(v === "true" || v === "1"); // permission granted = not blocked
+    }
+    if (Object.keys(locks).length) prot.locks = locks;
+  }
+  return prot;
+}
+
 // One ODF cell address ("$Sheet1.$A$1" or ".$A$1") -> A1 ("Sheet1!A1" or "A1").
 function odfRefToA1(part: string): string {
   const dot = part.indexOf(".");
@@ -204,6 +241,12 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     if (name && addr) definedNames.set(name, odfAddrToA1(addr));
   }
   if (definedNames.size) wb.definedNames = definedNames;
+  // Workbook structure protection sits on <office:spreadsheet>.
+  const spreadsheetEl = contentDoc.getElementsByTagName("office:spreadsheet")[0];
+  if (spreadsheetEl?.getAttribute("table:structure-protected") === "true") {
+    const key = spreadsheetEl.getAttribute("table:protection-key");
+    wb.protection = { structure: true, ...(key ? { password: { hash: key, algorithmName: spreadsheetEl.getAttribute("table:protection-key-digest-algorithm") ?? undefined } } : {}) };
+  }
   const validationDefs = parseOdsValidations(contentDoc);
   const condFormats = parseOdsCondFormats(contentDoc);
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
@@ -211,6 +254,8 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
     const fz = freezeByName.get(name);
     if (fz) { sheet.freeze = { rows: fz.rows, cols: fz.cols }; if (fz.split) sheet.paneSplit = true; }
+    const prot = readOdsProtection(table);
+    if (prot) sheet.protection = prot;
     readOdsTable(sheet, table, styles);
     buildOdsValidations(sheet, validationDefs);
     // Conditional formats whose target sheet is this one (empty sheet name = single-sheet target).

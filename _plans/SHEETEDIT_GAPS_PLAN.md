@@ -270,8 +270,21 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
-- **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
-  print settings, themes.
+- **Preserved-only, not authored yet**: form controls / ActiveX, print settings, themes.
+- **Protection** is read, enforced and authored in both formats. The flags are stated the way OOXML
+  states them (each one names a BLOCKED action, each with its own default), and the ods adapter
+  inverts them, because ODF's loext flags are permissions. Two layers decide editability: the sheet
+  carries protection AND the cell's style says locked, which is the default in both formats, so
+  unlocking a range is what makes a protected sheet usable. Enforced at every write chokepoint
+  (typing, paste, fill, clear, insert/delete lines, sort, formatting, sheet add/delete/rename/move),
+  with a transient notice so a refusal is never silent.
+  - No password is ever computed or verified: the formats store a hash, not encryption, so any tool
+    can lift protection. A hash found in a file is preserved verbatim on re-save; unprotecting drops
+    it, which the dialog says out loud.
+  - ODF has no equivalent for the format / sort / autofilter / pivot flags, so those are dropped on
+    an ods save and come back at their (blocked) defaults, which is the safe direction.
+  - LibreOffice does not carry workbook structure protection through its OOXML export (its own
+    ods -> ods keeps it), so that flag was verified within ODF only.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
   in core/functions.ts (statistics, multi-criteria aggregates, MATCH / XLOOKUP / XMATCH / CHOOSE /
   LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family),

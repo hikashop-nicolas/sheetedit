@@ -10,6 +10,7 @@ import { readTimelines } from "./timeline-read";
 import { readSparklines } from "./sparkline-read";
 import { readXlsxPivots } from "./pivot-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
+import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtection } from "../../core/protection";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
 function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: number } | null {
@@ -22,6 +23,42 @@ function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: n
 // ---------------------------------------------------------------------------
 // xlsx read: workbook/worksheet parsing, style pools resolution
 // ---------------------------------------------------------------------------
+
+/** An OOXML boolean attribute, or undefined when the attribute is absent (= take the default). */
+function xmlBool(el: Element, name: string): boolean | undefined {
+  const v = el.getAttribute(name);
+  if (v == null) return undefined;
+  return v === "1" || v === "true";
+}
+
+/** The password hash on a (sheet|workbook)Protection element, preserved so a re-save keeps it. */
+function readProtectionPassword(el: Element, legacyAttr: string): ProtectionPassword | undefined {
+  const pw: ProtectionPassword = {};
+  const legacy = el.getAttribute(legacyAttr);
+  if (legacy) pw.legacy = legacy;
+  const hash = el.getAttribute("hashValue");
+  if (hash) {
+    pw.hash = hash;
+    pw.algorithmName = el.getAttribute("algorithmName") ?? undefined;
+    pw.saltValue = el.getAttribute("saltValue") ?? undefined;
+    pw.spinCount = el.getAttribute("spinCount") ?? undefined;
+  }
+  return pw.legacy || pw.hash ? pw : undefined;
+}
+
+/** <sheetProtection> -> the model's blocked-action flags. */
+function readSheetProtection(el: Element): SheetProtection {
+  const locks: Partial<Record<SheetLock, boolean>> = {};
+  for (const flag of SHEET_LOCKS) {
+    const v = xmlBool(el, flag);
+    if (v !== undefined) locks[flag] = v;
+  }
+  return {
+    sheet: xmlBool(el, "sheet") ?? false,
+    ...(Object.keys(locks).length ? { locks } : {}),
+    ...(readProtectionPassword(el, "password") ? { password: readProtectionPassword(el, "password") } : {}),
+  };
+}
 
 export interface RichString {
   text: string; // base text (plain <t> and <r> runs)
@@ -239,6 +276,14 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
       else if (valign === "center") st.valign = "middle";
       const wrap = alignEl?.getAttribute("wrapText");
       if (wrap === "1" || wrap === "true") st.wrap = true;
+      // Cell protection: both default to locked / not hidden, so only the explicit opt-outs matter.
+      const protEl = firstByLocal(xf, "protection");
+      if (protEl) {
+        const locked = protEl.getAttribute("locked");
+        if (locked === "0" || locked === "false") st.unlocked = true;
+        const hidden = protEl.getAttribute("hidden");
+        if (hidden === "1" || hidden === "true") st.formulaHidden = true;
+      }
       xfStyles.push(Object.keys(st).length ? st : undefined);
     }
   }
@@ -269,6 +314,14 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
     if (name && target && dn.getAttribute("localSheetId") == null && !name.startsWith("_xlnm")) definedNames.set(name, target);
   }
   if (definedNames.size) wb.definedNames = definedNames;
+  // <workbookProtection lockStructure="1" lockWindows="1"/>: the sheet set / window layout is locked.
+  const wbProt = wbDoc.getElementsByTagName("workbookProtection")[0];
+  if (wbProt) {
+    const structure = xmlBool(wbProt, "lockStructure");
+    const windows = xmlBool(wbProt, "lockWindows");
+    const password = readProtectionPassword(wbProt, "workbookPassword");
+    if (structure || windows || password) wb.protection = { ...(structure ? { structure } : {}), ...(windows ? { windows } : {}), ...(password ? { password } : {}) };
+  }
   const rels = new Map<string, string>();
   const relsFile = files["xl/_rels/workbook.xml.rels"];
   const relsDoc = relsFile ? parseXmlOpt(relsFile) : undefined;
@@ -369,6 +422,10 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         const rng = parseRangeRef(afRef);
         if (rng) sheet.autoFilter = rng;
       }
+      // Sheet protection: <sheetProtection sheet="1" .../>. Every boolean attribute names an action
+      // that is BLOCKED, and each has its own default, so only the stated ones are recorded.
+      const spEl = doc.getElementsByTagName("sheetProtection")[0];
+      if (spEl) sheet.protection = readSheetProtection(spEl);
       // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
       // xSplit / ySplit are the counts of frozen leading columns / rows.
       const pane = doc.getElementsByTagName("pane")[0];

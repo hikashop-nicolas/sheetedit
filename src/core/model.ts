@@ -27,6 +27,13 @@ export interface CellStyle {
   wrap?: boolean;
   /** Border presence + CSS colour per side. */
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
+  /** The cell is explicitly unlocked (xlsx `<protection locked="0"/>`, ODF cell-protect "none").
+      Both formats default to locked, so absent = locked; this only matters once the sheet is
+      protected, when locked cells become read-only. */
+  unlocked?: boolean;
+  /** The formula is hidden from the formula bar while the sheet is protected. Preserved for a
+      faithful round-trip; sheetedit renders the value either way. */
+  formulaHidden?: boolean;
 }
 
 /** A list-type data validation (dropdown): the ranges it covers and its allowed values,
@@ -296,6 +303,11 @@ export interface Sheet {
   /** The pane boundary is a draggable SPLIT rather than a frozen one. Both render the same way
       here (the leading pane stays put); the difference is what the file records. */
   paneSplit?: boolean;
+  /** Sheet protection: whether the sheet is protected and which actions it blocks. Enforced in the
+      grid (locked cells become read-only) and written back per format. */
+  protection?: import("./protection").SheetProtection;
+  /** The protection changed in the UI -> it is rewritten on save. */
+  protectionDirty?: boolean;
   /** Autofilter range (1-based inclusive; first row = header). Drives sort/filter UI. */
   autoFilter?: { r1: number; c1: number; r2: number; c2: number };
   /** Pivot tables / data-pilots whose output lands on this sheet (read-only; rendered as cells). */
@@ -352,6 +364,10 @@ export interface Workbook {
   pivotCaches?: PivotCacheRef[];
   /** xlsx: user-defined slicer styles from styles.xml, keyed by name. */
   slicerStyles?: Map<string, import("../adapters/xlsx/slicer-style-read").SlicerStyleDef>;
+  /** Workbook-level protection (locked sheet set / window layout). */
+  protection?: import("./protection").WorkbookProtection;
+  /** The workbook protection changed in the UI -> it is rewritten on save. */
+  protectionDirty?: boolean;
 }
 
 /** A style change to apply to a cell (only the set fields change). */
@@ -370,6 +386,8 @@ export interface StyleChange {
   border?: boolean; // all-sides box border on/off (convenience)
   /** Per-side borders to set; each specified side is turned on/off, others kept. */
   borderSides?: { top?: boolean; right?: boolean; bottom?: boolean; left?: boolean };
+  /** Lock (true) or unlock (false) the cell for sheet protection. */
+  locked?: boolean;
 }
 
 /** A styled run within a rich-text (multi-format) cell string. */
@@ -637,6 +655,9 @@ export function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
     align: change.align ?? cur.align,
     valign: change.valign ?? cur.valign,
     wrap: change.wrap ?? cur.wrap,
+    // `locked` is stated the way the formats state it; the model keeps the explicit-unlock flag.
+    unlocked: change.locked === undefined ? cur.unlocked : !change.locked,
+    formulaHidden: cur.formulaHidden,
     borders: any
       ? {
           top: sides.top ? "#000000" : undefined,

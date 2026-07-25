@@ -39,8 +39,8 @@ with its sibling elements intact:
 - Other drawings not modelled above (pictures, shapes, charts and pivot tables are now read +
   rendered + editable, see above)
 - Form controls, ActiveX (slicers are now read + interactive, see below)
-- Defined names (read for recalc, not user-editable), sheet/workbook protection, print
-  settings, autofilter state, outline grouping, themes
+- Defined names (read for recalc, not user-editable), print settings, autofilter state,
+  outline grouping, themes (sheet/workbook protection is now read + enforced + authored, see below)
 
 Now rendered (were inert): hyperlinks (click), data-validation dropdowns, conditional
 formatting (dxf / colour scales / data bars), comments and notes. See Progress below.
@@ -60,8 +60,9 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 - Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
   the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
   authored on both formats too. Slicers are read and interactive: clicking their items re-filters
-  the linked pivot and the selection is written back. Other preserved-only features above (form
-  controls, protection) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
+  the linked pivot and the selection is written back. Sheet and workbook protection is read, enforced in the grid (locked cells
+  become read-only) and authored, in both formats. Other preserved-only features above (form
+  controls) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
   authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
   total), calculated fields, calculated items, and a pivot chart (over the output) are all

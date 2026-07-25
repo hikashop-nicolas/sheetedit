@@ -147,6 +147,17 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
     if (wrap) a.setAttribute("wrapText", "1");
     xf.appendChild(a);
   }
+  // Cell protection: the xf is rebuilt from scratch, so the current lock state has to be carried
+  // over or an unrelated style change would silently re-lock an unlocked cell. Both attributes
+  // default to locked / not hidden, so only the opt-outs are written.
+  const unlocked = change.locked === undefined ? cur.unlocked : !change.locked;
+  if (unlocked || cur.formulaHidden) {
+    xf.setAttribute("applyProtection", "1");
+    const p = ce("protection");
+    if (unlocked) p.setAttribute("locked", "0");
+    if (cur.formulaHidden) p.setAttribute("hidden", "1");
+    xf.appendChild(p);
+  }
   const sIdx = poolIndex(cellXfsEl, xf);
 
   cell.style = String(sIdx);

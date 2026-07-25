@@ -66,6 +66,9 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
   odsSetOrRemove(cp, "fo:border-left", bv(cs.borders?.left));
   odsSetOrRemove(cp, "fo:wrap-option", cs.wrap ? "wrap" : undefined);
   odsSetOrRemove(cp, "style:vertical-align", cs.valign, ODS.style);
+  // Cell protection: ODF states the whole state in one attribute, and "protected" is the default.
+  const protect = cs.unlocked ? (cs.formulaHidden ? "formula-hidden" : "none") : cs.formulaHidden ? "protected formula-hidden" : "protected";
+  odsSetOrRemove(cp, "style:cell-protect", protect, ODS.style);
   const tp = child("style:text-properties");
   odsSetOrRemove(tp, "fo:font-weight", cs.bold ? "bold" : undefined);
   odsSetOrRemove(tp, "fo:font-style", cs.italic ? "italic" : undefined);

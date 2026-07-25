@@ -14,6 +14,7 @@ export const ODS = {
   svg: "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0",
   dc: "http://purl.org/dc/elements/1.1/",
   calcext: "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0",
+  loext: "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0",
 };
 export const REPEAT_CAP = 1024;
 

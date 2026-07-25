@@ -27,6 +27,8 @@ export interface WorkbookCapabilities {
   outline: boolean;
   /** Freeze panes (author + write back the view settings). */
   freezePanes: boolean;
+  /** Sheet / workbook protection (enforce, author, write back). */
+  protection: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -41,6 +43,7 @@ const NONE: WorkbookCapabilities = {
   shapes: false,
   outline: false,
   freezePanes: false,
+  protection: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -55,6 +58,7 @@ const XLSX: WorkbookCapabilities = {
   shapes: true,
   outline: true,
   freezePanes: true,
+  protection: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -74,6 +78,9 @@ const ODS: WorkbookCapabilities = {
   outline: true,
   // ODF keeps frozen panes in settings.xml (the view settings), not in the table itself.
   freezePanes: true,
+  // ODF has table:protected + the loext permission flags; it lacks the format / sort / filter /
+  // pivot granularity, so those keep their (blocked) defaults on an ods round-trip.
+  protection: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */
