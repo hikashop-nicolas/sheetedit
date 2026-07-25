@@ -224,8 +224,18 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   read back by walking the line sizes (topLeftCell short-circuits that when present). ODF mode 1 is
   read through PositionRight / PositionBottom, which name the trailing pane's first line and so avoid
   its pixel unit entirely.
-  LIMITS, stated rather than papered over: the panes do NOT scroll independently - one scroll
-  container backs the grid, so a split behaves as a movable freeze rather than as two viewports.
+  A ROW SPLIT IS TWO REAL VIEWPORTS. The grid was one scroll container with one virtualized table
+  and sticky frozen cells; a split now adds a second container below it, and the renderer works on a
+  Pane record ({scrollEl, tableEl, window, inputs, tds, header}) rather than on module-level state.
+  Each pane keeps its own rendered window and its own cell elements, because a split can put the SAME
+  cell on screen twice - so the cell lookups became inputAt / tdAt / tdsAt over the pane list, with
+  the pane last pointed at searched first so Enter keeps the caret where the user is working. The
+  panes share horizontal scroll, only the top one draws the column header, and nothing is sticky
+  inside a split pane (the boundary IS the pane edge); a freeze still renders as one viewport with
+  the sticky block, untouched.
+  LIMITS, stated rather than papered over: a COLUMN split still shares its scroll, so a vertical
+  boundary behaves as a movable freeze. With a row split active the overlays (charts, images, shapes,
+  slicers, timelines) and the outline gutter anchor to the TOP pane, so they render there only.
   And an ODS split the user MOVES is written back as a frozen boundary, since ODF states the split
   position in a LibreOffice view-pixel unit that could not be determined here (its headless converter
   drops view settings, so there was no way to observe one); an untouched split is never rewritten.

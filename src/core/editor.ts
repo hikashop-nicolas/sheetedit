@@ -186,6 +186,8 @@ export function injectStyles(): void {
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
+    /* The lower viewport of a row split, under the boundary the divider sits on. */
+    .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
     /* Chrome makes overflow:auto containers keyboard-focusable and paints a rounded focus ring;
        the selected cell is the real focus indicator, so suppress the container's own ring. */
     .sheetedit-grid:focus { outline:none; }
@@ -412,7 +414,7 @@ export function createSheetEditor(
   const fxbar = createFormulaBar({
     onInput: (v) => {
       if (!activeCell) return;
-      const ip = inputs.get(key(activeCell.r, activeCell.c));
+      const ip = inputAt(key(activeCell.r, activeCell.c));
       if (ip) ip.value = v;
     },
     onEnter: (v) => {
@@ -428,7 +430,7 @@ export function createSheetEditor(
       }
       if (!activeCell) return;
       fxbar.setValue(rawOf(activeCell.r, activeCell.c));
-      const ip = inputs.get(key(activeCell.r, activeCell.c));
+      const ip = inputAt(key(activeCell.r, activeCell.c));
       if (ip) ip.value = displayValue(wb.sheets[active]!, activeCell.r, activeCell.c);
     },
     onFn: (fn) => applyFn(fn),
@@ -449,8 +451,25 @@ export function createSheetEditor(
   let active = 0;
   let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
   let sparkAt = new Map<string, NonNullable<Sheet["sparklines"]>[number]>(); // host cell -> sparkline, per render
-  let inputs = new Map<string, HTMLInputElement>();
-  let tds = new Map<string, HTMLElement>();
+  /** The pane the user last pointed at; a split shows some cells twice and this picks the copy
+      they are actually working in. */
+  let lastPane: Pane | null = null;
+  /** Panes in lookup order: the one last touched first. */
+  const lookupPanes = (): Pane[] => (lastPane && panes.includes(lastPane) ? [lastPane, ...panes.filter((p) => p !== lastPane)] : panes);
+  const inputAt = (k: string): HTMLInputElement | undefined => {
+    for (const p of lookupPanes()) { const el = p.inputs.get(k); if (el) return el; }
+    return undefined;
+  };
+  const tdAt = (k: string): HTMLElement | undefined => {
+    for (const p of lookupPanes()) { const el = p.tds.get(k); if (el) return el; }
+    return undefined;
+  };
+  /** Every rendering of a cell: a split can put the same cell in two panes at once. */
+  const tdsAt = (k: string): HTMLElement[] => {
+    const out: HTMLElement[] = [];
+    for (const p of panes) { const el = p.tds.get(k); if (el) out.push(el); }
+    return out;
+  };
   // Extra rows/columns the user added beyond the sheet's used extent (per active sheet).
   let extraRows = 0;
   let extraCols = 0;
@@ -475,7 +494,7 @@ export function createSheetEditor(
   const placeFillHandle = () => {
     fillHandle.remove();
     if (!sel) return;
-    const td = tds.get(key(sel.r2, sel.c2));
+    const td = tdAt(key(sel.r2, sel.c2));
     if (!td) return;
     td.classList.add("sheetedit-fillsrc");
     td.appendChild(fillHandle);
@@ -544,8 +563,9 @@ export function createSheetEditor(
       else if (cell.c < c1) range = { fr: cell.c, to: c1 - 1, horizontal: true };
       if (!range) return;
       for (let i = range.fr; i <= range.to; i++) {
-        if (range.horizontal) for (let r = r1; r <= r2; r++) tds.get(key(r, i))?.classList.add("sheetedit-fillprev");
-        else for (let c = c1; c <= c2; c++) tds.get(key(i, c))?.classList.add("sheetedit-fillprev");
+        // A cell can be on screen in both panes of a split, so mark every rendering of it.
+        if (range.horizontal) for (let r = r1; r <= r2; r++) for (const td of tdsAt(key(r, i))) td.classList.add("sheetedit-fillprev");
+        else for (let c = c1; c <= c2; c++) for (const td of tdsAt(key(i, c))) td.classList.add("sheetedit-fillprev");
       }
       fillPreview = [...document.querySelectorAll<HTMLElement>("td.sheetedit-fillprev")];
     };
@@ -563,7 +583,7 @@ export function createSheetEditor(
   const paintSel = () => {
     // Iterate the rendered window's cells (bounded), not the selection rectangle
     // (which can span a million virtual rows after a select-all).
-    for (const [k, td] of tds) {
+    for (const [k, td] of panes.flatMap((p) => [...p.tds])) {
       if (!sel) {
         td.classList.remove("sheetedit-sel");
         continue;
@@ -777,7 +797,7 @@ export function createSheetEditor(
   // range as a run rather than the whole cell. Returns the target, or null to fall through.
   const richRunTarget = (change: StyleChange): { r: number; c: number; start: number; end: number } | null => {
     if (!isRunStyleChange(change) || !activeCell) return null;
-    const inp = inputs.get(key(activeCell.r, activeCell.c));
+    const inp = inputAt(key(activeCell.r, activeCell.c));
     if (!inp || document.activeElement !== inp) return null; // must be actively editing this cell
     const start = inp.selectionStart ?? 0, end = inp.selectionEnd ?? 0;
     if (start >= end || (start === 0 && end === inp.value.length)) return null; // whole/none -> cell style
@@ -785,7 +805,7 @@ export function createSheetEditor(
   };
   const applyRichRun = (rt: { r: number; c: number; start: number; end: number }, change: StyleChange) => {
     const sheet = wb.sheets[active]!;
-    const inp = inputs.get(key(rt.r, rt.c));
+    const inp = inputAt(key(rt.r, rt.c));
     // Commit any uncommitted typing first so the run offsets match the model's text.
     if (inp && inp.value !== rawOf(rt.r, rt.c)) commitValue(rt.r, rt.c, inp.value);
     const cell = getCell(sheet, rt.r, rt.c);
@@ -797,7 +817,7 @@ export function createSheetEditor(
     });
     mark();
     renderGrid();
-    const inp2 = inputs.get(key(rt.r, rt.c)); // re-render replaced the input; restore the edit selection
+    const inp2 = inputAt(key(rt.r, rt.c)); // re-render replaced the input; restore the edit selection
     if (inp2) { inp2.focus(); try { inp2.setSelectionRange(rt.start, rt.end); } catch { /* ignore */ } }
     syncToolbar();
   };
@@ -1224,7 +1244,7 @@ export function createSheetEditor(
   const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
 
   const refreshDisplays = (sheet: Sheet, except?: HTMLInputElement) => {
-    for (const [k, input] of inputs) {
+    for (const [k, input] of panes.flatMap((p) => [...p.inputs])) {
       if (input === except) continue;
       const [r, c] = k.split(":").map(Number);
       input.value = displayValue(sheet, r!, c!);
@@ -1514,7 +1534,7 @@ export function createSheetEditor(
   const applyFn = (fn: string) => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const cellInput = activeCell ? inputs.get(key(activeCell.r, activeCell.c)) : undefined;
+    const cellInput = activeCell ? inputAt(key(activeCell.r, activeCell.c)) : undefined;
     const editingBar = document.activeElement === fxbar.input;
     const editingCell = !!cellInput && document.activeElement === cellInput;
     // A selected single-row/column run wins: a multi-cell selection means the user
@@ -1534,7 +1554,7 @@ export function createSheetEditor(
     const target = activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : null);
     if (!target) return;
     const editing = editingBar || editingCell;
-    const editor = editingBar ? fxbar.input : (inputs.get(key(target.r, target.c)) ?? fxbar.input);
+    const editor = editingBar ? fxbar.input : (inputAt(key(target.r, target.c)) ?? fxbar.input);
     fxbar.setHint(t("pickRange"));
     pickCb = (ref) => {
       fxbar.setHint(null);
@@ -1549,7 +1569,7 @@ export function createSheetEditor(
       skipFocusValue = false;
       editor.value = next;
       fxbar.setValue(next);
-      const ip = inputs.get(key(target.r, target.c));
+      const ip = inputAt(key(target.r, target.c));
       if (ip && ip !== editor) ip.value = next;
       const pos = (empty ? 1 : caret) + insert.length;
       editor.setSelectionRange(pos, pos);
@@ -1628,15 +1648,62 @@ export function createSheetEditor(
   // small sorted indexes of custom-sized lines, so any position is O(log n).
   let totalRows = 0;
   let totalCols = 0;
-  let winR1 = 1;
-  let winR2 = 0;
-  let winC1 = 1;
-  let winC2 = 0;
   let heightRows: number[] = [];
   let heightPrefix: number[] = [];
   let widthCols: number[] = [];
   let widthPrefix: number[] = [];
-  let tableElRef: HTMLTableElement | null = null;
+  /**
+   * A scrolling viewport over the sheet. There is always the main pane; a row SPLIT adds a second
+   * one below it that scrolls rows on its own while sharing the horizontal scroll. Each pane keeps
+   * its own rendered window and its own cell elements, because a split can show the same row twice.
+   */
+  interface Pane {
+    scrollEl: HTMLElement;
+    tableEl: HTMLTableElement | null;
+    winR1: number; winR2: number; winC1: number; winC2: number;
+    inputs: Map<string, HTMLInputElement>;
+    tds: Map<string, HTMLElement>;
+    /** Only the top pane draws the column header; the one below continues under it. */
+    header: boolean;
+  }
+  const mainPane: Pane = { scrollEl: gridScroll, tableEl: null, winR1: 1, winR2: 0, winC1: 1, winC2: 0, inputs: new Map(), tds: new Map(), header: true };
+  let panes: Pane[] = [mainPane];
+  /** The pane currently being built, so the cell builders write into the right maps. */
+  let cur: Pane = mainPane;
+
+  // The lower viewport of a row split. It shares the column geometry and the horizontal scroll
+  // with the main pane, and scrolls rows on its own - that is what makes a split a split rather
+  // than a movable freeze.
+  const splitScroll = document.createElement("div");
+  splitScroll.className = "sheetedit-grid sheetedit-grid-split";
+  splitScroll.style.display = "none";
+  gridScroll.after(splitScroll);
+  const splitPane: Pane = { scrollEl: splitScroll, tableEl: null, winR1: 1, winR2: 0, winC1: 1, winC2: 0, inputs: new Map(), tds: new Map(), header: false };
+  let syncingX = false;
+  const shareX = (from: HTMLElement, to: HTMLElement): void => {
+    if (syncingX) return;
+    syncingX = true;
+    to.scrollLeft = from.scrollLeft;
+    syncingX = false;
+  };
+
+  /** Lay the panes out for the sheet's boundary: one viewport, or two split at the boundary. */
+  const layoutPanes = (sheet: Sheet): void => {
+    const rows = sheet.paneSplit ? sheet.freeze?.rows ?? 0 : 0;
+    const on = rows > 0;
+    splitScroll.style.display = on ? "block" : "none";
+    panes = on ? [mainPane, splitPane] : [mainPane];
+    if (!on) {
+      gridScroll.style.flex = "";
+      splitPane.tableEl = null;
+      splitScroll.innerHTML = "";
+      return;
+    }
+    // The top viewport is exactly as tall as the boundary: header + the rows above it.
+    const headerH = (gridScroll.querySelector("thead, tr") as HTMLElement | null)?.offsetHeight ?? ROW_H;
+    gridScroll.style.flex = `0 0 ${Math.max(ROW_H * 2, headerH + yOfRow(rows + 1))}px`;
+  };
+
   let coveredSet = new Set<string>();
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
 
@@ -1837,7 +1904,7 @@ export function createSheetEditor(
       // pane maps correctly; the boundary lands just before the line whose top/left edge is closest.
       const nearest = (sel: string, attr: string, coord: (r: DOMRect) => number, size: (r: DOMRect) => number, client: number): number => {
         let best = 0, bestD = Infinity;
-        for (const el of Array.from(gridScroll.querySelectorAll(sel)) as HTMLElement[]) {
+        for (const el of Array.from(wrap.querySelectorAll(sel)) as HTMLElement[]) {
           const line = Number(el.dataset[attr] ?? "0");
           if (!line) continue;
           for (const [edge, n] of [[coord(el.getBoundingClientRect()), line - 1], [coord(el.getBoundingClientRect()) + size(el.getBoundingClientRect()), line]] as const) {
@@ -2023,8 +2090,8 @@ export function createSheetEditor(
     const sheet = wb.sheets[active];
     if (!sheet) return;
     for (const pos of positions) {
-      const td = tds.get(key(pos.r, pos.c));
-      const input = inputs.get(key(pos.r, pos.c));
+      const td = tdAt(key(pos.r, pos.c));
+      const input = inputAt(key(pos.r, pos.c));
       if (td && input) applyCellVisualStyle(td, input, getCell(sheet, pos.r, pos.c));
     }
   };
@@ -2063,7 +2130,7 @@ export function createSheetEditor(
   const buildCell = (sheet: Sheet, r: number, c: number): HTMLTableCellElement => {
       const td = document.createElement("td");
       td.dataset.rc = key(r, c);
-      tds.set(key(r, c), td);
+      cur.tds.set(key(r, c), td);
       const sp = spanAtMap.get(key(r, c));
       if (sp) {
         if (sp.rs > 1) td.rowSpan = sp.rs;
@@ -2205,7 +2272,7 @@ export function createSheetEditor(
       const commit = () => {
         // A re-render may have replaced this input while it was focused; a late blur
         // on the stale element must not commit its outdated value.
-        if (inputs.get(ki) !== input) return;
+        if (cur.inputs.get(ki) !== input) return;
         if (barGrab) return; // focus is moving into the formula bar: the edit continues there
         if (cancelEdit) {
           // Escape: discard whatever is in the input, restore the display.
@@ -2303,7 +2370,7 @@ export function createSheetEditor(
         if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
         td.appendChild(ov);
       }
-      inputs.set(ki, input);
+      cur.inputs.set(ki, input);
       return td;
   };
 
@@ -2380,25 +2447,40 @@ export function createSheetEditor(
   let renderingWindow = false;
   const renderWindow = (force = false, yAt?: number, xAt?: number): void => {
     const sheet = wb.sheets[active];
-    if (!sheet || !tableElRef || renderingWindow) return;
+    if (!sheet || renderingWindow) return;
     renderingWindow = true;
+    const was = cur;
     try {
-      renderWindowInner(force, yAt, xAt);
+      for (const p of panes) {
+        if (!p.tableEl) continue;
+        cur = p;
+        // Explicit coordinates belong to the pane that asked; the others use their own scroll.
+        renderWindowInner(force, p === was ? yAt : undefined, p === was ? xAt : undefined);
+      }
     } finally {
+      cur = was;
       renderingWindow = false;
     }
   };
+  /** Re-render just one pane (its own scroll moved). */
+  const renderPane = (pane: Pane): void => {
+    if (!pane.tableEl || renderingWindow) return;
+    renderingWindow = true;
+    const was = cur;
+    try { cur = pane; renderWindowInner(false); } finally { cur = was; renderingWindow = false; }
+  };
   const renderWindowInner = (force: boolean, yAt?: number, xAt?: number): void => {
     const sheet = wb.sheets[active]!;
-    const tableEl = tableElRef!;
-    const keepTop = gridScroll.scrollTop;
-    const keepLeft = gridScroll.scrollLeft;
+    const tableEl = cur.tableEl!;
+    const scroller = cur.scrollEl;
+    const keepTop = scroller.scrollTop;
+    const keepLeft = scroller.scrollLeft;
     const y = yAt ?? keepTop;
     const x = Math.max(0, (xAt ?? keepLeft) - rnW()); // grid area starts after the row-number column
     let r1 = Math.max(1, lineAt(y, totalRows, yOfRow) - OVERSCAN);
-    let r2 = Math.min(totalRows, lineAt(y + viewportH(), totalRows, yOfRow) + OVERSCAN);
+    let r2 = Math.min(totalRows, lineAt(y + (scroller.clientHeight || viewportH()), totalRows, yOfRow) + OVERSCAN);
     let c1 = Math.max(1, lineAt(x, totalCols, xOfCol) - OVERSCAN_COLS);
-    let c2 = Math.min(totalCols, lineAt(x + viewportW(), totalCols, xOfCol) + OVERSCAN_COLS);
+    let c2 = Math.min(totalCols, lineAt(x + (scroller.clientWidth || viewportW()), totalCols, xOfCol) + OVERSCAN_COLS);
     // A merge reaching into the window must render whole (its top-left carries the
     // value and the spans), so extend the window over intersecting merges.
     for (const m of sheet.merges ?? []) {
@@ -2409,13 +2491,13 @@ export function createSheetEditor(
       if (m.r2 > r2) r2 = Math.min(totalRows, m.r2);
       if (m.c2 > c2) c2 = Math.min(totalCols, m.c2);
     }
-    if (!force && r1 >= winR1 && r2 <= winR2 && c1 >= winC1 && c2 <= winC2) return;
+    if (!force && r1 >= cur.winR1 && r2 <= cur.winR2 && c1 >= cur.winC1 && c2 <= cur.winC2) return;
 
     // Keep an in-progress edit alive across the re-render when its cell stays
     // near the window; a far-away edit commits (blur) before its DOM goes away.
     let pin: { r: number; c: number; val: string; ss: number | null; se: number | null } | null = null;
     const ae = document.activeElement;
-    if (ae instanceof HTMLInputElement && gridScroll.contains(ae)) {
+    if (ae instanceof HTMLInputElement && scroller.contains(ae)) {
       const rc = ae.closest("td")?.getAttribute("data-rc");
       if (rc) {
         const [pr, pc] = rc.split(":").map(Number);
@@ -2434,14 +2516,16 @@ export function createSheetEditor(
       }
     }
 
-    inputs = new Map();
-    tds = new Map();
+    cur.inputs = new Map();
+    cur.tds = new Map();
     tableEl.textContent = "";
 
     // Column skeleton: row numbers, the frozen columns, a left spacer for the window's
     // horizontal offset, the window's columns, a right spacer. Frozen rows/columns render
     // regardless of the scroll position; the window covers only the rest.
-    const fr = sheet.freeze?.rows ?? 0;
+    // With a row SPLIT the boundary is between two real viewports, so no row is sticky inside
+    // either of them; a freeze keeps the sticky block as before.
+    const fr = sheet.paneSplit ? 0 : sheet.freeze?.rows ?? 0;
     const fc = sheet.freeze?.cols ?? 0;
     const ec1 = Math.max(c1, fc + 1); // horizontal window starts after the frozen columns
     const er1 = Math.max(r1, fr + 1); // vertical window starts after the frozen rows
@@ -2504,7 +2588,8 @@ export function createSheetEditor(
     head.appendChild(document.createElement("th")); // left spacer
     for (let c = ec1; c <= c2; c++) if (!sheet.hiddenCols?.has(c)) head.appendChild(makeColHead(c, colElByC.get(c)!));
     head.appendChild(document.createElement("th")); // right spacer
-    tableEl.appendChild(head);
+    // The pane below a split continues under the header the top pane already draws.
+    if (cur.header) tableEl.appendChild(head);
 
     // Frozen rows stick just below the header; measure the header height only when
     // needed (the read forces a layout on the still-empty table).
@@ -2522,18 +2607,18 @@ export function createSheetEditor(
     bottomSpacer.style.height = `${Math.max(0, yOfRow(totalRows + 1) - yOfRow(r2 + 1))}px`;
     tableEl.appendChild(bottomSpacer);
 
-    winR1 = r1;
-    winR2 = r2;
-    winC1 = c1;
-    winC2 = c2;
+    cur.winR1 = r1;
+    cur.winR2 = r2;
+    cur.winC1 = c1;
+    cur.winC2 = c2;
 
     // Any layout forced while the table was empty clamps the scroll position to 0;
     // the spacers are back, so put it back too.
-    if (gridScroll.scrollTop !== keepTop) gridScroll.scrollTop = keepTop;
-    if (gridScroll.scrollLeft !== keepLeft) gridScroll.scrollLeft = keepLeft;
+    if (scroller.scrollTop !== keepTop) scroller.scrollTop = keepTop;
+    if (scroller.scrollLeft !== keepLeft) scroller.scrollLeft = keepLeft;
 
     if (pin) {
-      const inp = inputs.get(key(pin.r, pin.c));
+      const inp = inputAt(key(pin.r, pin.c));
       if (inp && document.activeElement !== inp) {
         skipFocusValue = true;
         inp.focus({ preventScroll: true }); // focus-scroll would fight the window logic
@@ -2833,7 +2918,7 @@ export function createSheetEditor(
   /** Focus a cell, scrolling it into the rendered window first if needed. */
   const focusCell = (r: number, c: number): void => {
     if (r < 1 || c < 1 || r > totalRows || c > totalCols) return;
-    let inp = inputs.get(key(r, c));
+    let inp = inputAt(key(r, c));
     if (!inp) {
       const y = yOfRow(r);
       const x = rnW() + xOfCol(c);
@@ -2844,7 +2929,7 @@ export function createSheetEditor(
       else if (x > gridScroll.scrollLeft + viewportW() - COL_W)
         gridScroll.scrollLeft = Math.max(0, x - Math.max(COL_W, viewportW() - COL_W * 2));
       renderWindow(true);
-      inp = inputs.get(key(r, c));
+      inp = inputAt(key(r, c));
     }
     inp?.focus({ preventScroll: true });
   };
@@ -2875,20 +2960,25 @@ export function createSheetEditor(
   document.addEventListener("paste", onDocPaste);
 
   let scrollScheduled = false;
-  gridScroll.addEventListener("scroll", () => {
+  const onPaneScroll = (pane: Pane, other: HTMLElement) => () => {
+    shareX(pane.scrollEl, other); // the split's two panes scroll columns together
     if (scrollScheduled) return;
     scrollScheduled = true;
     setTimeout(() => {
       scrollScheduled = false;
-      renderWindow();
+      renderPane(pane);
+      if (panes.length > 1) renderPane(pane === mainPane ? splitPane : mainPane); // the shared X moved it too
     }, 16);
-  });
+  };
+  gridScroll.addEventListener("scroll", onPaneScroll(mainPane, splitScroll));
+  splitScroll.addEventListener("scroll", onPaneScroll(splitPane, gridScroll));
+  gridScroll.addEventListener("pointerdown", () => { lastPane = mainPane; }, true);
+  splitScroll.addEventListener("pointerdown", () => { lastPane = splitPane; }, true);
 
   const renderGrid = () => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    inputs = new Map();
-    tds = new Map();
+    for (const p of panes) { p.inputs = new Map(); p.tds = new Map(); }
     const keepTop = gridScroll.scrollTop;
     const keepLeft = gridScroll.scrollLeft;
     gridScroll.innerHTML = "";
@@ -2913,16 +3003,30 @@ export function createSheetEditor(
 
     const table = document.createElement("table");
     table.className = "sheetedit-table";
-    tableElRef = table;
+    mainPane.tableEl = table;
     gridScroll.appendChild(table);
+    layoutPanes(sheet);
+    if (panes.includes(splitPane)) {
+      splitScroll.innerHTML = "";
+      const t2 = document.createElement("table");
+      t2.className = "sheetedit-table";
+      splitPane.tableEl = t2;
+      splitScroll.appendChild(t2);
+    } else splitPane.tableEl = null;
 
-    winR1 = 1;
-    winR2 = 0;
-    winC1 = 1;
-    winC2 = 0;
+    for (const p of panes) { p.winR1 = 1; p.winR2 = 0; p.winC1 = 1; p.winC2 = 0; }
+    const keepSplitTop = splitScroll.scrollTop || yOfRow((sheet.freeze?.rows ?? 0) + 1);
+    cur = mainPane;
     renderWindow(true, keepTop, keepLeft); // build the window for the kept position first
     gridScroll.scrollTop = keepTop; // now the spacers exist, so the browser keeps it
     gridScroll.scrollLeft = keepLeft;
+    if (splitPane.tableEl) {
+      cur = splitPane;
+      renderWindowInner(true, keepSplitTop, keepLeft);
+      splitScroll.scrollTop = keepSplitTop;
+      splitScroll.scrollLeft = keepLeft;
+      cur = mainPane;
+    }
     chartLayer.refresh();
     imageLayer.refresh();
     shapeLayer.refresh();
@@ -3064,8 +3168,8 @@ export function createSheetEditor(
   // Floating style bar near the selection (approach-triggered, like richdoc).
   const selRectNow = (): DOMRect | null => {
     if (!sel || pickCb || dragActive) return null;
-    const tl = tds.get(key(sel.r1, sel.c1));
-    const br = tds.get(key(sel.r2, sel.c2));
+    const tl = tdAt(key(sel.r1, sel.c1));
+    const br = tdAt(key(sel.r2, sel.c2));
     if (!tl || !br) return null;
     const a = tl.getBoundingClientRect();
     const b = br.getBoundingClientRect();

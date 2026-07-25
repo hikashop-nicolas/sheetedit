@@ -157,11 +157,16 @@ Existing boundaries are read and rendered, and a change is written back: `.xlsx`
 view, `.ods` into the view settings in `settings.xml` (created, with its manifest entry, when the
 file has none).
 
-One limitation worth knowing: the panes do not scroll independently. Both panes share one scroll
-position, so a split behaves as a movable freeze rather than as two separate viewports. On `.ods`, a
-split you *move* is written back as a frozen boundary, because ODF states a split's position in a
-LibreOffice view-pixel unit that could not be pinned down here; an untouched split round-trips
-unchanged.
+A **row split gives you two real viewports**: each scrolls rows on its own, so the upper pane can sit
+on one part of the sheet while you browse another below it, and they scroll columns together. A
+freeze stays a single viewport with the leading rows pinned.
+
+Limitations worth knowing: a **column** split still shares its scroll, so a vertical boundary behaves
+as a movable freeze rather than as two viewports. With a row split active, floating objects (charts,
+images, shapes, slicers, timelines) and the outline gutter render in the **upper** pane only. And on
+`.ods`, a split you *move* is written back as a frozen boundary, because ODF states a split's
+position in a LibreOffice view-pixel unit that could not be pinned down here; an untouched split
+round-trips unchanged.
 
 ## Outline grouping
 
