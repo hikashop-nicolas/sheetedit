@@ -4,7 +4,9 @@ import { setCellInput } from "../workbook";
 import { addSheet } from "../sheet-ops";
 import { t } from "../i18n";
 import { deleteXlsxPivotParts, setXlsxCellNumFmt, writeXlsxPivotParts } from "../../adapters/xlsx";
-import { createXlsxSlicer } from "../../adapters/xlsx/slicer-create";
+import { createXlsxSlicer, createXlsxTableSlicer } from "../../adapters/xlsx/slicer-create";
+import { listWorkbookTables } from "../../adapters/xlsx/tables";
+import { parseXmlOpt } from "../model";
 import { formDialog } from "./form-dialog";
 import { deleteOdsPivotDef, setOdsCellNumFmt, writeOdsPivotDef } from "../../adapters/ods";
 
@@ -49,7 +51,7 @@ function itemIso(value: string | number, num: boolean): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 19);
 }
 
-export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void; applySlicer: (s: import("../model").SheetSlicer) => void; applyTimeline: (t: import("../model").SheetTimeline) => void } {
+export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void; applySlicer: (s: import("../model").SheetSlicer) => void; applyTimeline: (t: import("../model").SheetTimeline) => void; addTableSlicer: () => void } {
   const { wb, wrap } = ctx;
   const activeSheet = (): Sheet => wb.sheets[ctx.active()]!;
 
@@ -474,7 +476,43 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     }
   };
 
-  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline };
+  /**
+   * Add a slicer for one column of the Excel table under the cursor.
+   * A table slicer binds by the tableColumn's @id, so the column offset the UI filters on is mapped
+   * back to that id through the table part.
+   */
+  const addTableSlicer = (): void => {
+    if (wb.kind !== "xlsx") return;
+    const sheet = activeSheet();
+    const si = wb.sheets.indexOf(sheet);
+    const sel = ctx.getSelRect();
+    const table = listWorkbookTables(wb).find((tb) => tb.sheetIndex === si && sel.r1 >= tb.r1 && sel.r1 <= tb.r2 && sel.c1 >= tb.c1 && sel.c1 <= tb.c2);
+    if (!table) { formDialog(ctx.wrap, t("slicerInsert"), [{ key: "none", label: t("slicerNoTable"), type: "note" }], () => undefined); return; }
+    const doc = wb.files[table.path] ? parseXmlOpt(wb.files[table.path]!) : undefined;
+    const tableId = Number(doc?.documentElement.getAttribute("id") ?? "0");
+    const colEls = doc ? Array.from(doc.getElementsByTagName("*")).filter((e) => e.localName === "tableColumn") : [];
+    if (!tableId || !colEls.length) return;
+    const opts = colEls.map((e, i) => ({ value: String(i), label: e.getAttribute("name") ?? `Column ${i + 1}` }));
+    formDialog(ctx.wrap, t("slicerInsert"), [{ key: "field", label: t("slicerField"), type: "select", value: String(Math.max(0, sel.c1 - table.c1)), options: opts }], (v) => {
+      const col = Number(v.field);
+      const columnId = Number(colEls[col]?.getAttribute("id") ?? String(col + 1));
+      const label = opts[col]?.label ?? "";
+      // The slicer lists the column's distinct values, in first-seen order.
+      const seen: string[] = [];
+      for (let r = table.r1 + table.headerRows; r <= table.r2; r++) {
+        const val = (getCell(sheet, r, table.c1 + col)?.display ?? getCell(sheet, r, table.c1 + col)?.value ?? "").toString();
+        if (val !== "" && !seen.includes(val)) seen.push(val);
+      }
+      if (!seen.length) return;
+      // Park it right of the table, stepping right for each slicer already on the sheet.
+      const c1 = table.c2 + 2 + (sheet.slicers?.length ?? 0) * 4, r1 = table.r1;
+      const anchor = { fromCol: c1, fromRow: r1, fromColOff: 0, fromRowOff: 0, toCol: c1 + 3, toRow: r1 + 8, toColOff: 0, toRowOff: 0 };
+      const sl = createXlsxTableSlicer(wb, sheet, table, tableId, columnId, col, label, seen, anchor);
+      if (sl) { ctx.mark(); ctx.renderGrid(); ctx.refreshSlicers(); }
+    });
+  };
+
+  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline, addTableSlicer };
 }
 
 export interface PivotDialogOpts {

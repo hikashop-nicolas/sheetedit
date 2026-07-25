@@ -157,7 +157,18 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   file that groups its extensions differently still resolves; the hovered and no-data variants are
   parsed past, since sheetedit shows every cache item and has no hover state.
 
-  Not done: creating table or OLAP slicers (creation covers pivot slicers).
+  AUTHORING A TABLE SLICER: the toolbar's slicer button creates one for a column of the Excel table
+  under the cursor. Excel keeps the two families in SEPARATE extensions, so a table slicer is
+  registered under {46BE6895-7355-4a93-B00E-2C351335B9C9} on the workbook (an x15:slicerCaches
+  container whose child slicerCache stays x14) and {3A4CF648-6AED-40f4-86FF-DC5316D8AED3} on the
+  worksheet, and its cache carries an x15:tableSlicerCache (tableId + the tableColumn's @id) in its
+  own extLst under {2F2917AC-EB37-4324-AD4E-5DD8C200BD13} instead of naming a pivot. Every slicer
+  cache name is also written as a workbook defined name resolving to #N/A, the way Excel does. The
+  URIs come from EPPlus's ExtLstUris, which also confirmed the two slicer-style GUIDs.
+
+  Not done: creating OLAP slicers. An OLAP slicer's cache addresses cube levels by unique name
+  through a connection sheetedit does not model, so there is nothing meaningful to point a new one
+  at; reading and displaying them read-only stays the honest limit.
 
   CAVEAT: there is no Excel here to verify against and LibreOffice drops slicers entirely, so all of
   this follows the MS-XLSX spec (URIs and content types cross-checked against excelize) and is

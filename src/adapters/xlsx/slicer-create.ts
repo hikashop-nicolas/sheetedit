@@ -1,6 +1,7 @@
 import { parseXmlOpt, serializeXml, type PivotTableInfo, type Sheet, type SheetSlicer, type Workbook } from "../../core/model";
 import { pxToEmu } from "../../core/chart-model";
 import { addContentType, addRel, ensureSheetDrawing } from "./chart-write";
+import type { WorkbookTable } from "./tables";
 
 // Create a slicer from scratch: the two parts (view + cache), their content types and
 // relationships, the two extension-list registrations Excel looks for, and a drawing graphicFrame
@@ -16,9 +17,15 @@ const CT_SLICER = "application/vnd.ms-excel.slicer+xml";
 const CT_SLICER_CACHE = "application/vnd.ms-excel.slicerCache+xml";
 const REL_SLICER = "http://schemas.microsoft.com/office/2007/relationships/slicer";
 const REL_SLICER_CACHE = "http://schemas.microsoft.com/office/2007/relationships/slicerCache";
-// extLst URIs: x14:slicerCaches on the workbook, x14:slicerList on the worksheet.
+const X15 = "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main";
+// extLst URIs: slicerCaches on the workbook, slicerList on the worksheet. A table slicer uses its
+// OWN pair of URIs and an x15 container, so Excel keeps the two families apart.
 const EXT_SLICER_CACHES = "{BBE1A952-AA13-448e-AADC-164F8A28A991}";
 const EXT_SLICER_LIST = "{A8765BA9-456A-4dab-B4F3-ACF838C121DE}";
+const EXT_TABLE_SLICER_CACHES = "{46BE6895-7355-4a93-B00E-2C351335B9C9}";
+const EXT_TABLE_SLICER_LIST = "{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}";
+// The table binding inside the cache's own extLst.
+const EXT_TABLE_SLICER_CACHE = "{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}";
 
 const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -54,13 +61,13 @@ function addExt(doc: Document, parent: Element, uri: string, innerXml: string): 
   // Reuse an existing ext with this uri when present, so a second slicer joins the same list.
   let ext = Array.from(extLst.children).find((e) => e.getAttribute("uri") === uri);
   if (!ext) {
-    const frag = parseXmlOpt(enc(`<ext xmlns="${parent.namespaceURI || MAIN}" xmlns:x14="${X14}" xmlns:r="${R}" uri="${uri}">${innerXml}</ext>`));
+    const frag = parseXmlOpt(enc(`<ext xmlns="${parent.namespaceURI || MAIN}" xmlns:x14="${X14}" xmlns:x15="${X15}" xmlns:r="${R}" uri="${uri}">${innerXml}</ext>`));
     if (!frag) return;
     extLst.appendChild(doc.importNode(frag.documentElement, true));
     return;
   }
   // Merge into the existing x14 container (slicerCaches / slicerList).
-  const frag = parseXmlOpt(enc(`<w xmlns:x14="${X14}" xmlns:r="${R}">${innerXml}</w>`));
+  const frag = parseXmlOpt(enc(`<w xmlns:x14="${X14}" xmlns:x15="${X15}" xmlns:r="${R}">${innerXml}</w>`));
   const incoming = frag?.documentElement.firstElementChild;
   if (!incoming) return;
   const container = Array.from(ext.children).find((e) => e.localName === incoming.localName);
@@ -80,12 +87,35 @@ function slicerFrameXml(sl: SheetSlicer, id: number): string {
     `</xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`;
 }
 
+/** Excel registers each slicer cache name as a workbook defined name resolving to #N/A. */
+function addSlicerDefinedName(wbDoc: Document, cacheName: string): void {
+  const root = wbDoc.documentElement;
+  let names = Array.from(root.children).find((e) => e.localName === "definedNames");
+  if (!names) {
+    names = wbDoc.createElementNS(root.namespaceURI || MAIN, "definedNames");
+    // definedNames sits after sheets and before calcPr / extLst.
+    const after = Array.from(root.children).find((e) => e.localName === "calcPr" || e.localName === "extLst");
+    if (after) root.insertBefore(names, after); else root.appendChild(names);
+  }
+  if (Array.from(names.children).some((e) => e.getAttribute("name") === cacheName)) return;
+  const dn = wbDoc.createElementNS(root.namespaceURI || MAIN, "definedName");
+  dn.setAttribute("name", cacheName);
+  dn.textContent = "#N/A";
+  names.appendChild(dn);
+}
+
+/** What a new slicer filters: one pivot, or one column of one table. */
+export type SlicerTarget =
+  | { kind: "pivot"; info: PivotTableInfo }
+  | { kind: "table"; table: WorkbookTable; tableId: number; columnId: number; col: number };
+
 /**
- * Create a slicer on `sheet` for `field` of `info`'s pivot, with every item selected.
+ * Create a slicer on `sheet` for `fieldName`, with every item selected.
  * Returns the model (already pushed onto sheet.slicers) or null when it cannot be built.
  */
-export function createXlsxSlicer(wb: Workbook, sheet: Sheet, info: PivotTableInfo, fieldName: string, items: string[], anchor: SheetSlicer["anchor"]): SheetSlicer | null {
+export function createSlicer(wb: Workbook, sheet: Sheet, target: SlicerTarget, fieldName: string, items: string[], anchor: SheetSlicer["anchor"]): SheetSlicer | null {
   if (!sheet.path || !items.length) return null;
+  const isTable = target.kind === "table";
   const used = new Set(wb.sheets.flatMap((s) => (s.slicers ?? []).map((x) => x.name)));
   let name = safeName(fieldName);
   let n = 1;
@@ -97,20 +127,41 @@ export function createXlsxSlicer(wb: Workbook, sheet: Sheet, info: PivotTableInf
   while (wb.files[`xl/slicerCaches/slicerCache${ci}.xml`]) ci++;
   const cachePath = `xl/slicerCaches/slicerCache${ci}.xml`;
   const itemsXml = items.map((_, i) => `<x14:i x="${i}" s="1"/>`).join("");
+  // A pivot slicer names its pivot and its pivot cache; a table slicer names the table column
+  // instead, through an x15:tableSlicerCache in the cache's own extLst.
+  const pivotPart = target.kind === "pivot"
+    ? `<x14:pivotTables><x14:pivotTable tabId="1" name="${esc(target.info.name)}"/></x14:pivotTables>`
+    : "";
+  const tabularAttrs = target.kind === "pivot"
+    ? ` pivotCacheId="${cacheIdOf(wb, target.info.cachePart)}"`
+    : "";
+  const tablePart = target.kind === "table"
+    ? `<x14:extLst><x14:ext xmlns:x15="${X15}" uri="${EXT_TABLE_SLICER_CACHE}">` +
+        `<x15:tableSlicerCache tableId="${target.tableId}" column="${target.columnId}" sortOrder="ascending" customListSort="1" crossFilter="showItemsWithDataAtTop"/>` +
+      `</x14:ext></x14:extLst>`
+    : "";
   wb.files[cachePath] = enc(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n` +
     `<x14:slicerCacheDefinition xmlns:x14="${X14}" xmlns:r="${R}" name="${esc(cacheName)}" sourceName="${esc(fieldName)}">` +
-      `<x14:pivotTables><x14:pivotTable tabId="1" name="${esc(info.name)}"/></x14:pivotTables>` +
-      `<x14:data><x14:tabular pivotCacheId="${cacheIdOf(wb, info.cachePart)}" crossFilter="showItemsWithDataAtTop">` +
+      pivotPart +
+      `<x14:data><x14:tabular${tabularAttrs} crossFilter="showItemsWithDataAtTop">` +
         `<x14:items count="${items.length}">${itemsXml}</x14:items>` +
       `</x14:tabular></x14:data>` +
+      tablePart +
     `</x14:slicerCacheDefinition>`);
   addContentType(wb, cachePath, CT_SLICER_CACHE);
   // The cache is owned by the workbook and registered in its extLst.
   const cacheRid = addRel(wb, "xl/_rels/workbook.xml.rels", REL_SLICER_CACHE, `slicerCaches/slicerCache${ci}.xml`);
   const wbDoc = wb.files["xl/workbook.xml"] ? parseXmlOpt(wb.files["xl/workbook.xml"]) : undefined;
   if (wbDoc) {
-    addExt(wbDoc, wbDoc.documentElement, EXT_SLICER_CACHES, `<x14:slicerCaches xmlns:x14="${X14}" xmlns:r="${R}"><x14:slicerCache r:id="${cacheRid}"/></x14:slicerCaches>`);
+    // Excel keeps the two families in separate extensions: x14:slicerCaches for pivot slicers and
+    // x15:slicerCaches for table ones (the child slicerCache stays in the x14 namespace either way).
+    const container = isTable
+      ? `<x15:slicerCaches xmlns:x14="${X14}" xmlns:x15="${X15}" xmlns:r="${R}"><x14:slicerCache r:id="${cacheRid}"/></x15:slicerCaches>`
+      : `<x14:slicerCaches xmlns:x14="${X14}" xmlns:r="${R}"><x14:slicerCache r:id="${cacheRid}"/></x14:slicerCaches>`;
+    addExt(wbDoc, wbDoc.documentElement, isTable ? EXT_TABLE_SLICER_CACHES : EXT_SLICER_CACHES, container);
+    // The cache name is also a workbook defined name, the way Excel writes it.
+    addSlicerDefinedName(wbDoc, cacheName);
     wb.files["xl/workbook.xml"] = serializeXml(wbDoc);
   }
 
@@ -140,7 +191,12 @@ export function createXlsxSlicer(wb: Workbook, sheet: Sheet, info: PivotTableInf
   // --- the drawing anchor ---
   const sl: SheetSlicer = {
     name, cache: cacheName, caption: fieldName, columnCount: 1,
-    sourceName: fieldName, pivotTables: [info.name],
+    sourceName: fieldName,
+    pivotTables: target.kind === "pivot" ? [target.info.name] : [],
+    kind: target.kind,
+    table: target.kind === "table"
+      ? { sheetIndex: target.table.sheetIndex, r1: target.table.r1, c1: target.table.c1, r2: target.table.r2, c2: target.table.c2, headerRows: target.table.headerRows, col: target.col }
+      : undefined,
     items: items.map((label, x) => ({ x, label, selected: true })),
     anchor, slicerPath, cachePath,
   };
@@ -153,9 +209,24 @@ export function createXlsxSlicer(wb: Workbook, sheet: Sheet, info: PivotTableInf
   // The worksheet extLst must be added AFTER any drawing work: ensureSheetDrawing re-parses the
   // sheet from wb.files and replaces sheet.doc, which would drop an earlier in-memory edit.
   if (slicerRid && sheet.doc) {
-    addExt(sheet.doc, sheet.doc.documentElement, EXT_SLICER_LIST, `<x14:slicerList xmlns:x14="${X14}" xmlns:r="${R}"><x14:slicer r:id="${slicerRid}"/></x14:slicerList>`);
+    addExt(sheet.doc, sheet.doc.documentElement, isTable ? EXT_TABLE_SLICER_LIST : EXT_SLICER_LIST,
+      `<x14:slicerList xmlns:x14="${X14}" xmlns:r="${R}"><x14:slicer r:id="${slicerRid}"/></x14:slicerList>`);
     sheet.layoutDirty = true;
   }
   (sheet.slicers ??= []).push(sl);
   return sl;
+}
+
+/** Create a slicer bound to a pivot table. */
+export function createXlsxSlicer(wb: Workbook, sheet: Sheet, info: PivotTableInfo, fieldName: string, items: string[], anchor: SheetSlicer["anchor"]): SheetSlicer | null {
+  return createSlicer(wb, sheet, { kind: "pivot", info }, fieldName, items, anchor);
+}
+
+/**
+ * Create a slicer bound to one column of an Excel table.
+ * `columnId` is the tableColumn's @id (what the cache stores), `col` its zero-based offset in the
+ * table range (what the UI filters on).
+ */
+export function createXlsxTableSlicer(wb: Workbook, sheet: Sheet, table: WorkbookTable, tableId: number, columnId: number, col: number, fieldName: string, items: string[], anchor: SheetSlicer["anchor"]): SheetSlicer | null {
+  return createSlicer(wb, sheet, { kind: "table", table, tableId, columnId, col }, fieldName, items, anchor);
 }

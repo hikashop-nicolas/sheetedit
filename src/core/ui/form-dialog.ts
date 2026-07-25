@@ -1,12 +1,13 @@
 import { t } from "../i18n";
 
-// A small modal form: a titled card of labelled fields (text / checkbox / colour / select) with
-// live show/hide gating (showFor) and OK / Cancel. Shared by every authoring dialog. Pure DOM; the
-// only host dependency is the element to mount into.
+// A small modal form: a titled card of labelled fields (text / checkbox / colour / select / a
+// read-only note) with live show/hide gating (showFor) and OK / Cancel. Shared by every authoring
+// dialog. Pure DOM; the only host dependency is the element to mount into.
 
 export type FormField = (
   | { key: string; label: string; type: "text" | "checkbox" | "color"; value?: string | boolean }
   | { key: string; label: string; type: "select"; options: { value: string; label: string }[]; value?: string }
+  | { key: string; label: string; type: "note" }
 ) & { showFor?: { key: string; values: string[] } };
 
 export function formDialog(wrap: HTMLElement, title: string, fields: FormField[], onOk: (vals: Record<string, string | boolean>) => void): void {
@@ -20,6 +21,13 @@ export function formDialog(wrap: HTMLElement, title: string, fields: FormField[]
   const inputs: Record<string, HTMLInputElement | HTMLSelectElement> = {};
   const rows: Record<string, HTMLElement> = {};
   for (const f of fields) {
+    if (f.type === "note") {
+      const p = document.createElement("p");
+      p.textContent = f.label;
+      p.style.cssText = "margin:0 0 12px;color:var(--sheetedit-muted,#aab2bf);font-size:13px";
+      card.appendChild(p); rows[f.key] = p;
+      continue;
+    }
     const inline = f.type === "checkbox";
     const lbl = document.createElement("label");
     lbl.style.cssText = "display:flex;" + (inline ? "align-items:center;gap:7px;" : "flex-direction:column;gap:4px;") + "margin-bottom:10px;font-size:13px";
@@ -36,6 +44,7 @@ export function formDialog(wrap: HTMLElement, title: string, fields: FormField[]
     for (const f of fields) {
       if (!f.showFor) continue;
       const driver = inputs[f.showFor.key];
+      if (!rows[f.key]) continue;
       // The label carries an inline display:flex, which would override the hidden attribute, so
       // toggle display directly.
       const show = !!driver && f.showFor.values.includes(driver.value);
@@ -51,7 +60,7 @@ export function formDialog(wrap: HTMLElement, title: string, fields: FormField[]
   const cancel = btn(t("chartCancel"), false), ok = btn(t("chartApply"), true);
   const close = (): void => modal.remove();
   cancel.addEventListener("click", close);
-  ok.addEventListener("click", () => { const vals: Record<string, string | boolean> = {}; for (const f of fields) { const inp = inputs[f.key]!; vals[f.key] = f.type === "checkbox" ? (inp as HTMLInputElement).checked : inp.value; } close(); onOk(vals); });
+  ok.addEventListener("click", () => { const vals: Record<string, string | boolean> = {}; for (const f of fields) { const inp = inputs[f.key]; if (!inp) continue; vals[f.key] = f.type === "checkbox" ? (inp as HTMLInputElement).checked : inp.value; } close(); onOk(vals); });
   actions.append(cancel, ok); card.appendChild(actions);
   modal.appendChild(card); wrap.appendChild(modal);
   modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });

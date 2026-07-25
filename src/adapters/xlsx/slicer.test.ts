@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 import { writeWorkbook } from "../../core/workbook";
-import { createXlsxSlicer } from "./slicer-create";
+import { createXlsxSlicer, createXlsxTableSlicer } from "./slicer-create";
+import { listWorkbookTables } from "./tables";
 
 const X14 = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 const SLE = "http://schemas.microsoft.com/office/drawing/2010/slicer";
@@ -257,5 +258,98 @@ describe("table slicer bound to a real table", () => {
     expect(sl.table).toMatchObject({ sheetIndex: 0, r1: 1, c1: 1, r2: 5, c2: 2, headerRows: 1, col: 1 });
     expect(sl.items.map((i) => i.label)).toEqual(["North", "South", "West"]); // distinct, first-seen order
     expect(sl.items.every((i) => i.selected)).toBe(true);
+  });
+});
+
+const RELNS2 = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+describe("creating a table slicer", () => {
+  /** A minimal workbook holding one Excel table and no slicers yet. */
+  function bareTableBook(): Uint8Array {
+    const rows = [["Item", "Region"], ["a", "North"], ["b", "South"], ["c", "North"], ["d", "West"]]
+      .map((cells, i) => `<row r="${i + 1}">${cells.map((v, c) => `<c r="${String.fromCharCode(65 + c)}${i + 1}" t="inlineStr"><is><t>${v}</t></is></c>`).join("")}</row>`).join("");
+    return zipSync({
+      "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>`),
+      "_rels/.rels": strToU8(`<Relationships xmlns="${RELNS2}"><Relationship Id="rId1" Type="${R}/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${R}"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="${RELNS2}"><Relationship Id="rId1" Type="${R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`),
+      "xl/worksheets/_rels/sheet1.xml.rels": strToU8(`<Relationships xmlns="${RELNS2}"><Relationship Id="rId1" Type="${R}/table" Target="../tables/table1.xml"/></Relationships>`),
+      "xl/tables/table1.xml": strToU8(`<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="7" name="Tbl" displayName="Tbl" ref="A1:B5" headerRowCount="1"><tableColumns count="2"><tableColumn id="1" name="Item"/><tableColumn id="4" name="Region"/></tableColumns></table>`),
+      "xl/styles.xml": strToU8(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>`),
+    });
+  }
+
+  const ANCHOR = { fromCol: 5, fromRow: 1, fromColOff: 0, fromRowOff: 0, toCol: 8, toRow: 9, toColOff: 0, toRowOff: 0 };
+
+  /** Create a table slicer on the bare fixture and hand back the saved bytes. */
+  function created(): { bytes: Uint8Array; file: (p: string) => string } {
+    const wb = readWorkbook(bareTableBook());
+    const table = listWorkbookTables(wb)[0]!;
+    const sheet = wb.sheets[0]!;
+    const sl = createXlsxTableSlicer(wb, sheet, table, 7, 4, 1, "Region", ["North", "South", "West"], ANCHOR);
+    expect(sl).toBeTruthy();
+    const bytes = writeWorkbook(wb);
+    const files = unzipSync(bytes);
+    return { bytes, file: (p) => strFromU8(files[p]!) };
+  }
+
+  it("writes a cache bound to the table column, not to a pivot", () => {
+    const { file } = created();
+    const cache = file("xl/slicerCaches/slicerCache1.xml");
+    expect(cache).toContain(`<x15:tableSlicerCache tableId="7" column="4"`);
+    expect(cache).toContain(`uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}"`);
+    // A table slicer has no pivot to name and no pivot cache to point at.
+    expect(cache).not.toContain("pivotTable");
+    expect(cache).not.toContain("pivotCacheId");
+    expect(cache).toContain(`<x14:items count="3">`);
+  });
+
+  it("registers the cache under the TABLE workbook extension, in an x15 container", () => {
+    const { file } = created();
+    const wbXml = file("xl/workbook.xml");
+    expect(wbXml).toContain("{46BE6895-7355-4a93-B00E-2C351335B9C9}");
+    expect(wbXml).not.toContain("{BBE1A952-AA13-448e-AADC-164F8A28A991}");
+    expect(wbXml).toMatch(/slicerCaches/);
+    // The cache name is also a defined name, the way Excel writes it.
+    expect(wbXml).toMatch(/<definedName name="Slicer_Region">#N\/A<\/definedName>/);
+  });
+
+  it("registers the view under the TABLE worksheet extension", () => {
+    const { file } = created();
+    const sheetXml = file("xl/worksheets/sheet1.xml");
+    expect(sheetXml).toContain("{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}");
+    expect(sheetXml).not.toContain("{A8765BA9-456A-4dab-B4F3-ACF838C121DE}");
+  });
+
+  it("writes both content types, both relationships and the drawing anchor", () => {
+    const { file } = created();
+    const ct = file("[Content_Types].xml");
+    expect(ct).toContain("application/vnd.ms-excel.slicer+xml");
+    expect(ct).toContain("application/vnd.ms-excel.slicerCache+xml");
+    expect(file("xl/_rels/workbook.xml.rels")).toContain("slicerCaches/slicerCache1.xml");
+    expect(file("xl/worksheets/_rels/sheet1.xml.rels")).toContain("../slicers/slicer1.xml");
+    const drawing = Object.keys(unzipSync(created().bytes)).find((k) => /^xl\/drawings\/drawing\d+\.xml$/.test(k))!;
+    expect(file(drawing)).toContain("sle:slicer");
+  });
+
+  it("reads back as a table slicer bound to the right column", () => {
+    const again = readWorkbook(created().bytes);
+    const sl = again.sheets.flatMap((s) => s.slicers ?? [])[0]!;
+    expect(sl.kind).toBe("table");
+    // tableColumn id 4 is the SECOND column, so the offset the UI filters on is 1.
+    expect(sl.table).toMatchObject({ sheetIndex: 0, r1: 1, c1: 1, r2: 5, c2: 2, headerRows: 1, col: 1 });
+    expect(sl.items.map((i) => i.label)).toEqual(["North", "South", "West"]);
+    expect(sl.items.every((i) => i.selected)).toBe(true);
+  });
+
+  it("still writes a pivot slicer under the pivot extensions", () => {
+    const wb = readWorkbook(withSlicer([0, 1]));
+    const host = wb.sheets.find((s) => s.pivotTables?.length)!;
+    const info = host.pivotTables![0]!;
+    createXlsxSlicer(wb, host, info, "Product", ["Apple", "Banana"], ANCHOR);
+    const wbXml = strFromU8(unzipSync(writeWorkbook(wb))["xl/workbook.xml"]!);
+    expect(wbXml).toContain("{BBE1A952-AA13-448e-AADC-164F8A28A991}");
+    expect(wbXml).not.toContain("{46BE6895-7355-4a93-B00E-2C351335B9C9}");
   });
 });

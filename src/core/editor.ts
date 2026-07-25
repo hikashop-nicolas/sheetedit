@@ -1770,6 +1770,11 @@ export function createSheetEditor(
     const PIVOT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M2 6h12M6 6v8M6 6V2"/><path d="M9 9.5l2 2M11 9.5l-2 2"/></svg>`;
     trailingIcons.push(tbIcon(PIVOT_ICON, t("pivotInsert"), () => openPivotDialog()));
   }
+  // A table slicer needs xlsx parts, so it rides on the same capability as pivots.
+  if (caps.pivots && wb.kind === "xlsx") {
+    const SLICER_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="2" width="10" height="12" rx="1.5"/><rect x="5" y="5" width="6" height="2.2" rx="0.6"/><rect x="5" y="9" width="6" height="2.2" rx="0.6"/></svg>`;
+    trailingIcons.push(tbIcon(SLICER_ICON, t("slicerInsert"), () => addTableSlicer()));
+  }
   if (caps.hyperlinks) {
     const LINK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
     trailingIcons.push(tbIcon(LINK_ICON, t("linkEdit"), () => openLinkDialog()));
@@ -2594,7 +2599,7 @@ export function createSheetEditor(
   };
 
 
-  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline } = setupPivotUi({
+  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline, addTableSlicer } = setupPivotUi({
     wb, wrap,
     active: () => active,
     getSelRect,

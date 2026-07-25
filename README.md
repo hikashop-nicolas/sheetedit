@@ -127,7 +127,8 @@ sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`
   item to narrow to it, ctrl/cmd-click to multi-select, ⊗ to clear; the linked pivots recompute and
   the new selection is written back into the slicer cache on save. Table slicers filter their
   table's rows instead. "Insert slicer" on a pivot's tag menu creates one for any field the pivot
-  groups by.
+  groups by, and the toolbar's slicer button creates one for a column of the table under the
+  cursor. Slicer styles are honoured, including workbook-defined custom ones.
 - **Timelines** (xlsx): the date sibling of a slicer, shown as a strip of periods at the timeline's
   granularity (years / quarters / months / days). Click a period to filter the linked pivots to it,
   shift-click to extend the range, ⊗ to clear; the range is written back into the timeline cache.
