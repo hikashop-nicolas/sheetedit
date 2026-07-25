@@ -185,9 +185,16 @@ export function injectStyles(): void {
     .sheetedit-pop-item:hover { background:var(--sheetedit-btn, #3a3f47); }
     /* The grid is a light canvas (like a real spreadsheet) so the file's fills and
        font colours render faithfully and stay readable; the chrome stays dark. */
+    /* The grid area holds one column band per side of a vertical split; each band stacks its row
+       bands. With no split it is a single band holding a single viewport. */
+    .sheetedit-gridarea { flex:1; min-height:0; display:flex; flex-direction:row; }
+    .sheetedit-colband { min-width:0; display:flex; flex-direction:column; }
+    .sheetedit-colband:first-child { flex:1; }
+    .sheetedit-colband-right { flex:1; display:none; }
     .sheetedit-grid { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
-    /* The lower viewport of a row split, under the boundary the divider sits on. */
+    /* The viewports past a boundary, on the side the divider sits on. */
     .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
+    .sheetedit-grid-right { border-left:1px solid var(--sheetedit-border, #c8ccd2); }
     /* Chrome makes overflow:auto containers keyboard-focusable and paints a rounded focus ring;
        the selected cell is the real focus indicator, so suppress the container's own ring. */
     .sheetedit-grid:focus { outline:none; }
@@ -1663,28 +1670,59 @@ export function createSheetEditor(
     winR1: number; winR2: number; winC1: number; winC2: number;
     inputs: Map<string, HTMLInputElement>;
     tds: Map<string, HTMLElement>;
-    /** Only the top pane draws the column header; the one below continues under it. */
+    /** Only the top band draws the column header; the band below continues under it. */
     header: boolean;
+    /** Only the left band draws the row-number column; the band right of it continues past it. */
+    rowHeader: boolean;
+    /** Which quadrant this is: row band 0/1 (above/below a row split), column band 0/1. */
+    band: { r: 0 | 1; c: 0 | 1 };
   }
-  const mainPane: Pane = { scrollEl: gridScroll, tableEl: null, winR1: 1, winR2: 0, winC1: 1, winC2: 0, inputs: new Map(), tds: new Map(), header: true };
+  const newPane = (scrollEl: HTMLElement, r: 0 | 1, c: 0 | 1): Pane =>
+    ({ scrollEl, tableEl: null, winR1: 1, winR2: 0, winC1: 1, winC2: 0, inputs: new Map(), tds: new Map(), header: r === 0, rowHeader: c === 0, band: { r, c } });
+  const mainPane: Pane = newPane(gridScroll, 0, 0);
   let panes: Pane[] = [mainPane];
   /** The pane currently being built, so the cell builders write into the right maps. */
   let cur: Pane = mainPane;
 
-  // The lower viewport of a row split. It shares the column geometry and the horizontal scroll
-  // with the main pane, and scrolls rows on its own - that is what makes a split a split rather
-  // than a movable freeze.
-  const splitScroll = document.createElement("div");
-  splitScroll.className = "sheetedit-grid sheetedit-grid-split";
-  splitScroll.style.display = "none";
-  gridScroll.after(splitScroll);
-  const splitPane: Pane = { scrollEl: splitScroll, tableEl: null, winR1: 1, winR2: 0, winC1: 1, winC2: 0, inputs: new Map(), tds: new Map(), header: false };
-  let syncingX = false;
-  const shareX = (from: HTMLElement, to: HTMLElement): void => {
-    if (syncingX) return;
-    syncingX = true;
-    to.scrollLeft = from.scrollLeft;
-    syncingX = false;
+  // The extra viewports. A row split adds a band below, a column split adds a band to the right,
+  // and both together give Excel's four panes. Each pane scrolls the axis its boundary cuts and
+  // shares the other: panes in the same row band scroll vertically together, panes in the same
+  // column band scroll horizontally together.
+  const mkPane = (cls: string, r: 0 | 1, c: 0 | 1): Pane => {
+    const el = document.createElement("div");
+    el.className = `sheetedit-grid ${cls}`;
+    el.style.display = "none";
+    return newPane(el, r, c);
+  };
+  const splitPane = mkPane("sheetedit-grid-split", 1, 0);
+  const rightPane = mkPane("sheetedit-grid-right", 0, 1);
+  const rightSplitPane = mkPane("sheetedit-grid-right sheetedit-grid-split", 1, 1);
+  const splitScroll = splitPane.scrollEl;
+  // Two column bands side by side, each stacking its row bands.
+  const gridArea = document.createElement("div");
+  gridArea.className = "sheetedit-gridarea";
+  const colBand0 = document.createElement("div");
+  colBand0.className = "sheetedit-colband";
+  const colBand1 = document.createElement("div");
+  colBand1.className = "sheetedit-colband sheetedit-colband-right";
+  // Take gridScroll's place in the wrap FIRST, then adopt it: assembling the other way round would
+  // put the area inside a band that is inside the area.
+  gridScroll.replaceWith(gridArea);
+  colBand0.append(gridScroll, splitScroll);
+  colBand1.append(rightPane.scrollEl, rightSplitPane.scrollEl);
+  gridArea.append(colBand0, colBand1);
+
+  let syncing = false;
+  /** Mirror the axis a pane does not own onto the panes that share it. */
+  const shareScroll = (from: Pane): void => {
+    if (syncing) return;
+    syncing = true;
+    for (const p of panes) {
+      if (p === from) continue;
+      if (p.band.r === from.band.r) p.scrollEl.scrollTop = from.scrollEl.scrollTop;
+      if (p.band.c === from.band.c) p.scrollEl.scrollLeft = from.scrollEl.scrollLeft;
+    }
+    syncing = false;
   };
 
   /** A freshly opened split has to be snapped to the rendered boundary once its rows exist. */
@@ -1692,20 +1730,27 @@ export function createSheetEditor(
   /** Lay the panes out for the sheet's boundary: one viewport, or two split at the boundary. */
   const layoutPanes = (sheet: Sheet): void => {
     const rows = sheet.paneSplit ? sheet.freeze?.rows ?? 0 : 0;
-    const on = rows > 0;
-    if (on && panes.length < 2) snapSplit = true;
-    splitScroll.style.display = on ? "block" : "none";
-    panes = on ? [mainPane, splitPane] : [mainPane];
-    if (!on) {
-      gridScroll.style.flex = "";
-      splitPane.tableEl = null;
-      splitScroll.innerHTML = "";
-      return;
+    const cols = sheet.paneSplit ? sheet.freeze?.cols ?? 0 : 0;
+    const rowOn = rows > 0, colOn = cols > 0;
+    if ((rowOn || colOn) && panes.length < 2) snapSplit = true;
+    const wanted = [mainPane];
+    if (colOn) wanted.push(rightPane);
+    if (rowOn) wanted.push(splitPane);
+    if (rowOn && colOn) wanted.push(rightSplitPane);
+    panes = wanted;
+    for (const p of [splitPane, rightPane, rightSplitPane]) {
+      const on = wanted.includes(p);
+      p.scrollEl.style.display = on ? "block" : "none";
+      if (!on) { p.tableEl = null; p.scrollEl.innerHTML = ""; }
     }
-    // The top viewport is as tall as the boundary. This runs before the rows exist, so start from
-    // the layout model and correct it against the rendered rows once they are there.
+    colBand1.style.display = colOn ? "flex" : "none";
+    // The leading bands are exactly as big as their boundary. This runs before the lines exist, so
+    // start from the layout model and correct it against the rendered ones in fitSplitSizes.
     const hh = headerH();
-    gridScroll.style.flex = `0 0 ${Math.max(ROW_H * 2, hh + yOfRow(rows + 1))}px`;
+    const bandH = rowOn ? `0 0 ${Math.max(ROW_H * 2, hh + yOfRow(rows + 1))}px` : "";
+    gridScroll.style.flex = bandH;
+    rightPane.scrollEl.style.flex = bandH;
+    colBand0.style.flex = colOn ? `0 0 ${Math.max(60, rnW() + xOfCol(cols + 1))}px` : "1";
   };
 
   /**
@@ -1713,22 +1758,43 @@ export function createSheetEditor(
    * sliver of the next row showing. The declared row heights and the rendered ones differ, which is
    * exactly the gap this closes.
    */
-  const fitSplitHeight = (): void => {
+  const fitSplitSizes = (): void => {
     const sheet = wb.sheets[active];
     const rows = sheet?.paneSplit ? sheet.freeze?.rows ?? 0 : 0;
-    if (!rows || panes.length < 2) return;
-    const last = gridScroll.querySelector(`th.rownum[data-r="${rows}"]`) as HTMLElement | null;
-    if (!last) return;
-    const h = last.getBoundingClientRect().bottom - gridScroll.getBoundingClientRect().top;
-    if (h > ROW_H) gridScroll.style.flex = `0 0 ${Math.round(h)}px`;
+    const cols = sheet?.paneSplit ? sheet.freeze?.cols ?? 0 : 0;
+    if (panes.length < 2) return;
+    const gr = gridScroll.getBoundingClientRect();
+    const last = rows > 0 ? (gridScroll.querySelector(`th.rownum[data-r="${rows}"]`) as HTMLElement | null) : null;
+    if (last) {
+      const h = last.getBoundingClientRect().bottom - gr.top;
+      if (h > ROW_H) { const v = `0 0 ${Math.round(h)}px`; gridScroll.style.flex = v; rightPane.scrollEl.style.flex = v; }
+    }
+    const lastC = cols > 0 ? (gridScroll.querySelector(`th.colhead[data-c="${cols}"]`) as HTMLElement | null) : null;
+    if (lastC) {
+      const w = lastC.getBoundingClientRect().right - gr.left;
+      if (w > 40) colBand0.style.flex = `0 0 ${Math.round(w)}px`;
+    }
     // Line the lower viewport up with the first row past the boundary, so it does not open showing
     // the tail of the row above. Only on creation: after that the pane scrolls where the user puts it.
     if (!snapSplit) return;
-    const firstBelow = splitScroll.querySelector(`th.rownum[data-r="${rows + 1}"]`) as HTMLElement | null;
-    if (!firstBelow) return;
-    const delta = firstBelow.getBoundingClientRect().top - splitScroll.getBoundingClientRect().top;
-    if (Math.abs(delta) > 0.5) splitScroll.scrollTop += delta;
-    snapSplit = false;
+    // Only give up the snap once the reference lines were actually there to measure: an early
+    // render can happen before the panes have any size, and a half-applied snap looks like a bug.
+    let done = true;
+    const firstBelow = rows > 0 ? (splitScroll.querySelector(`th.rownum[data-r="${rows + 1}"]`) as HTMLElement | null) : null;
+    if (rows > 0 && !firstBelow) done = false;
+    if (firstBelow) {
+      const d = firstBelow.getBoundingClientRect().top - splitScroll.getBoundingClientRect().top;
+      if (Math.abs(d) > 0.5) splitScroll.scrollTop += d;
+    }
+    const rel = rightPane.scrollEl;
+    const firstRight = cols > 0 ? (rel.querySelector(`th.colhead[data-c="${cols + 1}"]`) as HTMLElement | null) : null;
+    if (cols > 0 && !firstRight) done = false;
+    if (firstRight) {
+      const d = firstRight.getBoundingClientRect().left - rel.getBoundingClientRect().left;
+      if (Math.abs(d) > 0.5) { rel.scrollLeft += d; rightSplitPane.scrollEl.scrollLeft = rel.scrollLeft; }
+      else if (rel.clientWidth === 0) done = false;
+    }
+    snapSplit = !done;
   };
 
   let coveredSet = new Set<string>();
@@ -1819,7 +1885,7 @@ export function createSheetEditor(
   const chartLayer = chartsOn
     ? setupChartLayer({
         wrap,
-        panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+        panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
         getSheet: () => wb.sheets[active],
         getWorkbook: () => wb,
         geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
@@ -1829,7 +1895,7 @@ export function createSheetEditor(
     : { refresh: () => undefined, update: () => undefined, select: () => undefined, boxRect: () => null, teardown: () => undefined };
   const imageLayer = setupImageLayer({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
@@ -1864,7 +1930,7 @@ export function createSheetEditor(
   };
   const shapeLayer = setupShapeLayer({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
@@ -1886,7 +1952,7 @@ export function createSheetEditor(
   };
   const slicerLayer = setupSlicerLayer({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
     getSheet: () => wb.sheets[active],
     getWorkbook: () => wb,
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
@@ -1930,7 +1996,7 @@ export function createSheetEditor(
   // off the rendered headers, since the declared line sizes and the rendered ones differ.
   const paneDividers = setupPaneDividers({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => p.scrollEl),
     getSheet: () => wb.sheets[active],
     geom: () => {
       const headEl = (sel: string): HTMLElement | null => wrap.querySelector(sel) as HTMLElement | null;
@@ -1951,13 +2017,14 @@ export function createSheetEditor(
         // A row split's boundary is the seam between the two containers; a freeze's is the top edge
         // of the first row below it, or the bottom edge of the last row above when that is offscreen.
         rowBoundaryY: (rows: number) => {
-          if (panes.length > 1) return splitScroll.getBoundingClientRect().top;
+          if (panes.includes(splitPane)) return splitScroll.getBoundingClientRect().top;
           const below = headEl(`th.rownum[data-r="${rows + 1}"]`);
           if (below) return below.getBoundingClientRect().top;
           const above = headEl(`th.rownum[data-r="${rows}"]`);
           return above ? above.getBoundingClientRect().bottom : null;
         },
         colBoundaryX: (cols: number) => {
+          if (panes.includes(rightPane)) return rightPane.scrollEl.getBoundingClientRect().left;
           const after = headEl(`th.colhead[data-c="${cols + 1}"]`);
           if (after) return after.getBoundingClientRect().left;
           const before = headEl(`th.colhead[data-c="${cols}"]`);
@@ -1975,14 +2042,14 @@ export function createSheetEditor(
   });
   const timelineLayer = setupTimelineLayer({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     onChange: (tl) => { applyTimeline(tl); mark(); timelineLayer.refresh(); },
   });
   const pivotLayer = setupPivotLayer({
     wrap,
-    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     label: (name) => t("pivotTag", { name }),
@@ -2447,6 +2514,7 @@ export function createSheetEditor(
 
   const buildRow = (sheet: Sheet, r: number, c1: number, c2: number, fz: { fr: number; fc: number; headerH: number }): HTMLTableRowElement => {
     const tr = document.createElement("tr");
+    const withRowNums = cur.rowHeader; // the band right of a column split continues past them
     tr.style.height = `${effRowH(sheet, r)}px`;
     const frozenRow = r <= fz.fr;
     const rowTop = fz.headerH + yOfRow(r); // where a frozen row sticks, just below the header
@@ -2470,7 +2538,7 @@ export function createSheetEditor(
       rn.style.top = `${rowTop}px`;
       rn.style.zIndex = "7"; // a frozen row's number sticks above its own frozen cells
     }
-    tr.appendChild(rn);
+    if (withRowNums) tr.appendChild(rn);
     // Frozen columns: always rendered (independent of the horizontal window), sticky-left.
     for (let c = 1; c <= fz.fc; c++) {
       if (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c))) continue;
@@ -2572,10 +2640,10 @@ export function createSheetEditor(
     // Column skeleton: row numbers, the frozen columns, a left spacer for the window's
     // horizontal offset, the window's columns, a right spacer. Frozen rows/columns render
     // regardless of the scroll position; the window covers only the rest.
-    // With a row SPLIT the boundary is between two real viewports, so no row is sticky inside
-    // either of them; a freeze keeps the sticky block as before.
+    // With a SPLIT the boundary is between real viewports, so nothing is sticky inside any of them;
+    // a freeze keeps the sticky rows / columns as before.
     const fr = sheet.paneSplit ? 0 : sheet.freeze?.rows ?? 0;
-    const fc = sheet.freeze?.cols ?? 0;
+    const fc = sheet.paneSplit ? 0 : sheet.freeze?.cols ?? 0;
     const ec1 = Math.max(c1, fc + 1); // horizontal window starts after the frozen columns
     const er1 = Math.max(r1, fr + 1); // vertical window starts after the frozen rows
     const gridW = xOfCol(totalCols + 1);
@@ -2591,13 +2659,14 @@ export function createSheetEditor(
     // Hidden columns are skipped everywhere (colgroup, header, cells) so they collapse.
     // The col elements are kept by column number for the resize grips.
     const colElByC = new Map<number, HTMLElement>();
-    addCol(rnW());
+    const paneRnW = cur.rowHeader ? rnW() : 0;
+    if (cur.rowHeader) addCol(rnW());
     for (let c = 1; c <= fc; c++) if (!sheet.hiddenCols?.has(c)) colElByC.set(c, addCol(effColW(sheet, c)));
     addCol(leftW);
     for (let c = ec1; c <= c2; c++) if (!sheet.hiddenCols?.has(c)) colElByC.set(c, addCol(effColW(sheet, c)));
     addCol(rightW);
     tableEl.appendChild(colgroup);
-    tableEl.style.width = `${rnW() + gridW}px`;
+    tableEl.style.width = `${paneRnW + gridW}px`;
 
     // A column header cell (letter, select-column click, resize grip).
     const makeColHead = (c: number, colEl: HTMLElement): HTMLTableCellElement => {
@@ -2627,7 +2696,7 @@ export function createSheetEditor(
       anchor = { r: 1, c: 1 }; // a later shift-click extends from A1, not a stale anchor
       setSel(1, 1, totalRows, totalCols);
     });
-    head.appendChild(corner);
+    if (cur.rowHeader) head.appendChild(corner);
     for (let c = 1; c <= fc; c++) {
       if (sheet.hiddenCols?.has(c)) continue;
       const th = makeColHead(c, colElByC.get(c)!);
@@ -3009,20 +3078,19 @@ export function createSheetEditor(
   document.addEventListener("paste", onDocPaste);
 
   let scrollScheduled = false;
-  const onPaneScroll = (pane: Pane, other: HTMLElement) => () => {
-    shareX(pane.scrollEl, other); // the split's two panes scroll columns together
+  const onPaneScroll = (pane: Pane) => () => {
+    shareScroll(pane); // the panes sharing this axis follow along
     if (scrollScheduled) return;
     scrollScheduled = true;
     setTimeout(() => {
       scrollScheduled = false;
-      renderPane(pane);
-      if (panes.length > 1) renderPane(pane === mainPane ? splitPane : mainPane); // the shared X moved it too
+      for (const p of panes) renderPane(p); // a shared axis moved the neighbours too
     }, 16);
   };
-  gridScroll.addEventListener("scroll", onPaneScroll(mainPane, splitScroll));
-  splitScroll.addEventListener("scroll", onPaneScroll(splitPane, gridScroll));
-  gridScroll.addEventListener("pointerdown", () => { lastPane = mainPane; }, true);
-  splitScroll.addEventListener("pointerdown", () => { lastPane = splitPane; }, true);
+  for (const p of [mainPane, splitPane, rightPane, rightSplitPane]) {
+    p.scrollEl.addEventListener("scroll", onPaneScroll(p));
+    p.scrollEl.addEventListener("pointerdown", () => { lastPane = p; }, true);
+  }
 
   const renderGrid = () => {
     const sheet = wb.sheets[active];
@@ -3055,28 +3123,35 @@ export function createSheetEditor(
     mainPane.tableEl = table;
     gridScroll.appendChild(table);
     layoutPanes(sheet);
-    if (panes.includes(splitPane)) {
-      splitScroll.innerHTML = "";
-      const t2 = document.createElement("table");
-      t2.className = "sheetedit-table";
-      splitPane.tableEl = t2;
-      splitScroll.appendChild(t2);
-    } else splitPane.tableEl = null;
+    // Every active pane past the main one gets its own table.
+    for (const p of panes) {
+      if (p === mainPane) continue;
+      p.scrollEl.innerHTML = "";
+      const t = document.createElement("table");
+      t.className = "sheetedit-table";
+      p.tableEl = t;
+      p.scrollEl.appendChild(t);
+    }
 
     for (const p of panes) { p.winR1 = 1; p.winR2 = 0; p.winC1 = 1; p.winC2 = 0; }
-    const keepSplitTop = splitScroll.scrollTop || yOfRow((sheet.freeze?.rows ?? 0) + 1);
+    // A trailing band opens just past its boundary unless the user already scrolled it.
+    const splitTop = splitScroll.scrollTop || yOfRow((sheet.freeze?.rows ?? 0) + 1);
+    const splitLeft = rightPane.scrollEl.scrollLeft || xOfCol((sheet.freeze?.cols ?? 0) + 1);
     cur = mainPane;
     renderWindow(true, keepTop, keepLeft); // build the window for the kept position first
     gridScroll.scrollTop = keepTop; // now the spacers exist, so the browser keeps it
     gridScroll.scrollLeft = keepLeft;
-    if (splitPane.tableEl) {
-      cur = splitPane;
-      renderWindowInner(true, keepSplitTop, keepLeft);
-      splitScroll.scrollTop = keepSplitTop;
-      splitScroll.scrollLeft = keepLeft;
-      cur = mainPane;
-      fitSplitHeight(); // the rows exist now, so the boundary can be measured for real
+    for (const p of panes) {
+      if (p === mainPane || !p.tableEl) continue;
+      const y = p.band.r === 1 ? splitTop : keepTop;
+      const x = p.band.c === 1 ? splitLeft : keepLeft;
+      cur = p;
+      renderWindowInner(true, y, x);
+      p.scrollEl.scrollTop = y;
+      p.scrollEl.scrollLeft = x;
     }
+    cur = mainPane;
+    if (panes.length > 1) fitSplitSizes(); // the lines exist now, so the boundaries can be measured
     chartLayer.refresh();
     imageLayer.refresh();
     shapeLayer.refresh();

@@ -21,6 +21,8 @@ function book(pane = ""): Uint8Array {
 }
 
 const SPLIT = `<sheetViews><sheetView workbookViewId="0"><pane ySplit="600" topLeftCell="A4" state="split"/></sheetView></sheetViews>`;
+const COLSPLIT = `<sheetViews><sheetView workbookViewId="0"><pane xSplit="960" topLeftCell="B1" state="split"/></sheetView></sheetViews>`;
+const BOTH = `<sheetViews><sheetView workbookViewId="0"><pane xSplit="960" ySplit="600" topLeftCell="B4" state="split"/></sheetView></sheetViews>`;
 const FROZEN = `<sheetViews><sheetView workbookViewId="0"><pane ySplit="3" topLeftCell="A4" state="frozen"/></sheetView></sheetViews>`;
 
 // jsdom lacks ResizeObserver (the toolbar overflow logic uses it).
@@ -39,7 +41,9 @@ beforeEach(() => {
   document.body.appendChild(host);
 });
 
-const panes = (): HTMLElement[] => [...host.querySelectorAll(".sheetedit-grid")] as HTMLElement[];
+/** The viewports actually on screen; the unused quadrants stay in the DOM hidden. */
+const panes = (): HTMLElement[] =>
+  ([...host.querySelectorAll(".sheetedit-grid")] as HTMLElement[]).filter((p) => p.style.display !== "none");
 const splitPane = (): HTMLElement | null => host.querySelector(".sheetedit-grid-split");
 
 describe("split panes", () => {
@@ -51,11 +55,13 @@ describe("split panes", () => {
 
   it("keeps one viewport for a frozen boundary", () => {
     createSheetEditor(host, book(FROZEN));
+    expect(panes().length).toBe(1);
     expect(splitPane()!.style.display).toBe("none");
   });
 
   it("keeps one viewport when there is no boundary at all", () => {
     createSheetEditor(host, book());
+    expect(panes().length).toBe(1);
     expect(splitPane()!.style.display).toBe("none");
   });
 
@@ -81,6 +87,31 @@ describe("split panes", () => {
     document.body.appendChild(host2);
     createSheetEditor(host2, book(FROZEN));
     expect(host2.querySelectorAll("th.rownum.frz").length).toBeGreaterThan(0);
+  });
+
+  it("gives a column split a second viewport beside the first", () => {
+    createSheetEditor(host, book(COLSPLIT));
+    expect(panes().length).toBe(2);
+    expect(host.querySelector(".sheetedit-grid-right")!.getAttribute("style")).not.toContain("display: none");
+  });
+
+  it("gives a split on both axes all four viewports", () => {
+    createSheetEditor(host, book(BOTH));
+    expect(panes().length).toBe(4);
+  });
+
+  it("draws the row numbers in the left band only", () => {
+    createSheetEditor(host, book(COLSPLIT));
+    const [left, right] = panes();
+    expect(left!.querySelectorAll("th.rownum").length).toBeGreaterThan(0);
+    expect(right!.querySelectorAll("th.rownum").length).toBe(0);
+    // The right band still draws the column header, being in the top row band.
+    expect(right!.querySelectorAll("th.colhead").length).toBeGreaterThan(0);
+  });
+
+  it("makes no column sticky inside a split pane, unlike a freeze", () => {
+    createSheetEditor(host, book(COLSPLIT));
+    expect(host.querySelectorAll("th.colhead.frz").length).toBe(0);
   });
 
   it("tears the second viewport down with the editor", () => {

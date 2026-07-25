@@ -9,8 +9,8 @@ import type { ChartGeom } from "./chart-overlay";
 
 export interface TimelineLayerDeps {
   wrap: HTMLElement;
-  /** The grid's scroll containers, top-most first (two when a row split is on). */
-  panes: () => HTMLElement[];
+  /** The grid's viewports: the element plus whether it draws the header / row numbers. */
+  panes: () => { el: HTMLElement; header: boolean; rowHeader: boolean }[];
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
   onChange?: (t: SheetTimeline) => void;

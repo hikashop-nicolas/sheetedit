@@ -157,15 +157,16 @@ Existing boundaries are read and rendered, and a change is written back: `.xlsx`
 view, `.ods` into the view settings in `settings.xml` (created, with its manifest entry, when the
 file has none).
 
-A **row split gives you two real viewports**: each scrolls rows on its own, so the upper pane can sit
-on one part of the sheet while you browse another below it, and they scroll columns together. A
-freeze stays a single viewport with the leading rows pinned.
+A **split gives you real viewports**: a row split makes two, a column split makes two side by side,
+and a split on both axes makes Excel's four. Each pane scrolls the axis its boundary cuts and shares
+the other with its neighbours, so panes in the same row band scroll vertically together and panes in
+the same column band scroll horizontally together. The column header is drawn by the top band and the
+row numbers by the left one. A freeze stays a single viewport with the leading lines pinned.
 
 Floating objects (charts, images, shapes, slicers, timelines and the pivot tags) follow the split:
 each one is drawn in whichever pane currently shows the row it is anchored to.
 
-Limitations worth knowing: a **column** split still shares its scroll, so a vertical boundary behaves
-as a movable freeze rather than as two viewports. An object straddling the boundary is drawn once,
+Limitations worth knowing: an object straddling the boundary is drawn once,
 in the pane showing more of its anchor row, so it is clipped there rather than continuing across.
 The outline gutter is drawn for the upper pane. And on
 `.ods`, a split you *move* is written back as a frozen boundary, because ODF states a split's

@@ -243,9 +243,18 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   top pane claim a row it does not actually show; and headerH came from a querySelector("thead")
   that never matches (the header row is appended straight to the table), so all eight geom() sites
   were feeding a constant. There is now one headerH() helper measuring the corner cell.
-  LIMITS, stated rather than papered over: a COLUMN split still shares its scroll, so a vertical
-  boundary behaves as a movable freeze. An object straddling the boundary is drawn once, in the pane
-  showing more of its anchor row. The outline gutter is drawn for the upper pane.
+  BOTH AXES. The pane list is now a 2x2 of quadrants (row band 0/1 x column band 0/1) inside a
+  grid area of two column bands, each stacking its row bands. A pane knows whether it draws the
+  column header (top band) and the row numbers (left band), and nothing is sticky inside any split
+  pane since the bands ARE the panes. Sync is by band: same row band -> same scrollTop, same column
+  band -> same scrollLeft.
+  GOTCHA: a trailing band can only open past its boundary when the sheet is wider/taller than the
+  band; on a narrow sheet it legitimately shows the leading lines too, exactly as Excel does. The
+  snap that lines a fresh band up with the first line past the boundary stays PENDING until the
+  reference line is actually measurable, because an early render can happen before the panes have
+  any size.
+  LIMITS: an object straddling the boundary is drawn once, in the pane showing more of its anchor
+  row. The outline gutter is drawn for the upper-left pane.
   And an ODS split the user MOVES is written back as a frozen boundary, since ODF states the split
   position in a LibreOffice view-pixel unit that could not be determined here (its headless converter
   drops view settings, so there was no way to observe one); an untouched split is never rewritten.
