@@ -1726,6 +1726,7 @@ export function createSheetEditor(
     wrap,
     gridScroll,
     getSheet: () => wb.sheets[active],
+    getWorkbook: () => wb,
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
     onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
   });

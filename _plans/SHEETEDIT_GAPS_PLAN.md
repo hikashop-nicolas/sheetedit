@@ -149,10 +149,15 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   one hides the table's non-matching rows; OLAP slicers are read from their own <x14:olap> captions
   and selections and rendered READ-ONLY, since no OLAP source is modelled to filter. Slicer STYLES
   are read and the built-in families (SlicerStyleLight/Dark/Other N) map to an Office theme accent
-  used by the selected-item highlight.
+  used by the selected-item highlight. USER-DEFINED styles are resolved for real: styles.xml's
+  extLst carries an x14:slicerStyles group whose x14:slicerStyleElement entries index the x14 dxfs
+  list living in its own ext of the same extLst, so a slicer naming a custom style gets that
+  style's actual selected / unselected fill and text colours (the dxf's bgColor is the fill, as in
+  any differential format). The dxfs list is found by element name rather than by ext URI, so a
+  file that groups its extensions differently still resolves; the hovered and no-data variants are
+  parsed past, since sheetedit shows every cache item and has no hover state.
 
-  Not done: custom slicer style definitions (the name round-trips, only built-in families are
-  coloured); and creating table or OLAP slicers (creation covers pivot slicers).
+  Not done: creating table or OLAP slicers (creation covers pivot slicers).
 
   CAVEAT: there is no Excel here to verify against and LibreOffice drops slicers entirely, so all of
   this follows the MS-XLSX spec (URIs and content types cross-checked against excelize) and is

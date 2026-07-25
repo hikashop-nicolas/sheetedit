@@ -1,4 +1,4 @@
-import type { Sheet, SheetSlicer } from "../model";
+import type { Sheet, SheetSlicer, Workbook } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
 // The slicer overlay: a titled panel of item buttons floated over the grid, anchored to cells and
@@ -10,6 +10,8 @@ export interface SlicerLayerDeps {
   wrap: HTMLElement;
   gridScroll: HTMLElement;
   getSheet: () => Sheet | undefined;
+  /** The workbook, for its user-defined slicer styles. */
+  getWorkbook?: () => Workbook;
   geom: () => ChartGeom;
   /** Selection changed: the model is already updated and dirty set. */
   onChange?: (s: SheetSlicer) => void;
@@ -35,11 +37,15 @@ function injectStyles(): void {
     .sheetedit-slicer-clear:hover { opacity:1; background:rgba(127,127,127,.18); }
     .sheetedit-slicer-items { flex:1; overflow:auto; padding:4px; display:grid; gap:3px; }
     .sheetedit-slicer-item { border:1px solid var(--sheetedit-border,#c8ccd2); border-radius:4px;
-      background:transparent; color:inherit; font:inherit; padding:3px 6px; cursor:pointer;
+      background:var(--se-slicer-off-bg,transparent); color:var(--se-slicer-off-fg,inherit);
+      font:inherit; padding:3px 6px; cursor:pointer;
       text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.45; }
     .sheetedit-slicer-item:hover { border-color:var(--sheetedit-accent,#4c8bf5); }
-    .sheetedit-slicer-item.on { opacity:1; background:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); color:#fff;
+    .sheetedit-slicer-item.on { opacity:1; background:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5));
+      color:var(--se-slicer-on-fg,#fff);
       border-color:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); }
+    /* A custom style says exactly how an unselected item looks, so do not dim it on top. */
+    .sheetedit-slicerbox.styled .sheetedit-slicer-item { opacity:1; }
     /* OLAP slicers have no source we can filter, so they show their items but do not react. */
     .sheetedit-slicerbox.readonly .sheetedit-slicer-item { cursor:default; }
     .sheetedit-slicerbox.readonly .sheetedit-slicer-clear { display:none; }
@@ -111,9 +117,15 @@ export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; tear
       const box = document.createElement("div");
       box.className = "sheetedit-slicerbox" + (readonly ? " readonly" : "");
       box.style.cssText += `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
-      // Excel's built-in slicer styles only differ by accent; map the family to a colour.
-      const accent = styleAccent(sl.style);
+      // A user-defined style carries real colours; the built-ins only differ by accent, so map the
+      // family to a theme accent instead.
+      const custom = sl.style ? deps.getWorkbook?.().slicerStyles?.get(sl.style) : undefined;
+      const accent = custom?.selectedFill ?? styleAccent(sl.style);
       if (accent) box.style.setProperty("--se-slicer-accent", accent);
+      if (custom?.selectedText) box.style.setProperty("--se-slicer-on-fg", custom.selectedText);
+      if (custom?.unselectedFill) box.style.setProperty("--se-slicer-off-bg", custom.unselectedFill);
+      if (custom?.unselectedText) box.style.setProperty("--se-slicer-off-fg", custom.unselectedText);
+      if (custom?.unselectedFill || custom?.unselectedText) box.classList.add("styled");
       box.dataset.slicer = sl.name;
 
       const head = document.createElement("div");

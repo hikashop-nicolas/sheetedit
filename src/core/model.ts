@@ -331,6 +331,8 @@ export interface Workbook {
   definedNames?: Map<string, string>;
   /** xlsx: pivot caches backed by a worksheet range; a source edit flags one for refresh. */
   pivotCaches?: PivotCacheRef[];
+  /** xlsx: user-defined slicer styles from styles.xml, keyed by name. */
+  slicerStyles?: Map<string, import("../adapters/xlsx/slicer-style-read").SlicerStyleDef>;
 }
 
 /** A style change to apply to a cell (only the set fields change). */
