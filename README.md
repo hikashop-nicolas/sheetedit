@@ -141,14 +141,27 @@ the raw aggregate). Calculated items are emitted per the OOXML spec but could no
 Excel here, only that the file still opens cleanly in LibreOffice. Byte-identical layout to Excel is
 not attempted (both apps re-flow the body from the definition on open).
 
-## Freeze panes
+## Freeze and split panes
 
 Pin a header row and/or the first columns so they stay put while the rest of the sheet scrolls. The
-toolbar's freeze button offers **freeze at this cell**, **freeze top row**, **freeze first column**
-and **unfreeze**; the row and column header menus also carry **freeze rows above** / **freeze columns
-to the left**. Existing freezes in a file are read and rendered, and a change is written back:
-`.xlsx` as `<pane state="frozen">` in the sheet view, `.ods` into the view settings in
-`settings.xml` (created, with its manifest entry, when the file has none).
+toolbar's freeze button offers **freeze at this cell**, **freeze top row**, **freeze first column**,
+**split at this cell** and **unfreeze**; the row and column header menus also carry **freeze rows
+above** / **freeze columns to the left**.
+
+Either kind puts a **divider** on the boundary: drag it to move the split, double-click it to remove
+that one. Freeze and split render the same way here (the leading pane stays put); the difference is
+what the file records, and a split stays a split where the format can say so.
+
+Existing boundaries are read and rendered, and a change is written back: `.xlsx` as
+`<pane state="frozen">` (line counts) or `<pane state="split">` (an offset in twips) in the sheet
+view, `.ods` into the view settings in `settings.xml` (created, with its manifest entry, when the
+file has none).
+
+One limitation worth knowing: the panes do not scroll independently. Both panes share one scroll
+position, so a split behaves as a movable freeze rather than as two separate viewports. On `.ods`, a
+split you *move* is written back as a frozen boundary, because ODF states a split's position in a
+LibreOffice view-pixel unit that could not be pinned down here; an untouched split round-trips
+unchanged.
 
 ## Outline grouping
 

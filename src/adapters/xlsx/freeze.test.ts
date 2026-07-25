@@ -26,9 +26,40 @@ describe("xlsx frozen panes", () => {
     expect(wb.sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
   });
 
-  it("ignores a split (not frozen) pane", () => {
+  it("reads a draggable split, whose offsets are twips rather than line counts", () => {
+    // 1200 twips = 80px: past the first default 64px column but not the second. 600 twips = 40px:
+    // exactly two default 20px rows.
     const wb = readWorkbook(book(`<sheetViews><sheetView workbookViewId="0"><pane xSplit="1200" ySplit="600" state="split"/></sheetView></sheetViews>${DATA}`));
-    expect(wb.sheets[0]!.freeze).toBeUndefined();
+    expect(wb.sheets[0]!.freeze).toEqual({ rows: 2, cols: 1 });
+    expect(wb.sheets[0]!.paneSplit).toBe(true);
+  });
+
+  it("prefers a split's topLeftCell over re-deriving the boundary from the widths", () => {
+    const wb = readWorkbook(book(`<sheetViews><sheetView workbookViewId="0"><pane xSplit="9999" ySplit="9999" topLeftCell="C4" state="split"/></sheetView></sheetViews>${DATA}`));
+    expect(wb.sheets[0]!.freeze).toEqual({ rows: 3, cols: 2 });
+  });
+
+  it("writes a split back in twips, not as line counts", () => {
+    const wb = readWorkbook(book(DATA));
+    Object.assign(wb.sheets[0]!, { freeze: { rows: 2, cols: 1 }, paneSplit: true, freezeDirty: true });
+    const xml = sheetXml(writeWorkbook(wb));
+    expect(xml).toMatch(/state="split"/);
+    expect(xml).toMatch(/xSplit="960"/); // one 64px column
+    expect(xml).toMatch(/ySplit="600"/); // two 20px rows
+    expect(xml).toMatch(/topLeftCell="B3"/);
+  });
+
+  it("round-trips a split it wrote", () => {
+    const wb = readWorkbook(book(DATA));
+    Object.assign(wb.sheets[0]!, { freeze: { rows: 2, cols: 1 }, paneSplit: true, freezeDirty: true });
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(back.freeze).toEqual({ rows: 2, cols: 1 });
+    expect(back.paneSplit).toBe(true);
+  });
+
+  it("a frozen pane is not flagged as a split", () => {
+    const wb = readWorkbook(book(`<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" state="frozen"/></sheetView></sheetViews>${DATA}`));
+    expect(wb.sheets[0]!.paneSplit).toBeUndefined();
   });
 
   it("leaves the sheet untouched when the freeze was not changed", () => {

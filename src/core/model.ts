@@ -293,6 +293,9 @@ export interface Sheet {
   freeze?: { rows: number; cols: number };
   /** The freeze changed in the UI -> the view settings are rewritten on save. */
   freezeDirty?: boolean;
+  /** The pane boundary is a draggable SPLIT rather than a frozen one. Both render the same way
+      here (the leading pane stays put); the difference is what the file records. */
+  paneSplit?: boolean;
   /** Autofilter range (1-based inclusive; first row = header). Drives sort/filter UI. */
   autoFilter?: { r1: number; c1: number; r2: number; c2: number };
   /** Pivot tables / data-pilots whose output lands on this sheet (read-only; rendered as cells). */

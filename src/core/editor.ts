@@ -27,6 +27,7 @@ import { setupShapeLayer } from "./ui/shape-layer";
 import { setupSlicerLayer } from "./ui/slicer-layer";
 import { setupTimelineLayer } from "./ui/timeline-layer";
 import { outlineGutterWidth, setupOutlineLayer } from "./ui/outline-layer";
+import { setupPaneDividers } from "./ui/pane-divider";
 import { clearOutline, groupLines, maxOutlineLevel, outlineLevel, setGroupCollapsed, showOutlineLevel, ungroupLines, type Axis } from "./outline";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
@@ -1357,11 +1358,12 @@ export function createSheetEditor(
     lineMenu?.remove();
     lineMenu = null;
   };
-  /** Set (or clear) the frozen panes and re-render; the write path picks it up from freezeDirty. */
-  const setFreeze = (rows: number, cols: number): void => {
+  /** Set (or clear) the pane boundary and re-render; the write path picks it up from freezeDirty. */
+  const setFreeze = (rows: number, cols: number, asSplit?: boolean): void => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
     sheet.freeze = rows > 0 || cols > 0 ? { rows, cols } : undefined;
+    sheet.paneSplit = sheet.freeze && asSplit ? true : undefined;
     sheet.freezeDirty = true;
     mark();
     renderGrid();
@@ -1824,6 +1826,37 @@ export function createSheetEditor(
       mark(); renderGrid();
     },
   });
+  // The frozen / split boundary bars: drag to move, double-click to remove.
+  const paneDividers = setupPaneDividers({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => {
+      const headerH = (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H;
+      // The nearest line EDGE to a pointer position, read off the rendered headers so a scrolled
+      // pane maps correctly; the boundary lands just before the line whose top/left edge is closest.
+      const nearest = (sel: string, attr: string, coord: (r: DOMRect) => number, size: (r: DOMRect) => number, client: number): number => {
+        let best = 0, bestD = Infinity;
+        for (const el of Array.from(gridScroll.querySelectorAll(sel)) as HTMLElement[]) {
+          const line = Number(el.dataset[attr] ?? "0");
+          if (!line) continue;
+          for (const [edge, n] of [[coord(el.getBoundingClientRect()), line - 1], [coord(el.getBoundingClientRect()) + size(el.getBoundingClientRect()), line]] as const) {
+            const d = Math.abs(edge - client);
+            if (d < bestD) { bestD = d; best = n; }
+          }
+        }
+        return best;
+      };
+      return {
+        headerH,
+        gutterW: rnW(),
+        boundary: (rows: number, cols: number) => ({ x: rnW() + xOfCol(cols + 1), y: headerH + yOfRow(rows + 1) }),
+        nearestRow: (clientY: number) => nearest("th.rownum", "r", (r) => r.top, (r) => r.height, clientY),
+        nearestCol: (clientX: number) => nearest("th.colhead", "c", (r) => r.left, (r) => r.width, clientX),
+      };
+    },
+    onMove: (rows, cols) => setFreeze(rows, cols, wb.sheets[active]?.paneSplit),
+  });
   const timelineLayer = setupTimelineLayer({
     wrap,
     gridScroll,
@@ -1878,18 +1911,20 @@ export function createSheetEditor(
       const cur = sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: 1 };
       const pop = document.createElement("div");
       pop.className = "sheetedit-pop";
-      const item = (text: string, rows: number, cols: number) => {
+      const item = (text: string, rows: number, cols: number, asSplit?: boolean) => {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "sheetedit-pop-item";
         b.textContent = text;
-        b.addEventListener("click", () => { closeLineMenu(); setFreeze(rows, cols); });
+        b.addEventListener("click", () => { closeLineMenu(); setFreeze(rows, cols, asSplit); });
         pop.appendChild(b);
       };
       // "Freeze at this cell" pins everything above and left of the selection, as Excel does.
       item(t("freezeHere"), Math.max(0, cur.r - 1), Math.max(0, cur.c - 1));
       item(t("freezeTopRow"), 1, 0);
       item(t("freezeFirstCol"), 0, 1);
+      // A split is the same boundary, but draggable and recorded as such where the format allows.
+      item(t("splitHere"), Math.max(0, cur.r - 1), Math.max(0, cur.c - 1), true);
       if ((sheet?.freeze?.rows ?? 0) > 0 || (sheet?.freeze?.cols ?? 0) > 0) item(t("unfreeze"), 0, 0);
       document.body.appendChild(pop);
       lineMenu = pop;
@@ -2435,6 +2470,7 @@ export function createSheetEditor(
     const makeColHead = (c: number, colEl: HTMLElement): HTMLTableCellElement => {
       const th = document.createElement("th");
       th.className = "colhead";
+      th.dataset.c = String(c); // the pane divider snaps to these edges
       th.textContent = colToLetters(c);
       th.title = t("selectColumn", { col: colToLetters(c) });
       th.addEventListener("click", () => {
@@ -2893,6 +2929,7 @@ export function createSheetEditor(
     slicerLayer.refresh();
     timelineLayer.refresh();
     outlineLayer.refresh();
+    paneDividers.refresh();
     pivotLayer.refresh();
   };
 
@@ -3083,6 +3120,7 @@ export function createSheetEditor(
       slicerLayer.teardown();
       timelineLayer.teardown();
       outlineLayer.teardown();
+      paneDividers.teardown();
       pivotLayer.teardown();
       closePivotMenu();
       chartUi.teardown();

@@ -217,8 +217,21 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   does prove: an xlsx -> xlsx pass keeps the written <pane> verbatim AND makes LibreOffice expand
   the per-pane <selection> entries, which it only does after parsing the frozen panes; and its xlsx
   export of the written ods picks up that sheet's scroll position, so it parsed the settings entry.
-  Split (non-frozen) panes are read past and left alone: they are a pure view artefact with no
-  model here.
+- **Split panes**: read + render + author + write, sharing the freeze model. Both kinds put a
+  DIVIDER on the boundary that drags to move the split and double-clicks to remove it; "split at this
+  cell" sits next to the freeze entries in the toolbar menu. xlsx states a split's offset in TWIPS
+  (1/20 pt) rather than in line counts, so the same boundary is written differently per state and
+  read back by walking the line sizes (topLeftCell short-circuits that when present). ODF mode 1 is
+  read through PositionRight / PositionBottom, which name the trailing pane's first line and so avoid
+  its pixel unit entirely.
+  LIMITS, stated rather than papered over: the panes do NOT scroll independently - one scroll
+  container backs the grid, so a split behaves as a movable freeze rather than as two viewports.
+  And an ODS split the user MOVES is written back as a frozen boundary, since ODF states the split
+  position in a LibreOffice view-pixel unit that could not be determined here (its headless converter
+  drops view settings, so there was no way to observe one); an untouched split is never rewritten.
+  GOTCHA: the divider's drag handler must restore the bar IN PLACE on a no-op click rather than
+  re-render, or the element is swapped out between the two clicks and dblclick never fires - the same
+  trap the image and shape layers hit.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
   print settings, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled

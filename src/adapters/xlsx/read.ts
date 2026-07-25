@@ -84,6 +84,16 @@ export interface XlsxStyles {
 }
 
 // ARGB ("FFRRGGBB" or "RRGGBB") -> CSS "#rrggbb".
+// A split pane's offset is in twips (1/20 pt = 1/15 px at 96dpi); walk the line sizes until the
+// offset is used up to learn which line the divider sits on.
+const DEFAULT_COL_PX = 64;
+const DEFAULT_ROW_PX = 20;
+function linesForTwips(twips: number, sizePx: (line: number) => number): number {
+  let px = twips / 15, n = 0;
+  while (px > 0 && n < 16384) { px -= sizePx(n + 1); if (px < 0) break; n++; }
+  return n;
+}
+
 export function argbToCss(argb: string | null | undefined): string | undefined {
   if (!argb) return undefined;
   const h = argb.length === 8 ? argb.slice(2) : argb;
@@ -368,6 +378,19 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
           const rows = Math.max(0, Math.floor(Number(pane.getAttribute("ySplit") || "0")));
           const cols = Math.max(0, Math.floor(Number(pane.getAttribute("xSplit") || "0")));
           if (rows > 0 || cols > 0) sheet.freeze = { rows, cols };
+        } else if (state === "split" || state == null) {
+          // A draggable split measures xSplit / ySplit in TWIPS (1/20 pt), not in line counts, so
+          // the boundary is the line the offset falls on. topLeftCell names it directly when
+          // present, which avoids re-deriving it from the widths.
+          const x = Number(pane.getAttribute("xSplit") || "0");
+          const y = Number(pane.getAttribute("ySplit") || "0");
+          if (x > 0 || y > 0) {
+            const tl = pane.getAttribute("topLeftCell");
+            const at = tl ? parseA1Ref(tl) : null;
+            const cols = at ? at.col - 1 : linesForTwips(x, (c) => (sheet.colWidths?.get(c) ?? DEFAULT_COL_PX));
+            const rows = at ? at.row - 1 : linesForTwips(y, (r) => (sheet.rowHeights?.get(r) ?? DEFAULT_ROW_PX));
+            if (rows > 0 || cols > 0) { sheet.freeze = { rows: Math.max(0, rows), cols: Math.max(0, cols) }; sheet.paneSplit = true; }
+          }
         }
       }
       // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.

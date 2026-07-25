@@ -39,9 +39,35 @@ describe("ods frozen panes", () => {
     expect(wb.sheets[0]!.freeze).toEqual({ rows: 1, cols: 2 });
   });
 
-  it("ignores a split (mode 1) that is not a freeze", () => {
+  it("reads a draggable split through PositionBottom, not its pixel offset", () => {
+    // Mode 1's position is a view-pixel offset; the trailing pane's first line is the reliable part.
+    const wb = readWorkbook(zipSync(ods(settingsWith(
+      int("VerticalSplitMode", 1) + int("VerticalSplitPosition", 900) + int("PositionBottom", 3)))));
+    expect(wb.sheets[0]!.freeze).toEqual({ rows: 3, cols: 0 });
+    expect(wb.sheets[0]!.paneSplit).toBe(true);
+  });
+
+  it("ignores a mode-1 split that names no trailing pane", () => {
     const wb = readWorkbook(zipSync(ods(settingsWith(int("VerticalSplitMode", 1) + int("VerticalSplitPosition", 900)))));
     expect(wb.sheets[0]!.freeze).toBeUndefined();
+  });
+
+  it("leaves an untouched split's settings byte-identical", () => {
+    const src = ods(settingsWith(int("VerticalSplitMode", 1) + int("VerticalSplitPosition", 900) + int("PositionBottom", 3)));
+    expect(settings(writeWorkbook(readWorkbook(zipSync(src))))).toBe(strFromU8(src["settings.xml"]!));
+  });
+
+  it("turns a MOVED split into a frozen boundary", () => {
+    const wb = readWorkbook(zipSync(ods(settingsWith(
+      int("VerticalSplitMode", 1) + int("VerticalSplitPosition", 900) + int("PositionBottom", 3)))));
+    const s = wb.sheets[0]!;
+    expect(s.paneSplit).toBe(true);
+    Object.assign(s, { freeze: { rows: 2, cols: 0 }, freezeDirty: true });
+    const xml = settings(writeWorkbook(wb));
+    expect(xml).toMatch(/VerticalSplitMode"[^>]*>2</);
+    expect(xml).toMatch(/VerticalSplitPosition"[^>]*>2</);
+    expect(s.paneSplit).toBeUndefined();
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0]!.freeze).toEqual({ rows: 2, cols: 0 });
   });
 
   it("leaves settings.xml alone when the freeze was not changed", () => {

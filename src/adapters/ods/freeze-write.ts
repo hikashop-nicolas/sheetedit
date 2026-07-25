@@ -4,6 +4,11 @@ import { parseXmlOpt, serializeXml, type Workbook } from "../../core/model";
 // config-item-map-entry carrying HorizontalSplitMode / VerticalSplitMode (2 = frozen, 1 = split,
 // 0 = none) with the counts in *SplitPosition, plus PositionRight / PositionBottom for the first
 // cell of the scrolling pane. A workbook with no settings.xml gets a minimal one.
+//
+// A mode-1 split states its position as a view-pixel offset whose exact basis is LibreOffice's own
+// view metric, which could not be pinned down here, so a split the user MOVES is written back as a
+// frozen boundary (mode 2) - unambiguous and honoured by both Calc and Excel. An untouched split is
+// never rewritten at all, so it round-trips byte-for-byte.
 
 const CFG = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
 const OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
@@ -85,6 +90,8 @@ export function writeOdsFreezes(wb: Workbook): void {
       tables.appendChild(entry);
     }
     const rows = sheet.freeze?.rows ?? 0, cols = sheet.freeze?.cols ?? 0;
+    // Moving a split turns it into a freeze; keep the model in step with the file.
+    sheet.paneSplit = undefined;
     setItem(doc, entry, "HorizontalSplitMode", cols > 0 ? 2 : 0);
     setItem(doc, entry, "VerticalSplitMode", rows > 0 ? 2 : 0);
     setItem(doc, entry, "HorizontalSplitPosition", cols);

@@ -137,8 +137,8 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
 
 // Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
 // "frozen" (1 = split, 0 = none); the SplitPosition is the count of frozen columns / rows.
-function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: number; cols: number }> {
-  const out = new Map<string, { rows: number; cols: number }>();
+function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: number; cols: number; split?: boolean }> {
+  const out = new Map<string, { rows: number; cols: number; split?: boolean }>();
   const f = files["settings.xml"];
   if (!f) return out;
   const doc = parseXmlOpt(f);
@@ -156,9 +156,14 @@ function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: n
           if (ci.localName === "config-item" && ci.getAttribute("config:name") === key) return Number(ci.textContent || "0");
         return 0;
       };
-      const cols = item("HorizontalSplitMode") === 2 ? Math.max(0, Math.floor(item("HorizontalSplitPosition"))) : 0;
-      const rows = item("VerticalSplitMode") === 2 ? Math.max(0, Math.floor(item("VerticalSplitPosition"))) : 0;
-      if (rows > 0 || cols > 0) out.set(name, { rows, cols });
+      const hMode = item("HorizontalSplitMode"), vMode = item("VerticalSplitMode");
+      // Mode 2 = frozen: the position IS the line count. Mode 1 = a draggable split, whose position
+      // is a view-pixel offset; PositionRight / PositionBottom name the trailing pane's first line,
+      // which gives the boundary without having to know that pixel unit.
+      const cols = hMode === 2 ? Math.max(0, Math.floor(item("HorizontalSplitPosition"))) : hMode === 1 ? Math.max(0, Math.floor(item("PositionRight"))) : 0;
+      const rows = vMode === 2 ? Math.max(0, Math.floor(item("VerticalSplitPosition"))) : vMode === 1 ? Math.max(0, Math.floor(item("PositionBottom"))) : 0;
+      const split = hMode === 1 || vMode === 1;
+      if (rows > 0 || cols > 0) out.set(name, { rows, cols, split });
     }
   }
   return out;
@@ -205,7 +210,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
     const fz = freezeByName.get(name);
-    if (fz) sheet.freeze = fz;
+    if (fz) { sheet.freeze = { rows: fz.rows, cols: fz.cols }; if (fz.split) sheet.paneSplit = true; }
     readOdsTable(sheet, table, styles);
     buildOdsValidations(sheet, validationDefs);
     // Conditional formats whose target sheet is this one (empty sheet name = single-sheet target).
