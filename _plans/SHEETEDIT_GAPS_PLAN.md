@@ -131,10 +131,33 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   selection drives PivotSpec.itemFilters (a multi-select complement to the single-select pages) and
   the linked pivots recompute; on save the new selection is written back into the cache part as
   `s="1"` per selected item, leaving everything else byte-identical. Selections are mapped by item
-  LABEL, since the cache's item order need not match the engine's. Not done: creating a slicer from
-  scratch, OLAP slicers, table (non-pivot) slicers, and slicer styles. CAVEAT: there is no Excel
-  here to verify against and LibreOffice drops slicers entirely, so this is built to the MS-XLSX
-  spec and verified in-app plus by round-trip, not against Excel itself.
+  LABEL, since the cache's item order need not match the engine's.
+
+  AUTHORING: "Insert slicer" on a pivot's tag menu creates one for any field the pivot groups by
+  (those are the fields the cache writes sharedItems for). It writes the whole package Excel needs:
+  the cache part and the view part, both content types (vnd.ms-excel.slicer+xml and
+  .slicerCache+xml), a workbook relationship for the cache and a worksheet relationship for the
+  view, both extLst registrations (x14:slicerCaches under {BBE1A952-AA13-448e-AADC-164F8A28A991} on
+  the workbook, x14:slicerList under {A8765BA9-456A-4dab-B4F3-ACF838C121DE} on the worksheet), and a
+  drawing graphicFrame with the sle:slicer extension. The pivotCacheId is resolved from
+  workbook.xml's <pivotCaches> rather than assumed. GOTCHA: the worksheet extLst must be written
+  AFTER any drawing work, because ensureSheetDrawing re-parses the sheet and replaces sheet.doc.
+
+  KINDS: pivot slicers filter their pivots; TABLE slicers (an x15:tableSlicerCache in the cache's
+  extLst, tableId + column, where column is a tableColumn @id mapped to an offset in the table
+  range) bind to a ListObject column - their items are that column's distinct values and toggling
+  one hides the table's non-matching rows; OLAP slicers are read from their own <x14:olap> captions
+  and selections and rendered READ-ONLY, since no OLAP source is modelled to filter. Slicer STYLES
+  are read and the built-in families (SlicerStyleLight/Dark/Other N) map to an Office theme accent
+  used by the selected-item highlight.
+
+  Not done: timelines (a separate timeline / timelineCache part type, not a slicer); custom slicer
+  style definitions (the name round-trips, only built-in families are coloured); and creating table
+  or OLAP slicers (creation covers pivot slicers).
+
+  CAVEAT: there is no Excel here to verify against and LibreOffice drops slicers entirely, so all of
+  this follows the MS-XLSX spec (URIs and content types cross-checked against excelize) and is
+  verified in-app, by round-trip, and by asserting each registration is present - not against Excel.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
   print settings, outline grouping, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
