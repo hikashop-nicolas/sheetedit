@@ -1,3 +1,4 @@
+import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet, SheetShape } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 import { shapePoints } from "../shape-geom";
@@ -9,7 +10,8 @@ import { shapePoints } from "../shape-geom";
 
 export interface ShapeLayerDeps {
   wrap: HTMLElement;
-  gridScroll: HTMLElement;
+  /** The grid's scroll containers, top-most first (two when a row split is on). */
+  panes: () => HTMLElement[];
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
   onEdit?: (sh: SheetShape) => void;      // after a move/resize
@@ -79,27 +81,17 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
 
 export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
   injectStyles();
-  const { wrap, gridScroll } = deps;
-  const layer = document.createElement("div");
-  layer.className = "sheetedit-shapelayer";
-  const inner = document.createElement("div");
-  inner.className = "sheetedit-shapelayer-inner";
-  layer.appendChild(inner);
-  wrap.appendChild(layer);
+  const hosts = setupOverlayHosts({
+    wrap: deps.wrap,
+    panes: deps.panes,
+    geom: () => { const g = deps.geom(); return { rnW: g.rnW, headerH: g.headerH, yOfRow: g.yOfRow }; },
+    className: "sheetedit-shapelayer",
+    innerClassName: "sheetedit-shapelayer-inner",
+  });
 
   let selected: SheetShape | null = null;
   const boxes = new Map<SheetShape, HTMLElement>();
 
-  const positionLayer = (): void => {
-    const g = deps.geom();
-    const gr = gridScroll.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    layer.style.left = `${gr.left - wr.left + g.rnW}px`;
-    layer.style.top = `${gr.top - wr.top + g.headerH}px`;
-    layer.style.width = `${Math.max(0, gr.width - g.rnW)}px`;
-    layer.style.height = `${Math.max(0, gr.height - g.headerH)}px`;
-  };
-  const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
 
   const rectToAnchor = (sh: SheetShape, x: number, y: number, w: number, h: number): void => {
     const g = deps.geom();
@@ -156,11 +148,11 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
   };
 
   const refresh = (): void => {
-    inner.textContent = "";
+    hosts.clear();
     boxes.clear();
     const sheet = deps.getSheet();
     const shapes = sheet?.shapes ?? [];
-    layer.style.display = shapes.length ? "block" : "none";
+    hosts.setVisible(shapes.length > 0);
     if (!shapes.length) { selected = null; return; }
     const editable = deps.editable?.() ?? false;
     const g = deps.geom();
@@ -195,18 +187,17 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
           box.appendChild(del);
         }
       }
-      inner.appendChild(box);
+      hosts.hostFor(sh.anchor.fromRow).appendChild(box);
       boxes.set(sh, box);
     }
-    positionLayer();
-    syncScroll();
+    hosts.layout();
   };
 
-  gridScroll.addEventListener("scroll", syncScroll, { passive: true });
+
   const onGridDown = (): void => { if (selected) select(null); };
-  gridScroll.addEventListener("pointerdown", onGridDown);
+  hosts.onPanes("pointerdown", onGridDown as (e: Event) => void);
   return {
     refresh,
-    teardown() { gridScroll.removeEventListener("scroll", syncScroll); gridScroll.removeEventListener("pointerdown", onGridDown); layer.remove(); },
+    teardown() { hosts.teardown(); },
   };
 }

@@ -1,3 +1,4 @@
+import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet, SheetImage } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
@@ -8,7 +9,8 @@ import type { ChartGeom } from "./chart-overlay";
 
 export interface ImageLayerDeps {
   wrap: HTMLElement;
-  gridScroll: HTMLElement;
+  /** The grid's scroll containers, top-most first (two when a row split is on). */
+  panes: () => HTMLElement[];
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
   /** After a move/resize: the image's anchor was updated + dirty set; the host marks + persists. */
@@ -40,26 +42,16 @@ function injectStyles(): void {
 
 export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardown(): void } {
   injectStyles();
-  const { wrap, gridScroll } = deps;
-  const layer = document.createElement("div");
-  layer.className = "sheetedit-imagelayer";
-  const inner = document.createElement("div");
-  inner.className = "sheetedit-imagelayer-inner";
-  layer.appendChild(inner);
-  wrap.appendChild(layer);
+  const hosts = setupOverlayHosts({
+    wrap: deps.wrap,
+    panes: deps.panes,
+    geom: () => { const g = deps.geom(); return { rnW: g.rnW, headerH: g.headerH, yOfRow: g.yOfRow }; },
+    className: "sheetedit-imagelayer",
+    innerClassName: "sheetedit-imagelayer-inner",
+  });
 
   let selected: SheetImage | null = null;
 
-  const positionLayer = (): void => {
-    const g = deps.geom();
-    const gr = gridScroll.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    layer.style.left = `${gr.left - wr.left + g.rnW}px`;
-    layer.style.top = `${gr.top - wr.top + g.headerH}px`;
-    layer.style.width = `${Math.max(0, gr.width - g.rnW)}px`;
-    layer.style.height = `${Math.max(0, gr.height - g.headerH)}px`;
-  };
-  const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
 
   // Commit a dragged/resized pixel rect (content coords) back to the image's cell anchor. For ods,
   // also record the frame's pixel offset from its (unchanged) anchor cell + its size, which the ods
@@ -113,11 +105,11 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
   };
 
   const refresh = (): void => {
-    inner.textContent = "";
+    hosts.clear();
     boxes.clear();
     const sheet = deps.getSheet();
     const images = sheet?.images ?? [];
-    layer.style.display = images.length ? "block" : "none";
+    hosts.setVisible(images.length > 0);
     if (!images.length) { selected = null; return; }
     const editable = deps.editable?.() ?? false;
     const g = deps.geom();
@@ -145,19 +137,18 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
         box.title = deps.onReplace ? "Double-click to replace" : "";
         box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); deps.onReplace?.(im); });
       }
-      inner.appendChild(box);
+      hosts.hostFor(im.anchor.fromRow).appendChild(box);
       boxes.set(im, box);
     }
-    positionLayer();
-    syncScroll();
+    hosts.layout();
   };
 
-  gridScroll.addEventListener("scroll", syncScroll, { passive: true });
+
   // Tap on empty grid deselects.
   const onGridDown = (): void => { if (selected) select(null); };
-  gridScroll.addEventListener("pointerdown", onGridDown);
+  hosts.onPanes("pointerdown", onGridDown as (e: Event) => void);
   return {
     refresh,
-    teardown() { gridScroll.removeEventListener("scroll", syncScroll); gridScroll.removeEventListener("pointerdown", onGridDown); layer.remove(); },
+    teardown() { hosts.teardown(); },
   };
 }

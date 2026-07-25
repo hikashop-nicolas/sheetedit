@@ -1704,8 +1704,8 @@ export function createSheetEditor(
     }
     // The top viewport is as tall as the boundary. This runs before the rows exist, so start from
     // the layout model and correct it against the rendered rows once they are there.
-    const headerH = (gridScroll.querySelector("thead, tr") as HTMLElement | null)?.offsetHeight ?? ROW_H;
-    gridScroll.style.flex = `0 0 ${Math.max(ROW_H * 2, headerH + yOfRow(rows + 1))}px`;
+    const hh = headerH();
+    gridScroll.style.flex = `0 0 ${Math.max(ROW_H * 2, hh + yOfRow(rows + 1))}px`;
   };
 
   /**
@@ -1802,6 +1802,12 @@ export function createSheetEditor(
   };
   const viewportH = (): number => gridScroll.clientHeight || 600; // jsdom has no layout
   const viewportW = (): number => gridScroll.clientWidth || 1200;
+  /** Rendered height of the column-header row. The table has no <thead> (the header row is appended
+      straight to it), and the declared row height is not the rendered one, so measure the corner cell. */
+  const headerH = (): number => {
+    const corner = gridScroll.querySelector("th.corner") as HTMLElement | null;
+    return corner ? corner.getBoundingClientRect().height : ROW_H;
+  };
   /** Row-number column width: grows with the digit count of the last row, plus the outline gutter. */
   const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8) + outlineGutterWidth(wb.sheets[active]);
 
@@ -1813,19 +1819,19 @@ export function createSheetEditor(
   const chartLayer = chartsOn
     ? setupChartLayer({
         wrap,
-        gridScroll,
+        panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
         getSheet: () => wb.sheets[active],
         getWorkbook: () => wb,
-        geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+        geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
         onSelect: (c) => { if (c) chartUi.showEdit(c); else chartUi.hideEdit(); },
         onEdit: () => { mark(); },
       })
     : { refresh: () => undefined, update: () => undefined, select: () => undefined, boxRect: () => null, teardown: () => undefined };
   const imageLayer = setupImageLayer({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
-    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
     onEdit: () => { mark(); imageLayer.refresh(); },
     onReplace: (im) => replaceImage(im),
@@ -1858,9 +1864,9 @@ export function createSheetEditor(
   };
   const shapeLayer = setupShapeLayer({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
-    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
     onEdit: () => { mark(); shapeLayer.refresh(); },
     onActivate: (sh) => openShapeDialog(sh),
@@ -1880,10 +1886,10 @@ export function createSheetEditor(
   };
   const slicerLayer = setupSlicerLayer({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
     getWorkbook: () => wb,
-    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
   });
   // The row-outline gutter, left of the row numbers.
@@ -1892,16 +1898,16 @@ export function createSheetEditor(
     gridScroll,
     getSheet: () => wb.sheets[active],
     geom: () => {
-      const headerH = (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H;
+      const hh = headerH();
       return {
-        headerH,
+        headerH: hh,
         totalRows,
         rowRect: (r: number) => {
           const th = gridScroll.querySelector(`th.rownum[data-r="${r}"]`) as HTMLElement | null;
           if (!th) return null;
           const gr = gridScroll.getBoundingClientRect();
           const rc = th.getBoundingClientRect();
-          return { top: rc.top - gr.top + gridScroll.scrollTop - headerH, height: rc.height };
+          return { top: rc.top - gr.top + gridScroll.scrollTop - hh, height: rc.height };
         },
       };
     },
@@ -1969,16 +1975,16 @@ export function createSheetEditor(
   });
   const timelineLayer = setupTimelineLayer({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
-    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     onChange: (tl) => { applyTimeline(tl); mark(); timelineLayer.refresh(); },
   });
   const pivotLayer = setupPivotLayer({
     wrap,
-    gridScroll,
+    panes: () => (panes.length > 1 ? [gridScroll, splitScroll] : [gridScroll]),
     getSheet: () => wb.sheets[active],
-    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     label: (name) => t("pivotTag", { name }),
     onTag: (pivot, x, y) => openPivotMenu(pivot, x, y),
   });

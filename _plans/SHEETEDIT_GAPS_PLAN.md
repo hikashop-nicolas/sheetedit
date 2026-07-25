@@ -233,9 +233,19 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   panes share horizontal scroll, only the top one draws the column header, and nothing is sticky
   inside a split pane (the boundary IS the pane edge); a freeze still renders as one viewport with
   the sticky block, untouched.
+  OVERLAYS FOLLOW THE SPLIT. All six floating layers (charts, images, shapes, slicers, timelines,
+  pivot tags) were identical in shape - a box over the grid with an inner element translated by the
+  scroll - so they now share core/ui/overlay-hosts.ts, which keeps one box PER pane and hands each
+  object the inner of the pane that shows its anchor row. Charts move their Chart.js instance with
+  the box rather than being rebuilt.
+  GOTCHA, twice over: the host picker must decide from the RENDERED row element, not from
+  yOfRow. The model's uniform row height is ~1px off the rendered one, which was enough to make the
+  top pane claim a row it does not actually show; and headerH came from a querySelector("thead")
+  that never matches (the header row is appended straight to the table), so all eight geom() sites
+  were feeding a constant. There is now one headerH() helper measuring the corner cell.
   LIMITS, stated rather than papered over: a COLUMN split still shares its scroll, so a vertical
-  boundary behaves as a movable freeze. With a row split active the overlays (charts, images, shapes,
-  slicers, timelines) and the outline gutter anchor to the TOP pane, so they render there only.
+  boundary behaves as a movable freeze. An object straddling the boundary is drawn once, in the pane
+  showing more of its anchor row. The outline gutter is drawn for the upper pane.
   And an ODS split the user MOVES is written back as a frozen boundary, since ODF states the split
   position in a LibreOffice view-pixel unit that could not be determined here (its headless converter
   drops view settings, so there was no way to observe one); an untouched split is never rewritten.

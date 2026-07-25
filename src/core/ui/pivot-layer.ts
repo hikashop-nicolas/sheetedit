@@ -1,3 +1,4 @@
+import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
@@ -8,7 +9,8 @@ import type { ChartGeom } from "./chart-overlay";
 
 export interface PivotLayerDeps {
   wrap: HTMLElement;
-  gridScroll: HTMLElement;
+  /** The grid's scroll containers, top-most first (two when a row split is on). */
+  panes: () => HTMLElement[];
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
   label: (name: string) => string; // localised tooltip/label text
@@ -32,30 +34,19 @@ function injectStyles(): void {
 
 export function setupPivotLayer(deps: PivotLayerDeps): { refresh(): void; teardown(): void } {
   injectStyles();
-  const { wrap, gridScroll } = deps;
-  const layer = document.createElement("div");
-  layer.className = "sheetedit-pivotlayer";
-  const inner = document.createElement("div");
-  inner.className = "sheetedit-pivotlayer-inner";
-  layer.appendChild(inner);
-  wrap.appendChild(layer);
-
-  const positionLayer = (): void => {
-    const g = deps.geom();
-    const gr = gridScroll.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    layer.style.left = `${gr.left - wr.left + g.rnW}px`;
-    layer.style.top = `${gr.top - wr.top + g.headerH}px`;
-    layer.style.width = `${Math.max(0, gr.width - g.rnW)}px`;
-    layer.style.height = `${Math.max(0, gr.height - g.headerH)}px`;
-  };
-  const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
+  const hosts = setupOverlayHosts({
+    wrap: deps.wrap,
+    panes: deps.panes,
+    geom: () => { const g = deps.geom(); return { rnW: g.rnW, headerH: g.headerH, yOfRow: g.yOfRow }; },
+    className: "sheetedit-pivotlayer",
+    innerClassName: "sheetedit-pivotlayer-inner",
+  });
 
   const refresh = (): void => {
-    inner.textContent = "";
+    hosts.clear();
     const sheet = deps.getSheet();
     const pivots = (sheet?.pivotTables ?? []).filter((p) => p.targetRange);
-    layer.style.display = pivots.length ? "block" : "none";
+    hosts.setVisible(pivots.length > 0);
     if (!pivots.length) return;
     const g = deps.geom();
     for (const p of pivots) {
@@ -84,15 +75,10 @@ export function setupPivotLayer(deps: PivotLayerDeps): { refresh(): void; teardo
       tag.title = `${deps.label(p.name)}\n${parts.join("\n")}`;
       if (deps.onTag) { tag.style.cursor = "pointer"; tag.addEventListener("click", (e) => { e.stopPropagation(); deps.onTag!(p, (e as MouseEvent).clientX, (e as MouseEvent).clientY); }); }
       box.appendChild(tag);
-      inner.appendChild(box);
+      hosts.hostFor(t.r1).appendChild(box);
     }
-    positionLayer();
-    syncScroll();
+    hosts.layout();
   };
 
-  gridScroll.addEventListener("scroll", syncScroll, { passive: true });
-  return {
-    refresh,
-    teardown() { gridScroll.removeEventListener("scroll", syncScroll); layer.remove(); },
-  };
+  return { refresh, teardown() { hosts.teardown(); } };
 }

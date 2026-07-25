@@ -1,3 +1,4 @@
+import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet, SheetSlicer, Workbook } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
@@ -8,7 +9,8 @@ import type { ChartGeom } from "./chart-overlay";
 
 export interface SlicerLayerDeps {
   wrap: HTMLElement;
-  gridScroll: HTMLElement;
+  /** The grid's scroll containers, top-most first (two when a row split is on). */
+  panes: () => HTMLElement[];
   getSheet: () => Sheet | undefined;
   /** The workbook, for its user-defined slicer styles. */
   getWorkbook?: () => Workbook;
@@ -80,30 +82,19 @@ function shade(hex: string, amount: number): string {
 
 export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; teardown(): void } {
   injectStyles();
-  const { wrap, gridScroll } = deps;
-  const layer = document.createElement("div");
-  layer.className = "sheetedit-slicerlayer";
-  const inner = document.createElement("div");
-  inner.className = "sheetedit-slicerlayer-inner";
-  layer.appendChild(inner);
-  wrap.appendChild(layer);
-
-  const positionLayer = (): void => {
-    const g = deps.geom();
-    const gr = gridScroll.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    layer.style.left = `${gr.left - wr.left + g.rnW}px`;
-    layer.style.top = `${gr.top - wr.top + g.headerH}px`;
-    layer.style.width = `${Math.max(0, gr.width - g.rnW)}px`;
-    layer.style.height = `${Math.max(0, gr.height - g.headerH)}px`;
-  };
-  const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
+  const hosts = setupOverlayHosts({
+    wrap: deps.wrap,
+    panes: deps.panes,
+    geom: () => { const g = deps.geom(); return { rnW: g.rnW, headerH: g.headerH, yOfRow: g.yOfRow }; },
+    className: "sheetedit-slicerlayer",
+    innerClassName: "sheetedit-slicerlayer-inner",
+  });
 
   const refresh = (): void => {
-    inner.textContent = "";
+    hosts.clear();
     const sheet = deps.getSheet();
     const slicers = sheet?.slicers ?? [];
-    layer.style.display = slicers.length ? "block" : "none";
+    hosts.setVisible(slicers.length > 0);
     if (!slicers.length) return;
     const g = deps.geom();
     for (const sl of slicers) {
@@ -175,15 +166,10 @@ export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; tear
         list.appendChild(b);
       }
       box.appendChild(list);
-      inner.appendChild(box);
+      hosts.hostFor(sl.anchor?.fromRow ?? 1).appendChild(box);
     }
-    positionLayer();
-    syncScroll();
+    hosts.layout();
   };
 
-  gridScroll.addEventListener("scroll", syncScroll, { passive: true });
-  return {
-    refresh,
-    teardown() { gridScroll.removeEventListener("scroll", syncScroll); layer.remove(); },
-  };
+  return { refresh, teardown() { hosts.teardown(); } };
 }

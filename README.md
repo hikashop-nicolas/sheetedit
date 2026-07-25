@@ -161,9 +161,13 @@ A **row split gives you two real viewports**: each scrolls rows on its own, so t
 on one part of the sheet while you browse another below it, and they scroll columns together. A
 freeze stays a single viewport with the leading rows pinned.
 
+Floating objects (charts, images, shapes, slicers, timelines and the pivot tags) follow the split:
+each one is drawn in whichever pane currently shows the row it is anchored to.
+
 Limitations worth knowing: a **column** split still shares its scroll, so a vertical boundary behaves
-as a movable freeze rather than as two viewports. With a row split active, floating objects (charts,
-images, shapes, slicers, timelines) and the outline gutter render in the **upper** pane only. And on
+as a movable freeze rather than as two viewports. An object straddling the boundary is drawn once,
+in the pane showing more of its anchor row, so it is clipped there rather than continuing across.
+The outline gutter is drawn for the upper pane. And on
 `.ods`, a split you *move* is written back as a frozen boundary, because ODF states a split's
 position in a LibreOffice view-pixel unit that could not be pinned down here; an untouched split
 round-trips unchanged.

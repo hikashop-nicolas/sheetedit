@@ -3,6 +3,7 @@ import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextSty
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, line3DPlugin, multiLevelAxisPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";
 import { registerDateAdapter } from "./date-adapter";
+import { setupOverlayHosts } from "./overlay-hosts";
 
 // DrawingML / ODF marker symbols -> Chart.js point styles.
 const MARKER_STYLE: Record<string, string | false> = { circle: "circle", square: "rect", diamond: "rectRot", triangle: "triangle", star: "star", x: "crossRot", plus: "cross", dash: "line", dot: "circle", none: false };
@@ -20,7 +21,8 @@ export interface ChartGeom { xOfCol: (c: number) => number; yOfRow: (r: number) 
 
 export interface ChartLayerDeps {
   wrap: HTMLElement;
-  gridScroll: HTMLElement;
+  /** The grid's scroll containers, top-most first (two when a row split is on). */
+  panes: () => HTMLElement[];
   getSheet: () => Sheet | undefined;
   getWorkbook: () => Workbook;
   geom: () => ChartGeom;
@@ -273,13 +275,13 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
 }
 
 export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update(): void; select(id: string | null): void; boxRect(id: string): DOMRect | null; teardown(): void } {
-  const { wrap, gridScroll } = deps;
-  const layer = document.createElement("div");
-  layer.className = "sheetedit-chartlayer";
-  const inner = document.createElement("div");
-  inner.className = "sheetedit-chartlayer-inner";
-  layer.appendChild(inner);
-  wrap.appendChild(layer);
+  const hosts = setupOverlayHosts({
+    wrap: deps.wrap,
+    panes: deps.panes,
+    geom: () => { const g = deps.geom(); return { rnW: g.rnW, headerH: g.headerH, yOfRow: g.yOfRow }; },
+    className: "sheetedit-chartlayer",
+    innerClassName: "sheetedit-chartlayer-inner",
+  });
 
   const instances = new Map<string, { box: HTMLElement; canvas: HTMLCanvasElement; chart: InstanceType<ChartCtor> | null; kind?: string }>();
   let selectedId: string | null = null;
@@ -302,16 +304,6 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
     model.dirty = true;
   };
 
-  const positionLayer = (): void => {
-    const g = deps.geom();
-    const gr = gridScroll.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    layer.style.left = `${gr.left - wr.left + g.rnW}px`;
-    layer.style.top = `${gr.top - wr.top + g.headerH}px`;
-    layer.style.width = `${Math.max(0, gr.width - g.rnW)}px`;
-    layer.style.height = `${Math.max(0, gr.height - g.headerH)}px`;
-  };
-  const syncScroll = (): void => { inner.style.transform = `translate(${-gridScroll.scrollLeft}px, ${-gridScroll.scrollTop}px)`; };
 
   const positionBox = (box: HTMLElement, model: ChartModel): void => {
     const g = deps.geom();
@@ -361,8 +353,7 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
   const refresh = (): void => {
     const sheet = deps.getSheet();
     const charts = sheet?.charts ?? [];
-    positionLayer();
-    syncScroll();
+    hosts.layout();
     // Drop instances for charts no longer present.
     for (const [id, inst] of instances) if (!charts.some((c) => c.id === id)) { inst.chart?.destroy(); inst.box.remove(); instances.delete(id); }
     if (!charts.length) return;
@@ -381,10 +372,13 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
           handle.className = "sheetedit-chart-resize";
           box.appendChild(handle);
           attachDrag(box, handle, model);
-          inner.appendChild(box);
           inst = { box, canvas, chart: null };
           instances.set(model.id, inst);
         }
+        // A chart lives in whichever pane currently shows its anchor row, so a row split does not
+        // hide the ones below the boundary; the Chart.js instance moves with its box.
+        const host = hosts.hostFor(model.anchor.fromRow);
+        if (inst.box.parentElement !== host) host.appendChild(inst.box);
         positionBox(inst.box, model);
         const cfg = toConfig(model, wb);
         // Chart.js can't change its type via update(); recreate when the kind changed.
@@ -408,10 +402,9 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
     }
   };
 
-  gridScroll.addEventListener("scroll", syncScroll, { passive: true });
   window.addEventListener("resize", refresh);
   // Tap/click on empty grid deselects.
-  gridScroll.addEventListener("pointerdown", () => { if (selectedId) setSelected(null); });
+  hosts.onPanes("pointerdown", () => { if (selectedId) setSelected(null); });
 
   /** Screen rect of a chart's box (for anchoring an external edit toolbar). */
   const boxRect = (id: string): DOMRect | null => instances.get(id)?.box.getBoundingClientRect() ?? null;
@@ -422,10 +415,9 @@ export function setupChartLayer(deps: ChartLayerDeps): { refresh(): void; update
     select: setSelected,
     boxRect,
     teardown(): void {
-      gridScroll.removeEventListener("scroll", syncScroll);
       window.removeEventListener("resize", refresh);
       for (const inst of instances.values()) inst.chart?.destroy();
-      layer.remove();
+      hosts.teardown();
     },
   };
 }
