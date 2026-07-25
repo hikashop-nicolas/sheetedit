@@ -24,6 +24,7 @@ import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
 import { setupShapeLayer } from "./ui/shape-layer";
+import { setupSlicerLayer } from "./ui/slicer-layer";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
 import { validateCell } from "./datavalidation";
@@ -1720,6 +1721,13 @@ export function createSheetEditor(
     else if (wb.kind === "ods" && sh.odsShapeEl) sh.odsShapeEl.parentNode?.removeChild(sh.odsShapeEl);
     mark(); shapeLayer.refresh();
   };
+  const slicerLayer = setupSlicerLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
+  });
   const pivotLayer = setupPivotLayer({
     wrap,
     gridScroll,
@@ -2577,7 +2585,7 @@ export function createSheetEditor(
   };
 
 
-  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu } = setupPivotUi({
+  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer } = setupPivotUi({
     wb, wrap,
     active: () => active,
     getSelRect,
@@ -2737,6 +2745,7 @@ export function createSheetEditor(
     chartLayer.refresh();
     imageLayer.refresh();
     shapeLayer.refresh();
+    slicerLayer.refresh();
     pivotLayer.refresh();
   };
 
@@ -2924,6 +2933,7 @@ export function createSheetEditor(
       chartLayer.teardown();
       imageLayer.teardown();
       shapeLayer.teardown();
+      slicerLayer.teardown();
       pivotLayer.teardown();
       closePivotMenu();
       chartUi.teardown();

@@ -123,8 +123,20 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
 - **Dynamic arrays**: the whole Excel 365 shaping family spills - UNIQUE / SORT / SORTBY / FILTER /
   SEQUENCE / TRANSPOSE / RANDARRAY / TAKE / DROP / CHOOSEROWS / CHOOSECOLS / EXPAND / HSTACK /
   VSTACK / TOROW / TOCOL / WRAPROWS / WRAPCOLS / TEXTSPLIT, plus bare-range spill.
-- **Preserved-only, not authored yet**: form controls / ActiveX / slicers interactivity, sheet /
-  workbook protection, print settings, outline grouping, themes.
+- **Slicers**: read + render + interactive filtering + write-back (xlsx). The three parts are read
+  (xl/slicers/*.xml for the view, xl/slicerCaches/*.xml for the selection, and the drawing's
+  graphicFrame sle:slicer extension for the anchor); item labels come from the pivot cache field's
+  sharedItems, since the slicer stores only indices. The overlay renders a real slicer panel: click
+  an item to narrow to it, ctrl/cmd-click to multi-select, and the ⊗ button clears the filter. The
+  selection drives PivotSpec.itemFilters (a multi-select complement to the single-select pages) and
+  the linked pivots recompute; on save the new selection is written back into the cache part as
+  `s="1"` per selected item, leaving everything else byte-identical. Selections are mapped by item
+  LABEL, since the cache's item order need not match the engine's. Not done: creating a slicer from
+  scratch, OLAP slicers, table (non-pivot) slicers, and slicer styles. CAVEAT: there is no Excel
+  here to verify against and LibreOffice drops slicers entirely, so this is built to the MS-XLSX
+  spec and verified in-app plus by round-trip, not against Excel itself.
+- **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
+  print settings, outline grouping, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
   in core/functions.ts (statistics, multi-criteria aggregates, MATCH / XLOOKUP / XMATCH / CHOOSE /
   LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family),

@@ -38,6 +38,9 @@ export interface PivotSpec {
   values: PivotValue[];
   /** Report/page filters: a field restricted to one item (null = All). */
   pages?: { field: number; item: number | null }[];
+  /** Slicer filters: a field restricted to a SET of item indices (multi-select). Applied on top of
+      the page filters; an empty list means the slicer excludes everything. */
+  itemFilters?: { field: number; items: number[] }[];
   /** Show per-group subtotals for the outer nested fields (Excel default when nested). */
   subtotals?: boolean;
   /** Calculated items added to row/column fields. */
@@ -225,7 +228,11 @@ export function computePivot(sheet: Sheet, spec: PivotSpec): PivotComputed {
   }
   // Apply page/report filters (aggregation only; the cache still mirrors all source rows).
   const pages = spec.pages ?? [];
-  const filtered = allRecords.filter((rec) => pages.every((p) => p.item == null || fields[p.field]!.indexOf.get(itemKey(recItem(rec.cells[p.field]!))) === p.item));
+  // Slicer filters are multi-select sets over the same item indices.
+  const itemFilters = (spec.itemFilters ?? []).map((f) => ({ field: f.field, set: new Set(f.items) }));
+  const filtered = allRecords.filter((rec) =>
+    pages.every((p) => p.item == null || fields[p.field]!.indexOf.get(itemKey(recItem(rec.cells[p.field]!))) === p.item) &&
+    itemFilters.every((f) => f.set.has(fields[f.field]!.indexOf.get(itemKey(recItem(rec.cells[f.field]!))) ?? -1)));
 
   const rowFieldObjs = spec.rows.map((i) => fields[i]!);
   const colFieldObjs = spec.cols.map((i) => fields[i]!);

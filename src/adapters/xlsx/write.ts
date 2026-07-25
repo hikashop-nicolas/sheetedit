@@ -4,6 +4,7 @@ import { SS_MAIN, ensureXlsxCellEl } from "./shared";
 import { writeXlsxCharts } from "./chart-write";
 import { writeXlsxImages } from "./image-write";
 import { writeXlsxShapes } from "./shape-write";
+import { writeXlsxSlicers } from "./slicer-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -721,6 +722,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxCharts(wb); // persist created/edited charts (DrawingML parts) before serializing sheets
   writeXlsxImages(wb); // persist moved/resized pictures into their drawing parts
   writeXlsxShapes(wb); // persist authored/moved/resized/restyled shapes into their drawing parts
+  writeXlsxSlicers(wb); // persist slicer selections into their cache parts
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to

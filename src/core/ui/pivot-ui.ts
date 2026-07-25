@@ -28,7 +28,7 @@ export interface PivotUiCtx {
   chartInsert: (rect: Rect) => void;
 }
 
-export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void } {
+export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void; applySlicer: (s: import("../model").SheetSlicer) => void } {
   const { wb, wrap } = ctx;
   const activeSheet = (): Sheet => wb.sheets[ctx.active()]!;
 
@@ -336,7 +336,45 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     renderPreview();
   };
 
-  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu };
+  /**
+   * Apply a slicer's selection to every pivot it drives and recompute them.
+   * The slicer's item indices are cache-order, which need not match the engine's item order, so the
+   * selection is mapped by LABEL onto the engine's items.
+   */
+  const applySlicer = (sl: import("../model").SheetSlicer): void => {
+    const wanted = new Set(sl.items.filter((i) => i.selected).map((i) => i.label));
+    const allOn = sl.items.every((i) => i.selected);
+    for (const host of wb.sheets) {
+      for (const info of host.pivotTables ?? []) {
+        // An empty pivotTables list on the cache means "every pivot on this cache".
+        if (sl.pivotTables.length && !sl.pivotTables.includes(info.name)) continue;
+        const spec = info.authorSpec;
+        if (!spec || !info.sourceSheet) continue;
+        const src = wb.sheets.find((s) => s.name === info.sourceSheet);
+        if (!src) continue;
+        // Which source column is this slicer's field?
+        const width = spec.source.c2 - spec.source.c1 + 1;
+        let field = -1;
+        for (let c = 0; c < width; c++) {
+          const head = (getCell(src, spec.source.r1, spec.source.c1 + c)?.value ?? "").trim();
+          if (head === sl.sourceName) { field = c; break; }
+        }
+        if (field < 0) continue;
+        const others = (spec.itemFilters ?? []).filter((f) => f.field !== field);
+        if (allOn) spec.itemFilters = others.length ? others : undefined;
+        else {
+          // Compute once to learn the engine's item order for this field, then map labels to indices.
+          const probe = computePivot(src, { ...spec, itemFilters: others });
+          const idx: number[] = [];
+          probe.fields[field]!.items.forEach((it, i) => { if (wanted.has(it.label)) idx.push(i); });
+          spec.itemFilters = [...others, { field, items: idx }];
+        }
+        refreshPivot(host, info);
+      }
+    }
+  };
+
+  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer };
 }
 
 export interface PivotDialogOpts {

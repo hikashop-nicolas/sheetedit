@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Sheet } from "./model";
 import { ensureCell } from "./model";
 import { computePivot, parseCalc, pivotValueLabel, type PivotSpec } from "./pivot";
+import { readCsv } from "../adapters/csv/read";
 
 // Build the Region/Product/Sales sheet used by the LibreOffice reference fixtures.
 function sampleSheet(): Sheet {
@@ -162,5 +163,29 @@ describe("pivot compute engine", () => {
     expect(p.agg(null, null, 0)).toBe(210);
     // The page picker still lists every Product value.
     expect(p.pageItems[0]!.items.map((i) => i.label)).toEqual(["Apple", "Banana"]);
+  });
+});
+
+describe("slicer item filters", () => {
+  // Region / Product / Sales
+  const src = "Region,Product,Sales\nNorth,Apple,10\nSouth,Apple,20\nNorth,Pear,30\nSouth,Pear,40\n";
+  const base = { source: { r1: 1, c1: 1, r2: 5, c2: 3 }, rows: [0], cols: [], values: [{ field: 2, func: "sum" as const }] };
+  const cells = (m: { value: string | number }[][]): string[] => m.map((r) => r.map((c) => String(c.value)).join("|"));
+
+  it("restricts the aggregation to the selected items, totals included", () => {
+    const s = readCsv(src).sheets[0]!;
+    expect(cells(computePivot(s, base).matrix)).toEqual(["Region|Sum - Sales", "North|40", "South|60", "Grand Total|100"]);
+    // only item 0 (North) selected
+    expect(cells(computePivot(s, { ...base, itemFilters: [{ field: 0, items: [0] }] }).matrix))
+      .toEqual(["Region|Sum - Sales", "North|40", "Grand Total|40"]);
+  });
+
+  it("an empty selection excludes everything; all items selected is a no-op", () => {
+    const s = readCsv(src).sheets[0]!;
+    // No records left: the body is empty and the grand total blank (the UI never lets a slicer
+    // reach an empty selection, but the engine must not throw).
+    expect(cells(computePivot(s, { ...base, itemFilters: [{ field: 0, items: [] }] }).matrix)).toEqual(["Region|Sum - Sales", "Grand Total|"]);
+    expect(cells(computePivot(s, { ...base, itemFilters: [{ field: 0, items: [0, 1] }] }).matrix))
+      .toEqual(cells(computePivot(s, base).matrix));
   });
 });

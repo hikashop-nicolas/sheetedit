@@ -38,7 +38,7 @@ with its sibling elements intact:
 
 - Other drawings not modelled above (pictures, shapes, charts and pivot tables are now read +
   rendered + editable, see above)
-- Form controls, slicers, ActiveX
+- Form controls, ActiveX (slicers are now read + interactive, see below)
 - Defined names (read for recalc, not user-editable), sheet/workbook protection, print
   settings, autofilter state, outline grouping, themes
 
@@ -59,8 +59,9 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
   references (core/reference-fns.ts) and LET is expanded before parsing (core/let-expand.ts).
 - Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
   the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
-  authored on both formats too. Other preserved-only features above (form controls, slicers,
-  protection) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
+  authored on both formats too. Slicers are read and interactive: clicking their items re-filters
+  the linked pivot and the selection is written back. Other preserved-only features above (form
+  controls, protection) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
   authored.
 - Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
   total), calculated fields, calculated items, and a pivot chart (over the output) are all

@@ -47,6 +47,30 @@ export interface DataValidation {
   formula2?: string;
 }
 
+/** A slicer: the interactive filter buttons Excel attaches to a pivot table. The selection lives in
+    the slicer *cache* part (one `<x14:i x s>` per source item); the slicer part holds the view
+    (caption, columns) and the drawing holds its anchor. Toggling an item re-filters the linked
+    pivot(s) and the new selection is written back into the cache part. */
+export interface SheetSlicer {
+  /** Slicer view name (unique in the workbook) and the cache it reads. */
+  name: string;
+  cache: string;
+  caption?: string;
+  columnCount?: number;
+  /** The pivot-cache field this slicer filters, by name (matches a source column header). */
+  sourceName: string;
+  /** Names of the pivot tables this slicer drives. */
+  pivotTables: string[];
+  /** Every item, in cache order, with its label and selected state. */
+  items: { x: number; label: string; selected: boolean }[];
+  anchor?: import("./chart-model").ChartAnchor;
+  /** Part paths, so a selection change can be written back. */
+  slicerPath?: string;
+  cachePath?: string;
+  /** Selection changed in the UI -> the cache part is rewritten on save. */
+  dirty?: boolean;
+}
+
 /** A data-validation authoring spec (a DataValidation without its ranges), shared by both writers. */
 export type DvSpec = { type?: DataValidation["type"]; operator?: DataValidation["operator"]; formula1?: string; formula2?: string; values?: string[]; rangeRef?: string; allowBlank?: boolean };
 
@@ -215,6 +239,8 @@ export interface Sheet {
   /** Drawing shapes (rect / ellipse / line / ...) anchored on this sheet; rendered as an SVG overlay,
       authored + written back. */
   shapes?: SheetShape[];
+  /** Slicers (interactive pivot filters) on this sheet; rendered as a clickable overlay. */
+  slicers?: SheetSlicer[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
   sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /

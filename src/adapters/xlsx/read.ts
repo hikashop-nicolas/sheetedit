@@ -4,6 +4,7 @@ import { parseDxfs, readCondFormats } from "./condformat";
 import { readCharts } from "./chart-read";
 import { readImages } from "./image-read";
 import { readShapes } from "./shape-read";
+import { readSlicers } from "./slicer-read";
 import { readSparklines } from "./sparkline-read";
 import { readXlsxPivots } from "./pivot-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
@@ -371,6 +372,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
     wb.sheets.push(sheet);
   }
   readXlsxPivots(wb, files);
+  readSlicers(wb, files); // after pivots: a slicer borrows its pivot cache to label items
   return wb;
 }
 
