@@ -2593,6 +2593,7 @@ export function createSheetEditor(
     renderGrid: () => renderGrid(),
     switchSheet: (i) => switchSheet(i),
     refreshPivotLayer: () => pivotLayer.refresh(),
+    refreshSlicers: () => slicerLayer.refresh(),
     currentRegion: (sheet, r, c) => currentRegion(sheet, r, c),
     chartsOn,
     chartInsert: (rect) => chartUi.openInsert(rect),

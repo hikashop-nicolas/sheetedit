@@ -4,6 +4,8 @@ import { setCellInput } from "../workbook";
 import { addSheet } from "../sheet-ops";
 import { t } from "../i18n";
 import { deleteXlsxPivotParts, setXlsxCellNumFmt, writeXlsxPivotParts } from "../../adapters/xlsx";
+import { createXlsxSlicer } from "../../adapters/xlsx/slicer-create";
+import { formDialog } from "./form-dialog";
 import { deleteOdsPivotDef, setOdsCellNumFmt, writeOdsPivotDef } from "../../adapters/ods";
 
 // The pivot-table authoring UI: the insert/edit dialog (two panes, live preview), the create /
@@ -23,6 +25,8 @@ export interface PivotUiCtx {
   renderGrid: () => void;
   switchSheet: (idx: number) => void;
   refreshPivotLayer: () => void;
+  /** Re-render the slicer overlay after one is created. */
+  refreshSlicers: () => void;
   currentRegion: (sheet: Sheet, r: number, c: number) => Rect;
   chartsOn: boolean;
   chartInsert: (rect: Rect) => void;
@@ -139,6 +143,8 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     };
     const items: HTMLElement[] = [];
     if (pivot.authorSpec) items.push(item(t("pivotRefresh"), () => refreshPivot(host, pivot)), item(t("pivotEditAction"), () => editPivot(host, pivot)));
+    // A slicer can be added for any field the pivot groups by (those carry sharedItems in the cache).
+    if (wb.kind === "xlsx" && pivot.authorSpec && pivot.sourceSheet) items.push(item(t("slicerInsert"), () => addSlicer(host, pivot)));
     // A chart over the pivot's output (updates as the pivot recomputes). Exclude the grand total row
     // and, when there are column fields, the grand total column, so the totals are not charted.
     if (ctx.chartsOn && pivot.targetRange) items.push(item(t("pivotChart"), () => {
@@ -334,6 +340,28 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     modal.appendChild(card); wrap.appendChild(modal);
     modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
     renderPreview();
+  };
+
+  /** Add a slicer for one of the pivot's grouping fields, placed to the right of its output. */
+  const addSlicer = (host: Sheet, info: PivotTableInfo): void => {
+    const spec = info.authorSpec;
+    const src = wb.sheets.find((s) => s.name === info.sourceSheet);
+    if (!spec || !src) return;
+    // Only fields the pivot groups by are in the cache with sharedItems, which a slicer indexes.
+    const fields = [...spec.rows, ...spec.cols, ...(spec.pages ?? []).map((p) => p.field)];
+    const opts = fields.map((f) => ({ value: String(f), label: (getCell(src, spec.source.r1, spec.source.c1 + f)?.value ?? `Column ${f + 1}`).trim() || `Column ${f + 1}` }));
+    if (!opts.length) return;
+    formDialog(ctx.wrap, t("slicerInsert"), [{ key: "field", label: t("slicerField"), type: "select", value: opts[0]!.value, options: opts }], (v) => {
+      const field = Number(v.field);
+      const label = opts.find((o) => o.value === String(field))?.label ?? "";
+      const items = pivotColumnItems(src, spec.source, field).map((i) => i.label);
+      // Park it just right of the pivot output, roughly 3 columns by 8 rows.
+      const tr = info.targetRange;
+      const c1 = (tr?.c2 ?? 1) + 2, r1 = tr?.r1 ?? 1;
+      const anchor = { fromCol: c1, fromRow: r1, fromColOff: 0, fromRowOff: 0, toCol: c1 + 3, toRow: r1 + 8, toColOff: 0, toRowOff: 0 };
+      const sl = createXlsxSlicer(wb, host, info, label, items, anchor);
+      if (sl) { ctx.mark(); ctx.renderGrid(); ctx.refreshSlicers(); }
+    });
   };
 
   /**

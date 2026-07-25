@@ -238,7 +238,7 @@ const CT_DRAWING = "application/vnd.openxmlformats-officedocument.drawing+xml";
 const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
 const REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 
-function addContentType(wb: Workbook, partPath: string, ct: string): void {
+export function addContentType(wb: Workbook, partPath: string, ct: string): void {
   const doc = parseXmlOpt(wb.files["[Content_Types].xml"]);
   if (!doc || doc.documentElement.localName !== "Types") return;
   if (Array.from(doc.getElementsByTagName("Override")).some((o) => o.getAttribute("PartName") === `/${partPath}`)) return;
@@ -251,7 +251,7 @@ function addContentType(wb: Workbook, partPath: string, ct: string): void {
 }
 
 /** Add a relationship to a .rels part (creating it), returning the new id. */
-function addRel(wb: Workbook, relsPath: string, type: string, target: string): string {
+export function addRel(wb: Workbook, relsPath: string, type: string, target: string): string {
   let doc = wb.files[relsPath] ? parseXmlOpt(wb.files[relsPath]) : undefined;
   if (!doc) doc = parseXmlOpt(new TextEncoder().encode(`<Relationships xmlns="${REL_NS}"></Relationships>`))!;
   const ids = new Set(Array.from(doc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
