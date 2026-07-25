@@ -49,7 +49,7 @@ export interface PivotSpec {
 
 export interface PivotItem { label: string; value: string | number; num: boolean; }
 interface PivotFieldInfo { index: number; name: string; items: PivotItem[]; indexOf: Map<string, number>; }
-interface PivotRecord { cells: { value: string | number | null; num: boolean }[]; }
+interface PivotRecord { cells: { value: string | number | null; num: boolean; text?: string }[]; }
 
 export interface PivotOutCell { value: string | number; kind: "s" | "n"; bold?: boolean; numFmt?: string; }
 
@@ -123,15 +123,20 @@ export function pivotColumnItems(sheet: Sheet, source: PivotSpec["source"], col:
   return collectItems(records, 0);
 }
 
-function cellVal(sheet: Sheet, r: number, c: number): { value: string | number | null; num: boolean } {
+function cellVal(sheet: Sheet, r: number, c: number): { value: string | number | null; num: boolean; text?: string } {
   const cell = getCell(sheet, r, c);
   if (!cell || cell.value === "" || cell.kind === "blank") return { value: null, num: false };
-  if (cell.kind === "n") { const n = Number(cell.value); return Number.isFinite(n) ? { value: n, num: true } : { value: cell.value, num: false }; }
+  if (cell.kind === "n") {
+    const n = Number(cell.value);
+    // Keep the formatted text too: a date column must show dates as items, not serials.
+    return Number.isFinite(n) ? { value: n, num: true, text: cell.display } : { value: cell.value, num: false };
+  }
   return { value: cell.value, num: false };
 }
 
-function itemLabel(v: string | number | null): string {
+function itemLabel(v: string | number | null, text?: string): string {
   if (v === null || v === "") return "(empty)";
+  if (text) return text;
   return typeof v === "number" ? numToStr(v) : v;
 }
 
@@ -143,7 +148,7 @@ function collectItems(records: PivotRecord[], field: number): PivotItem[] {
   for (const rec of records) {
     const cv = rec.cells[field]!;
     const v = recItem(cv);
-    if (!seen.has(itemKey(v))) seen.set(itemKey(v), { label: itemLabel(cv.value), value: v, num: cv.num });
+    if (!seen.has(itemKey(v))) seen.set(itemKey(v), { label: itemLabel(cv.value, cv.text), value: v, num: cv.num });
   }
   return Array.from(seen.values()).sort((a, b) => {
     if (a.num && b.num) return (a.value as number) - (b.value as number);

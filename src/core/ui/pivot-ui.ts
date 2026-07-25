@@ -34,7 +34,22 @@ export interface PivotUiCtx {
   chartInsert: (rect: Rect) => void;
 }
 
-export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void; applySlicer: (s: import("../model").SheetSlicer) => void } {
+/** ISO datetime of a pivot item's value: an Excel serial, or an already-date-like string. */
+function itemIso(value: string | number, num: boolean): string | null {
+  if (num || typeof value === "number") {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const d = new Date(Math.round((n - 25569) * 86400000));
+    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19);
+  }
+  const s = String(value).trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}T00:00:00`;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 19);
+}
+
+export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableInfo, x: number, y: number) => void; openPivotDialog: (opts?: PivotDialogOpts) => void; closeMenu: () => void; applySlicer: (s: import("../model").SheetSlicer) => void; applyTimeline: (t: import("../model").SheetTimeline) => void } {
   const { wb, wrap } = ctx;
   const activeSheet = (): Sheet => wb.sheets[ctx.active()]!;
 
@@ -423,7 +438,43 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     }
   };
 
-  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer };
+  /**
+   * Apply a timeline's date range to every pivot it drives. The range is expressed as item filters
+   * on the timeline's date field: items whose date falls outside [startDate, endDate) are dropped.
+   * An empty range means "no filter" and removes the timeline's filter from the pivot.
+   */
+  const applyTimeline = (tl: import("../model").SheetTimeline): void => {
+    for (const host of wb.sheets) {
+      for (const info of host.pivotTables ?? []) {
+        if (tl.pivotTables.length && !tl.pivotTables.includes(info.name)) continue;
+        const spec = info.authorSpec;
+        if (!spec || !info.sourceSheet) continue;
+        const src = wb.sheets.find((s) => s.name === info.sourceSheet);
+        if (!src) continue;
+        const width = spec.source.c2 - spec.source.c1 + 1;
+        let field = -1;
+        for (let c = 0; c < width; c++) {
+          const head = (getCell(src, spec.source.r1, spec.source.c1 + c)?.value ?? "").trim();
+          if (head === tl.sourceName) { field = c; break; }
+        }
+        if (field < 0) continue;
+        const others = (spec.itemFilters ?? []).filter((f) => f.field !== field);
+        if (!tl.startDate || !tl.endDate) spec.itemFilters = others.length ? others : undefined;
+        else {
+          const probe = computePivot(src, { ...spec, itemFilters: others });
+          const idx: number[] = [];
+          probe.fields[field]!.items.forEach((it, i) => {
+            const iso = itemIso(it.value, it.num);
+            if (iso && iso >= tl.startDate! && iso < tl.endDate!) idx.push(i);
+          });
+          spec.itemFilters = [...others, { field, items: idx }];
+        }
+        refreshPivot(host, info);
+      }
+    }
+  };
+
+  return { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline };
 }
 
 export interface PivotDialogOpts {

@@ -77,6 +77,29 @@ export interface SheetSlicer {
   dirty?: boolean;
 }
 
+/** A timeline: Excel's date-range filter for a pivot. The view part holds the caption and the
+    granularity (level); the cache part holds the selected range and the overall bounds. Changing the
+    range re-filters the linked pivot(s) and is written back into the cache part. */
+export interface SheetTimeline {
+  name: string;
+  cache: string;
+  caption?: string;
+  /** Granularity: 0=years 1=quarters 2=months 3=days (CT_Timeline @level). */
+  level?: string;
+  /** The pivot cache field (a date column) this timeline filters. */
+  sourceName: string;
+  pivotTables: string[];
+  /** ISO datetimes: the selected range, and the full range the data spans. */
+  startDate?: string;
+  endDate?: string;
+  boundStart?: string;
+  boundEnd?: string;
+  anchor?: import("./chart-model").ChartAnchor;
+  timelinePath?: string;
+  cachePath?: string;
+  dirty?: boolean;
+}
+
 /** A data-validation authoring spec (a DataValidation without its ranges), shared by both writers. */
 export type DvSpec = { type?: DataValidation["type"]; operator?: DataValidation["operator"]; formula1?: string; formula2?: string; values?: string[]; rangeRef?: string; allowBlank?: boolean };
 
@@ -247,6 +270,8 @@ export interface Sheet {
   shapes?: SheetShape[];
   /** Slicers (interactive pivot filters) on this sheet; rendered as a clickable overlay. */
   slicers?: SheetSlicer[];
+  /** Timelines (date-range pivot filters) on this sheet; rendered as a range overlay. */
+  timelines?: SheetTimeline[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
   sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /

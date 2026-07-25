@@ -123,6 +123,14 @@ sheetedit reads the pivot tables in a workbook (xlsx `pivotTable` + `pivotCache`
 - **Edit / refresh** from the pivot's tag menu: refresh recomputes the output from the current
   source; edit reopens the dialog prefilled and rewrites the pivot in place. This works both for
   pivots you create and for pivots opened from a file (the definition is reconstructed on read).
+- **Slicers** (xlsx): the slicers in a workbook are rendered as real panels over the grid. Click an
+  item to narrow to it, ctrl/cmd-click to multi-select, ⊗ to clear; the linked pivots recompute and
+  the new selection is written back into the slicer cache on save. Table slicers filter their
+  table's rows instead. "Insert slicer" on a pivot's tag menu creates one for any field the pivot
+  groups by.
+- **Timelines** (xlsx): the date sibling of a slicer, shown as a strip of periods at the timeline's
+  granularity (years / quarters / months / days). Click a period to filter the linked pivots to it,
+  shift-click to extend the range, ⊗ to clear; the range is written back into the timeline cache.
 - Written as the **native** structure in both formats, with `refreshOnLoad` set so Excel and
   LibreOffice re-render the pivot from the source on open; verified through LibreOffice round-trips.
 

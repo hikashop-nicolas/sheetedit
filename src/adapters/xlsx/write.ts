@@ -5,6 +5,7 @@ import { writeXlsxCharts } from "./chart-write";
 import { writeXlsxImages } from "./image-write";
 import { writeXlsxShapes } from "./shape-write";
 import { writeXlsxSlicers } from "./slicer-write";
+import { writeXlsxTimelines } from "./timeline-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -723,6 +724,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxImages(wb); // persist moved/resized pictures into their drawing parts
   writeXlsxShapes(wb); // persist authored/moved/resized/restyled shapes into their drawing parts
   writeXlsxSlicers(wb); // persist slicer selections into their cache parts
+  writeXlsxTimelines(wb); // persist timeline ranges into their cache parts
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to

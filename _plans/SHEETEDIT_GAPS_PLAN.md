@@ -151,13 +151,25 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   are read and the built-in families (SlicerStyleLight/Dark/Other N) map to an Office theme accent
   used by the selected-item highlight.
 
-  Not done: timelines (a separate timeline / timelineCache part type, not a slicer); custom slicer
-  style definitions (the name round-trips, only built-in families are coloured); and creating table
-  or OLAP slicers (creation covers pivot slicers).
+  Not done: custom slicer style definitions (the name round-trips, only built-in families are
+  coloured); and creating table or OLAP slicers (creation covers pivot slicers).
 
   CAVEAT: there is no Excel here to verify against and LibreOffice drops slicers entirely, so all of
   this follows the MS-XLSX spec (URIs and content types cross-checked against excelize) and is
   verified in-app, by round-trip, and by asserting each registration is present - not against Excel.
+- **Timelines**: read + render + interactive date filtering + write-back (xlsx). A timeline is the
+  date-range sibling of a slicer and uses its own two parts: xl/timelines/*.xml for the view
+  (x15:timeline name / cache / caption / level) and xl/timelineCaches/*.xml for the state
+  (x15:state with x15:selection startDate+endDate and x15:bounds), anchored by a drawing
+  graphicFrame carrying the 2012 timeslicer extension. The overlay splits the bounds into periods
+  at the view's granularity (level 0 years / 1 quarters / 2 months / 3 days), lights the selected
+  ones, and lets you click a period, shift-click to extend the range, or ⊗ to clear it. The chosen
+  range filters every linked pivot by turning it into PivotSpec.itemFilters on the pivot's date
+  field (items whose date falls outside [startDate, endDate) are dropped), and on save the range
+  goes back into the cache part's x15:selection - added when there was none, removed when cleared,
+  everything else byte-identical. Pivot item labels now carry the source cell's FORMATTED text, so a
+  date field shows dates rather than serials. Same caveat as slicers: spec-faithful and round-trip
+  verified, not Excel-verified.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
   print settings, outline grouping, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled

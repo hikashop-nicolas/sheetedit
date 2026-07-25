@@ -25,6 +25,7 @@ import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
 import { setupShapeLayer } from "./ui/shape-layer";
 import { setupSlicerLayer } from "./ui/slicer-layer";
+import { setupTimelineLayer } from "./ui/timeline-layer";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
 import { validateCell } from "./datavalidation";
@@ -1728,6 +1729,13 @@ export function createSheetEditor(
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
     onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
   });
+  const timelineLayer = setupTimelineLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
+    onChange: (tl) => { applyTimeline(tl); mark(); timelineLayer.refresh(); },
+  });
   const pivotLayer = setupPivotLayer({
     wrap,
     gridScroll,
@@ -2585,7 +2593,7 @@ export function createSheetEditor(
   };
 
 
-  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer } = setupPivotUi({
+  const { openPivotMenu, openPivotDialog, closeMenu: closePivotMenu, applySlicer, applyTimeline } = setupPivotUi({
     wb, wrap,
     active: () => active,
     getSelRect,
@@ -2748,6 +2756,7 @@ export function createSheetEditor(
     imageLayer.refresh();
     shapeLayer.refresh();
     slicerLayer.refresh();
+    timelineLayer.refresh();
     pivotLayer.refresh();
   };
 
@@ -2936,6 +2945,7 @@ export function createSheetEditor(
       imageLayer.teardown();
       shapeLayer.teardown();
       slicerLayer.teardown();
+      timelineLayer.teardown();
       pivotLayer.teardown();
       closePivotMenu();
       chartUi.teardown();
