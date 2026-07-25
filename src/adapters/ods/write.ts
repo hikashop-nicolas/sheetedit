@@ -607,10 +607,12 @@ export function writeOds(wb: Workbook): void {
         break;
       }
     if (!cellsDirty && !sheet.odsDirty) continue;
-    // preserve structural children (column definitions etc.), drop existing rows
+    // Preserve structural children (column definitions etc.) and drop everything holding rows -
+    // including the outline row groups, which are rebuilt from the model below. Keeping them would
+    // append the rows a second time on the next save.
     const keep: Element[] = [];
     for (const ch of Array.from(table.children)) {
-      if (ch.localName !== "table-row" && ch.localName !== "table-header-rows" && ch.localName !== "table-rows") {
+      if (ch.localName !== "table-row" && ch.localName !== "table-header-rows" && ch.localName !== "table-rows" && ch.localName !== "table-row-group") {
         keep.push(ch);
       }
     }
@@ -638,11 +640,25 @@ export function writeOds(wb: Workbook): void {
     // Original header-rows group: its rows are re-wrapped in a fresh group element.
     const hdr = sheet.odsHeaderRows;
     const headerEl = hdr ? (hdr.el.cloneNode(false) as Element) : null;
+    // Outline groups: ODF nests grouped rows in <table:table-row-group>, one level of nesting per
+    // outline level. The stack opens a group as the level rises and pops as it falls.
+    const groupStack: Element[] = [];
+    const allGroups: Element[] = [];
     const appendRow = (rowEl: Element, r: number) => {
       if (hdr && headerEl && r >= hdr.from && r <= hdr.to) {
         if (!headerEl.parentNode) table.appendChild(headerEl);
         headerEl.appendChild(rowEl);
-      } else table.appendChild(rowEl);
+        return;
+      }
+      const level = Math.min(7, sheet.rowOutline?.get(r) ?? 0);
+      while (groupStack.length > level) groupStack.pop();
+      while (groupStack.length < level) {
+        const g = doc.createElementNS(ODS.table, "table:table-row-group");
+        (groupStack[groupStack.length - 1] ?? table).appendChild(g);
+        groupStack.push(g);
+        allGroups.push(g);
+      }
+      (groupStack[groupStack.length - 1] ?? table).appendChild(rowEl);
     };
     for (let r = 1; r <= lastRow; r++) {
       const run = runAt.get(r);
@@ -697,6 +713,14 @@ export function writeOds(wb: Workbook): void {
         rowEl.appendChild(filler);
       }
       appendRow(rowEl, r);
+    }
+    // A group whose every row is hidden is a COLLAPSED group; that is what LibreOffice reads off
+    // table:display to draw the +/- button, so mark it rather than relying on per-row visibility.
+    for (const g of allGroups) {
+      const rowsIn = Array.from(g.getElementsByTagName("*")).filter((e) => e.localName === "table-row");
+      const collapsed = rowsIn.length > 0 && rowsIn.every((e) => e.getAttribute("table:visibility") === "collapse");
+      if (collapsed) g.setAttributeNS(ODS.table, "table:display", "false");
+      else g.removeAttributeNS(ODS.table, "display");
     }
   }
   wb.files["content.xml"] = serializeXml(doc);

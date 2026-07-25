@@ -23,6 +23,8 @@ export interface WorkbookCapabilities {
   pivots: boolean;
   /** Draw shapes (rect / ellipse / line / ...) over the grid. */
   shapes: boolean;
+  /** Row / column outline grouping (gutter + group / ungroup / collapse). */
+  outline: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -35,6 +37,7 @@ const NONE: WorkbookCapabilities = {
   conditionalFormat: false,
   pivots: false,
   shapes: false,
+  outline: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -47,6 +50,7 @@ const XLSX: WorkbookCapabilities = {
   conditionalFormat: true,
   pivots: true,
   shapes: true,
+  outline: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -61,6 +65,9 @@ const ODS: WorkbookCapabilities = {
   conditionalFormat: true,
   pivots: true,
   shapes: true,
+  // ODF groups ROWS with table:table-row-group; column groups are read and preserved but a
+  // rebuilt column run is not re-nested, so authoring them is xlsx-only.
+  outline: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

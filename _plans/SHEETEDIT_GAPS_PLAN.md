@@ -186,8 +186,25 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   everything else byte-identical. Pivot item labels now carry the source cell's FORMATTED text, so a
   date field shows dates rather than serials. Same caveat as slicers: spec-faithful and round-trip
   verified, not Excel-verified.
+- **Outline grouping**: read + render + author + write on both formats. Row groups draw an Excel-style
+  gutter left of the row numbers: a bar per level, a +/- button on each group's SUMMARY line (the row
+  just past the run, or just before it when <outlinePr summaryBelow="0">), and 1/2/3 level buttons
+  that show a depth and collapse everything deeper. Group / ungroup / collapse / expand / clear also
+  sit in the row and column header context menus, so column groups are authored without a second
+  gutter. Collapsing hides the run and marks the summary line, which is exactly what the file
+  records; re-expanding leaves a deeper collapsed group collapsed, like Excel.
+  xlsx writes @outlineLevel / @collapsed / @hidden per <row> and one <col> span per column (widths
+  and other column attributes carried over), plus <sheetPr><outlinePr> only when the summary side is
+  not the default. ODF nests grouped rows in <table:table-row-group>, one level of nesting per
+  outline level, with table:display="false" on a group whose rows are all hidden. Column groups are
+  read from <table:table-column-group> and preserved, but ODS authoring covers ROWS only (the column
+  runs are kept verbatim rather than re-nested). Both directions verified through LibreOffice
+  round-trips. The gutter measures row positions off the rendered grid rather than the declared row
+  heights, because a row's content can be taller than its <row ht>.
+  Fixed on the way: an ODS file with row groups duplicated its rows on every save, because the
+  rebuild treated <table:table-row-group> as a structural child to keep.
 - **Preserved-only, not authored yet**: form controls / ActiveX, sheet / workbook protection,
-  print settings, outline grouping, themes.
+  print settings, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
   in core/functions.ts (statistics, multi-criteria aggregates, MATCH / XLOOKUP / XMATCH / CHOOSE /
   LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family),

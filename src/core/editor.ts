@@ -26,6 +26,8 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupShapeLayer } from "./ui/shape-layer";
 import { setupSlicerLayer } from "./ui/slicer-layer";
 import { setupTimelineLayer } from "./ui/timeline-layer";
+import { outlineGutterWidth, setupOutlineLayer } from "./ui/outline-layer";
+import { clearOutline, groupLines, maxOutlineLevel, outlineLevel, setGroupCollapsed, showOutlineLevel, ungroupLines, type Axis } from "./outline";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
 import { validateCell } from "./datavalidation";
@@ -1355,7 +1357,8 @@ export function createSheetEditor(
     lineMenu?.remove();
     lineMenu = null;
   };
-  const openLineMenu = (e: MouseEvent, axis: "row" | "col", line: number) => {
+  const openLineMenu = (e: MouseEvent, axisOf: "row" | "col", line: number) => {
+    const axis = axisOf;
     e.preventDefault();
     closeLineMenu();
     let base = line;
@@ -1395,6 +1398,32 @@ export function createSheetEditor(
         lineOp(op);
       });
       pop.appendChild(b);
+    }
+    // Outline grouping: group/ungroup the clicked span, and clear the axis when it has groups.
+    if (caps.outline) {
+      const sheet = wb.sheets[active];
+      const axis: Axis = axisOf;
+      const limit = axis === "row" ? totalRows : totalCols;
+      const from = base, to = base + n - 1;
+      const act = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); if (!sheet) return; run(); if (wb.kind === "ods") sheet.odsDirty = true; mark(); renderGrid(); });
+        pop.appendChild(b);
+      };
+      const sep = document.createElement("div");
+      sep.className = "sheetedit-pop-sep";
+      pop.appendChild(sep);
+      act(t("outlineGroup"), () => groupLines(sheet!, axis, from, to));
+      if (sheet && outlineLevel(sheet, axis, base) > 0) {
+        act(t("outlineUngroup"), () => ungroupLines(sheet, axis, from, to));
+        const level = outlineLevel(sheet, axis, base);
+        act(t("outlineCollapse"), () => setGroupCollapsed(sheet, axis, base, level, true, limit));
+        act(t("outlineExpand"), () => setGroupCollapsed(sheet, axis, base, level, false, limit));
+      }
+      if (sheet && maxOutlineLevel(sheet, axis) > 0) act(t("outlineClear"), () => clearOutline(sheet, axis));
     }
     document.body.appendChild(pop);
     lineMenu = pop;
@@ -1646,8 +1675,8 @@ export function createSheetEditor(
   };
   const viewportH = (): number => gridScroll.clientHeight || 600; // jsdom has no layout
   const viewportW = (): number => gridScroll.clientWidth || 1200;
-  /** Row-number column width: grows with the digit count of the last row. */
-  const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8);
+  /** Row-number column width: grows with the digit count of the last row, plus the outline gutter. */
+  const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8) + outlineGutterWidth(wb.sheets[active]);
 
   // Chart overlay + create/edit UI: a floating Chart.js layer glued to the cells (xlsx/ods only),
   // Chart.js lazy-loaded on the first chart.
@@ -1729,6 +1758,40 @@ export function createSheetEditor(
     getWorkbook: () => wb,
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H }),
     onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
+  });
+  // The row-outline gutter, left of the row numbers.
+  const outlineLayer = setupOutlineLayer({
+    wrap,
+    gridScroll,
+    getSheet: () => wb.sheets[active],
+    geom: () => {
+      const headerH = (gridScroll.querySelector("thead") as HTMLElement | null)?.offsetHeight ?? ROW_H;
+      return {
+        headerH,
+        totalRows,
+        rowRect: (r: number) => {
+          const th = gridScroll.querySelector(`th.rownum[data-r="${r}"]`) as HTMLElement | null;
+          if (!th) return null;
+          const gr = gridScroll.getBoundingClientRect();
+          const rc = th.getBoundingClientRect();
+          return { top: rc.top - gr.top + gridScroll.scrollTop - headerH, height: rc.height };
+        },
+      };
+    },
+    onToggle: (level, line, collapse) => {
+      const sheet = wb.sheets[active];
+      if (!sheet) return;
+      setGroupCollapsed(sheet, "row", line, level, collapse, totalRows);
+      if (wb.kind === "ods") sheet.odsDirty = true;
+      mark(); renderGrid();
+    },
+    onLevel: (level) => {
+      const sheet = wb.sheets[active];
+      if (!sheet) return;
+      showOutlineLevel(sheet, "row", level, totalRows);
+      if (wb.kind === "ods") sheet.odsDirty = true;
+      mark(); renderGrid();
+    },
   });
   const timelineLayer = setupTimelineLayer({
     wrap,
@@ -2173,6 +2236,7 @@ export function createSheetEditor(
     const rowTop = fz.headerH + yOfRow(r); // where a frozen row sticks, just below the header
     const rn = document.createElement("th");
     rn.className = "rownum";
+    rn.dataset.r = String(r); // the outline gutter measures rows off these
     rn.textContent = String(r);
     rn.title = t("selectRow", { row: r });
     rn.addEventListener("click", () => {
@@ -2763,6 +2827,7 @@ export function createSheetEditor(
     shapeLayer.refresh();
     slicerLayer.refresh();
     timelineLayer.refresh();
+    outlineLayer.refresh();
     pivotLayer.refresh();
   };
 
@@ -2952,6 +3017,7 @@ export function createSheetEditor(
       shapeLayer.teardown();
       slicerLayer.teardown();
       timelineLayer.teardown();
+      outlineLayer.teardown();
       pivotLayer.teardown();
       closePivotMenu();
       chartUi.teardown();

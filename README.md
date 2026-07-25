@@ -141,6 +141,20 @@ the raw aggregate). Calculated items are emitted per the OOXML spec but could no
 Excel here, only that the file still opens cleanly in LibreOffice. Byte-identical layout to Excel is
 not attempted (both apps re-flow the body from the definition on open).
 
+## Outline grouping
+
+Row and column groups are read, rendered and authored in both formats. Grouped rows get an
+Excel-style gutter left of the row numbers: a bar per level, a **+/-** button on each group's summary
+line, and **1 / 2 / 3** buttons that show one depth and collapse everything deeper. **Group**,
+**Ungroup**, **Collapse**, **Expand** and **Clear outline** are also in the row and column header
+context menus, which is how column groups are managed.
+
+Collapsing hides the group's lines and marks its summary line, exactly as the file records it, so the
+state round-trips: `.xlsx` writes `outlineLevel` / `collapsed` / `hidden` per row and a `<col>` span
+per column, `.ods` nests the rows in `<table:table-row-group>` (with `table:display="false"` for a
+collapsed one). Verified through LibreOffice round-trips both ways. ODS **column** groups are read
+and preserved but not authored.
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the

@@ -202,8 +202,9 @@ describe("editor: header context menu and structural undo", () => {
     const rn = [...host.querySelectorAll("th.rownum")].find((th) => th.textContent === "2")!;
     rn.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     const items = [...document.querySelectorAll(".sheetedit-pop-item")] as HTMLButtonElement[];
-    expect(items.length).toBe(3);
-    items[2]!.click(); // delete row 2
+    // insert above / insert below / delete, then the outline entries.
+    expect(items.slice(0, 3).map((b) => b.textContent)).toEqual(["Insert row above", "Insert row below", "Delete row"]);
+    items.find((b) => b.textContent === "Delete row")!.click(); // delete row 2
 
     expect(grid()(2, 1)).toBe("1"); // the formula moved up and now sums A1 only
     const undoBtn = [...host.querySelectorAll("button")].find((b) => (b as HTMLButtonElement).title.includes("Ctrl+Z")) as HTMLButtonElement;

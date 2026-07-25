@@ -254,6 +254,20 @@ export interface Sheet {
       table:visibility). Rendered collapsed (zero size); preserved on save. */
   hiddenRows?: Set<number>;
   hiddenCols?: Set<number>;
+  /** Outline (grouping) levels, 1-based index -> depth 1..7. A row/column absent from the map is at
+      level 0, i.e. in no group. Rendered as collapsible bars in the gutter. */
+  rowOutline?: Map<number, number>;
+  colOutline?: Map<number, number>;
+  /** The rows/columns carrying a collapsed group's summary marker (xlsx @collapsed). A group is
+      shown collapsed when its members are hidden, which is what the file actually records. */
+  rowCollapsed?: Set<number>;
+  colCollapsed?: Set<number>;
+  /** Where a group's summary line sits, from <outlinePr>. Excel defaults both to true (below /
+      right); the toggle button is drawn on the summary line. */
+  summaryBelow?: boolean;
+  summaryRight?: boolean;
+  /** Outline state changed in the UI -> the row/col attributes are rewritten on save. */
+  outlineDirty?: boolean;
   /** Merged ranges (1-based, inclusive); the top-left cell holds the value. */
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
   /** List-type data validations (dropdowns), matched to cells by range at render time. */

@@ -507,39 +507,49 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
     return v === "collapse" || v === "filter";
   };
   let colIdx = 0;
-  const collectCols = (parent: Element) => {
+  const colOutline = new Map<number, number>();
+  // ODF nests grouped columns in <table:table-column-group>; the nesting depth IS the outline level,
+  // and a group with table:display="false" is collapsed (its columns are hidden).
+  const collectCols = (parent: Element, depth = 0, groupHidden = false) => {
     for (const ch of Array.from(parent.children)) {
       if (ch.localName === "table-column") {
         const rep = Math.max(1, Number(ch.getAttribute("table:number-columns-repeated") || "1"));
         const w = styles.colW.get(ch.getAttribute("table:style-name") ?? "");
-        const hidden = isHidden(ch);
+        const hidden = isHidden(ch) || groupHidden;
         for (let i = 0; i < Math.min(rep, REPEAT_CAP); i++) {
           colIdx++;
           if (w) cols.set(colIdx, w);
           if (hidden) hiddenCols.add(colIdx);
+          if (depth > 0) colOutline.set(colIdx, depth);
         }
+      } else if (ch.localName === "table-column-group") {
+        collectCols(ch, depth + 1, groupHidden || ch.getAttribute("table:display") === "false");
       } else if (ch.localName === "table-header-columns" || ch.localName === "table-columns") {
-        collectCols(ch);
+        collectCols(ch, depth, groupHidden);
       }
     }
   };
   collectCols(table);
   if (cols.size) sheet.colWidths = cols;
   if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
+  if (colOutline.size) sheet.colOutline = colOutline;
 
   let rowNum = 0;
-  const rows: { el: Element; header: boolean }[] = [];
+  const rows: { el: Element; header: boolean; depth: number; groupHidden: boolean }[] = [];
   let headerGroupEl: Element | undefined;
-  const collect = (parent: Element, header = false) => {
+  const collect = (parent: Element, header = false, depth = 0, groupHidden = false) => {
     for (const ch of Array.from(parent.children)) {
-      if (ch.localName === "table-row") rows.push({ el: ch, header });
-      else if (ch.localName === "table-header-rows" || ch.localName === "table-rows") {
+      if (ch.localName === "table-row") rows.push({ el: ch, header, depth, groupHidden });
+      else if (ch.localName === "table-row-group") {
+        collect(ch, header, depth + 1, groupHidden || ch.getAttribute("table:display") === "false");
+      } else if (ch.localName === "table-header-rows" || ch.localName === "table-rows") {
         if (ch.localName === "table-header-rows") headerGroupEl = ch;
-        collect(ch, header || ch.localName === "table-header-rows");
+        collect(ch, header || ch.localName === "table-header-rows", depth, groupHidden);
       }
     }
   };
   collect(table);
+  const rowOutline = new Map<number, number>();
   const rowHeights = new Map<number, number>();
   const hiddenRows = new Set<number>();
   const rowStyles = new Map<number, string>();
@@ -549,7 +559,7 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
   const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
   let headerFrom = 0;
   let headerTo = 0;
-  for (const { el: rowEl, header } of rows) {
+  for (const { el: rowEl, header, depth, groupHidden } of rows) {
     const rrep = Math.max(1, Number(rowEl.getAttribute("table:number-rows-repeated") || "1"));
     const rowStyle = rowEl.getAttribute("table:style-name") ?? undefined;
     const rh = styles.rowH.get(rowStyle ?? "");
@@ -566,7 +576,10 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
     if (worthKeeping) for (let k = 0; k < Math.min(rrep, REPEAT_CAP); k++) rowEls.set(rowNum + 1 + k, rowEl);
     // A content run repeated beyond the cap: the un-expanded tail is preserved verbatim.
     if (rowHasContent && rrep > REPEAT_CAP) rowRuns.push({ from: rowNum + 1 + REPEAT_CAP, to: rowNum + rrep, el: rowEl });
-    const rowHidden = isHidden(rowEl);
+    const rowHidden = isHidden(rowEl) || groupHidden;
+    // A grouped row is in the outline even when it holds no cells, so the gutter bar stays whole.
+    if (depth > 0) for (let k = 0; k < Math.min(rrep, REPEAT_CAP); k++) rowOutline.set(rowNum + 1 + k, depth);
+    if (rowHidden) for (let k = 0; k < Math.min(rrep, REPEAT_CAP); k++) hiddenRows.add(rowNum + 1 + k);
     for (let k = 0; k < copies; k++) {
       const r = rowNum + 1 + k;
       if (rh) rowHeights.set(r, rh);
@@ -592,6 +605,7 @@ export function readOdsTable(sheet: Sheet, table: Element, styles: OdsStyles): v
   }
   if (rowHeights.size) sheet.rowHeights = rowHeights;
   if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
+  if (rowOutline.size) sheet.rowOutline = rowOutline;
   if (rowStyles.size) sheet.odsRowStyles = rowStyles;
   if (rowEls.size) sheet.odsRowEls = rowEls;
   if (rowRuns.length) sheet.odsRowRuns = rowRuns;

@@ -299,6 +299,8 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       if (colsEl) {
         const cw = new Map<number, number>();
         const hiddenCols = new Set<number>();
+        const colOutline = new Map<number, number>();
+        const colCollapsed = new Set<number>();
         for (const col of Array.from(colsEl.children)) {
           if (col.localName !== "col") continue;
           const min = Number(col.getAttribute("min") || "0");
@@ -307,18 +309,26 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
           if (!min) continue;
           const last = Math.min(max || min, min + 1000);
           const hidden = col.getAttribute("hidden") === "1" || col.getAttribute("hidden") === "true";
+          const level = Number(col.getAttribute("outlineLevel") || "0");
+          const collapsed = col.getAttribute("collapsed") === "1" || col.getAttribute("collapsed") === "true";
           for (let c = min; c <= last; c++) {
             if (width) cw.set(c, Math.round(width * 7 + 5));
             if (hidden) hiddenCols.add(c);
+            if (level > 0) colOutline.set(c, level);
+            if (collapsed) colCollapsed.add(c);
           }
         }
         if (cw.size) sheet.colWidths = cw;
         if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
+        if (colOutline.size) sheet.colOutline = colOutline;
+        if (colCollapsed.size) sheet.colCollapsed = colCollapsed;
       }
       // Row heights: <row r ht customHeight hidden/>. ht is in points; convert to px (~4/3 px/pt).
       if (sheetData) {
         const rh = new Map<number, number>();
         const hiddenRows = new Set<number>();
+        const rowOutline = new Map<number, number>();
+        const rowCollapsed = new Set<number>();
         for (const rowEl of Array.from(sheetData.children)) {
           if (rowEl.localName !== "row") continue;
           const r = Number(rowEl.getAttribute("r") || "0");
@@ -326,9 +336,21 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
           const ht = Number(rowEl.getAttribute("ht") || "0");
           if (ht) rh.set(r, Math.round((ht * 4) / 3));
           if (rowEl.getAttribute("hidden") === "1" || rowEl.getAttribute("hidden") === "true") hiddenRows.add(r);
+          const level = Number(rowEl.getAttribute("outlineLevel") || "0");
+          if (level > 0) rowOutline.set(r, level);
+          if (rowEl.getAttribute("collapsed") === "1" || rowEl.getAttribute("collapsed") === "true") rowCollapsed.add(r);
         }
         if (rh.size) sheet.rowHeights = rh;
         if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
+        if (rowOutline.size) sheet.rowOutline = rowOutline;
+        if (rowCollapsed.size) sheet.rowCollapsed = rowCollapsed;
+      }
+      // <sheetPr><outlinePr summaryBelow summaryRight/>: which side of a group its summary sits on.
+      const outlinePr = doc.getElementsByTagName("outlinePr")[0];
+      if (outlinePr) {
+        const flag = (n: string): boolean => { const v = outlinePr.getAttribute(n); return v == null || v === "1" || v === "true"; };
+        sheet.summaryBelow = flag("summaryBelow");
+        sheet.summaryRight = flag("summaryRight");
       }
       // Autofilter range: <autoFilter ref="A1:D10"/>.
       const afEl = doc.getElementsByTagName("autoFilter")[0];
