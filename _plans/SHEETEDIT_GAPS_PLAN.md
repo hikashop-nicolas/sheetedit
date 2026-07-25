@@ -120,12 +120,19 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   outline / text) / delete (the corner x). xlsx writes xdr:sp in the drawing part (patched in place
   for edits, appended for new); ods writes draw:rect / draw:ellipse / draw:line into a table:shapes
   container with an interned graphic style. Verified through LibreOffice round-trips on both formats.
-- **Dynamic arrays**: exotic spill producers are best-effort; only UNIQUE/SORT/FILTER/SEQUENCE +
-  TRANSPOSE/bare-range spill are supplied.
-- **Preserved-only, no plans to edit**: form controls / ActiveX / slicers interactivity, sheet /
+- **Dynamic arrays**: the whole Excel 365 shaping family spills - UNIQUE / SORT / SORTBY / FILTER /
+  SEQUENCE / TRANSPOSE / RANDARRAY / TAKE / DROP / CHOOSEROWS / CHOOSECOLS / EXPAND / HSTACK /
+  VSTACK / TOROW / TOCOL / WRAPROWS / WRAPCOLS / TEXTSPLIT, plus bare-range spill.
+- **Preserved-only, not authored yet**: form controls / ActiveX / slicers interactivity, sheet /
   workbook protection, print settings, outline grouping, themes.
-- **Recalc**: a large but partial function set; unsupported functions or circular refs yield an
-  error value (the file's cached value is shown as a fallback; desktop apps recompute on open).
+- **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
+  in core/functions.ts (statistics, multi-criteria aggregates, MATCH / XLOOKUP / XMATCH / CHOOSE /
+  LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family) and
+  core/dynamic-arrays.ts. A coverage probe over 81 real-world formulas went 18 -> 76 passing. Known
+  remaining: OFFSET / INDIRECT (must return a *reference*, so they need parser-context integration)
+  and LET (needs lazy name binding; the parser evaluates arguments eagerly). Unsupported functions or
+  circular refs still yield an error value with the file's cached value shown as a fallback, and the
+  editor recalculates on edit rather than on open (like Excel).
 - **Data validation**: all rule types author + read + validate on both formats. List rules show a
   dropdown; whole / decimal / date / time / text-length / custom-formula rules outline a cell whose
   value breaks the rule (custom formulas are round-tripped, not evaluated live). xlsx writes the

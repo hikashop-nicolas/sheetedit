@@ -47,10 +47,16 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 
 ## Gaps / not handled
 
-- Dynamic-array spill (MVP): a plain formula returning a 2-D result spills into its anchor + range
-  (with a #SPILL! guard on collisions). Producers UNIQUE / SORT / FILTER / SEQUENCE are supplied
-  (fast-formula-parser ships none); TRANSPOSE and bare range refs spill too. FILTER needs an array
-  mask (no range=scalar broadcasting); multi-key SORT and exotic producers are best-effort.
+- Dynamic-array spill: a plain formula returning a 2-D result spills into its anchor + range (with a
+  #SPILL! guard on collisions). fast-formula-parser ships no spill producers, so the whole family is
+  supplied: UNIQUE / SORT / SORTBY / FILTER / SEQUENCE / RANDARRAY / TAKE / DROP / CHOOSEROWS /
+  CHOOSECOLS / EXPAND / HSTACK / VSTACK / TOROW / TOCOL / WRAPROWS / WRAPCOLS / TEXTSPLIT; TRANSPOSE
+  and bare range refs spill too. FILTER needs an array mask (no range=scalar broadcasting).
+- Formula coverage: the library leaves many common functions as empty stubs. Those are implemented
+  in core/functions.ts and core/financial.ts (statistics, SUMIFS/COUNTIFS/AVERAGEIFS/MAXIFS/MINIFS,
+  MATCH / XLOOKUP / XMATCH / CHOOSE / LOOKUP, SUBTOTAL / AGGREGATE, text, SWITCH, and the financial
+  family), so INDEX+MATCH and the other everyday idioms recalculate. OFFSET / INDIRECT (reference-
+  returning) and LET (lazy binding) remain unevaluated.
 - Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
   the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
   authored on both formats too. Other preserved-only features above (form controls, slicers,
