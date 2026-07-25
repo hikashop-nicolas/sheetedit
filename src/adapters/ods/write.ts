@@ -222,11 +222,35 @@ function a1RangeToOdfAddr(ref: string): string {
 }
 
 /** Add or (spec === null) remove a list data validation over the given ranges (1-based inclusive). */
+/** An ODF content-validation condition for a non-list rule. The syntax LibreOffice accepts (verified
+    by round-trip): between/not-between use `is-(not-)between(a,b)` with a COMMA; the other operators
+    use `fn()OP a` with NO spaces and `<>` for not-equal; the whole condition carries one `of:` prefix. */
+function odsDvCondition(spec: import("../../core/model").DvSpec): string {
+  const a = spec.formula1 ?? "", b = spec.formula2 ?? "", op = spec.operator ?? "between";
+  if (spec.type === "custom") return `of:is-true-formula(${a})`;
+  const opExpr = (fn: string): string => {
+    switch (op) {
+      case "between": return `${fn}-is-between(${a},${b})`;
+      case "notBetween": return `${fn}-is-not-between(${a},${b})`;
+      case "notEqual": return `${fn}()<>${a}`;
+      case "greaterThan": return `${fn}()>${a}`;
+      case "lessThan": return `${fn}()<${a}`;
+      case "greaterThanOrEqual": return `${fn}()>=${a}`;
+      case "lessThanOrEqual": return `${fn}()<=${a}`;
+      default: return `${fn}()=${a}`;
+    }
+  };
+  if (spec.type === "textLength") return `of:${opExpr("cell-content-text-length")}`;
+  const typeFn: Record<string, string> = { whole: "cell-content-is-whole-number", decimal: "cell-content-is-decimal-number", date: "cell-content-is-date", time: "cell-content-is-time" };
+  const fn = spec.type ? typeFn[spec.type] : undefined;
+  return fn ? `of:${fn}() and ${opExpr("cell-content")}` : `of:${opExpr("cell-content")}`;
+}
+
 export function setOdsDataValidation(
   wb: Workbook,
   sheet: Sheet,
   ranges: { r1: number; c1: number; r2: number; c2: number }[],
-  spec: { values?: string[]; rangeRef?: string; allowBlank?: boolean } | null,
+  spec: import("../../core/model").DvSpec | null,
 ): void {
   const doc = wb.contentDoc;
   const inRange = (r: number, c: number): boolean => ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
@@ -241,7 +265,10 @@ export function setOdsDataValidation(
     return;
   }
 
-  sheet.validations.push({ ranges, values: spec.values, rangeRef: spec.rangeRef, allowBlank: spec.allowBlank });
+  const type = spec.type ?? "list";
+  sheet.validations.push(type === "list"
+    ? { ranges, values: spec.values, rangeRef: spec.rangeRef, allowBlank: spec.allowBlank, type: "list" }
+    : { ranges, allowBlank: spec.allowBlank, type, operator: spec.operator, formula1: spec.formula1, formula2: spec.formula2 });
   if (!doc) return;
   const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
   if (!spreadsheet) return;
@@ -250,10 +277,12 @@ export function setOdsDataValidation(
   let n = 1;
   while (used.has(`val${n}`)) n++;
   const name = `val${n}`;
-  // Condition: an inline quoted list (ODF escapes an inner quote as ""), or a cell range.
-  const cond = spec.rangeRef
-    ? `of:cell-content-is-in-list(${a1RangeToOdfAddr(spec.rangeRef)})`
-    : `of:cell-content-is-in-list(${(spec.values ?? []).map((v) => `"${v.replace(/"/g, '""')}"`).join(";")})`;
+  // Condition: a list (inline quoted values or a cell range), or a typed constraint.
+  const cond = type === "list"
+    ? (spec.rangeRef
+      ? `of:cell-content-is-in-list(${a1RangeToOdfAddr(spec.rangeRef)})`
+      : `of:cell-content-is-in-list(${(spec.values ?? []).map((v) => `"${v.replace(/"/g, '""')}"`).join(";")})`)
+    : odsDvCondition(spec);
   let container = spreadsheet.getElementsByTagName("table:content-validations")[0];
   if (!container) {
     container = doc.createElementNS(ODS.table, "table:content-validations");

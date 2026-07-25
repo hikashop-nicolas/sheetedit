@@ -27,6 +27,27 @@ describe("authoring writers", () => {
     expect(sheet.validations?.[0].values).toEqual(["Yes", "No", "Maybe"]);
   });
 
+  it("writes typed data validations (whole/textLength/custom) that round-trip", () => {
+    const wb = base(); const sheet = wb.sheets[0];
+    setXlsxDataValidation(sheet, [{ r1: 1, c1: 1, r2: 9, c2: 1 }], { type: "whole", operator: "between", formula1: "1", formula2: "10", allowBlank: false });
+    let xml = new TextDecoder().decode(serializeXml(sheet.doc!));
+    expect(xml).toMatch(/<dataValidation type="whole"[^>]*operator="between"/);
+    expect(xml).toContain("<formula1>1</formula1><formula2>10</formula2>");
+    setXlsxDataValidation(sheet, [{ r1: 1, c1: 2, r2: 9, c2: 2 }], { type: "textLength", operator: "lessThanOrEqual", formula1: "5" });
+    setXlsxDataValidation(sheet, [{ r1: 1, c1: 3, r2: 9, c2: 3 }], { type: "custom", formula1: "MOD(C1,2)=0" });
+    xml = new TextDecoder().decode(serializeXml(sheet.doc!));
+    expect(xml).toMatch(/<dataValidation type="textLength"[^>]*operator="lessThanOrEqual"/);
+    expect(xml).toMatch(/<dataValidation type="custom"/);
+    expect(xml).toContain("<formula1>MOD(C1,2)=0</formula1>");
+    // read back
+    writeXlsx(wb);
+    const re = readWorkbook(zipSync(wb.files)).sheets[0].validations ?? [];
+    const whole = re.find((v) => v.type === "whole");
+    expect(whole).toMatchObject({ operator: "between", formula1: "1", formula2: "10" });
+    expect(re.find((v) => v.type === "textLength")).toMatchObject({ operator: "lessThanOrEqual", formula1: "5" });
+    expect(re.find((v) => v.type === "custom")).toMatchObject({ formula1: "MOD(C1,2)=0" });
+  });
+
   it("writes an internal and an external hyperlink", () => {
     const wb = base(); const sheet = wb.sheets[0];
     setXlsxHyperlink(wb, sheet, 1, 1, { href: "Sheet1!B2", internal: true, tip: "go" });

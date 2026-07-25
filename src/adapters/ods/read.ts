@@ -223,8 +223,31 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   return wb;
 }
 
-// Parse the document-level <table:content-validation> definitions (name -> list spec).
-type OdsValidationDef = { values?: string[]; rangeRef?: string; allowBlank?: boolean };
+// Parse the document-level <table:content-validation> definitions (name -> spec).
+type DvType = NonNullable<import("../../core/model").DataValidation["type"]>;
+type DvOp = NonNullable<import("../../core/model").DataValidation["operator"]>;
+type OdsValidationDef = { values?: string[]; rangeRef?: string; allowBlank?: boolean; type?: DvType; operator?: DvOp; formula1?: string; formula2?: string };
+
+/** Parse a typed (non-list) ODF content-validation condition into type / operator / operands. */
+function parseTypedCond(cond: string): { type: DvType; operator?: DvOp; formula1?: string; formula2?: string } | null {
+  const custom = /is-true-formula\((.*)\)\s*$/.exec(cond);
+  if (custom) return { type: "custom", formula1: custom[1]!.trim() };
+  const isTextLen = /cell-content-text-length/.test(cond);
+  const fn = isTextLen ? "cell-content-text-length" : "cell-content";
+  let operator: DvOp | undefined, f1: string | undefined, f2: string | undefined;
+  const between = new RegExp(`${fn}-is-(not-)?between\\(([^,;]+)[,;]([^)]+)\\)`).exec(cond);
+  if (between) { operator = between[1] ? "notBetween" : "between"; f1 = between[2]!.trim(); f2 = between[3]!.trim(); }
+  else {
+    const cmp = new RegExp(`${fn}\\(\\)\\s*(>=|<=|<>|!=|>|<|=)\\s*([^\\s)]+)`).exec(cond);
+    const OPS: Record<string, DvOp> = { ">=": "greaterThanOrEqual", "<=": "lessThanOrEqual", "<>": "notEqual", "!=": "notEqual", ">": "greaterThan", "<": "lessThan", "=": "equal" };
+    if (cmp) { operator = OPS[cmp[1]!]; f1 = cmp[2]!.trim(); }
+  }
+  const TYPE: Record<string, DvType> = { "whole-number": "whole", "decimal-number": "decimal", date: "date", time: "time" };
+  const tm = /cell-content-is-(whole-number|decimal-number|date|time)\(\)/.exec(cond);
+  const type = isTextLen ? "textLength" : (tm ? TYPE[tm[1]!] : undefined);
+  return type && operator ? { type, operator, formula1: f1, formula2: f2 } : null;
+}
+
 function parseOdsValidations(doc: Document): Map<string, OdsValidationDef> {
   const map = new Map<string, OdsValidationDef>();
   for (const cv of Array.from(doc.getElementsByTagName("table:content-validation"))) {
@@ -232,15 +255,15 @@ function parseOdsValidations(doc: Document): Map<string, OdsValidationDef> {
     if (!name) continue;
     const cond = cv.getAttribute("table:condition") ?? "";
     const allowBlank = cv.getAttribute("table:allow-empty-cell") !== "false";
-    const m = /cell-content-is-in-list\((.*)\)\s*$/.exec(cond);
-    if (!m) { map.set(name, { allowBlank }); continue; }
-    const arg = m[1]!.trim();
-    if (arg.startsWith("[")) {
-      map.set(name, { rangeRef: odfAddrToA1(arg.replace(/^\[/, "").replace(/\]$/, "")), allowBlank });
-    } else {
-      const values = [...arg.matchAll(/"((?:[^"]|"")*)"/g)].map((q) => q[1]!.replace(/""/g, '"'));
-      map.set(name, { values, allowBlank });
+    const list = /cell-content-is-in-list\((.*)\)\s*$/.exec(cond);
+    if (list) {
+      const arg = list[1]!.trim();
+      if (arg.startsWith("[")) map.set(name, { rangeRef: odfAddrToA1(arg.replace(/^\[/, "").replace(/\]$/, "")), allowBlank, type: "list" });
+      else { const values = [...arg.matchAll(/"((?:[^"]|"")*)"/g)].map((q) => q[1]!.replace(/""/g, '"')); map.set(name, { values, allowBlank, type: "list" }); }
+      continue;
     }
+    const typed = parseTypedCond(cond);
+    map.set(name, typed ? { ...typed, allowBlank } : { allowBlank });
   }
   return map;
 }
@@ -256,11 +279,12 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
   const out: NonNullable<Sheet["validations"]> = [];
   for (const [name, cells] of byName) {
     const def = defs.get(name);
-    // Only list validations drive a dropdown; other condition types are preserved via the untouched
-    // <table:content-validations> block and the cell's (patched) content-validation-name, but do not
-    // surface a UI list.
-    if (!def || (!def.values && !def.rangeRef)) continue;
-    out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank });
+    // list validations drive a dropdown; typed ones drive the invalid outline. Conditions we could
+    // not parse are preserved via the untouched block + the cell's name but surface no UI.
+    if (!def || (!def.values && !def.rangeRef && !def.type)) continue;
+    const ranges = cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c }));
+    if (def.type && def.type !== "list") out.push({ ranges, allowBlank: def.allowBlank, type: def.type, operator: def.operator, formula1: def.formula1, formula2: def.formula2 });
+    else out.push({ ranges, values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank, type: "list" });
   }
   if (out.length) sheet.validations = out;
 }

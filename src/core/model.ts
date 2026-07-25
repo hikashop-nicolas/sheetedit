@@ -34,10 +34,21 @@ export interface CellStyle {
     the sheet (not per cell) so a whole-column validation costs nothing. */
 export interface DataValidation {
   ranges: { r1: number; c1: number; r2: number; c2: number }[];
+  /** list dropdown: the inline allowed values (or a range via rangeRef). */
   values?: string[];
   rangeRef?: string;
   allowBlank?: boolean;
+  /** Validation kind. Absent / "list" is the dropdown; the others constrain the entered value. */
+  type?: "list" | "whole" | "decimal" | "date" | "time" | "textLength" | "custom";
+  /** Comparison for the non-list, non-custom types. */
+  operator?: "between" | "notBetween" | "equal" | "notEqual" | "greaterThan" | "lessThan" | "greaterThanOrEqual" | "lessThanOrEqual";
+  /** Operand(s): the bound(s) for a comparison, or the expression for a custom rule. */
+  formula1?: string;
+  formula2?: string;
 }
+
+/** A data-validation authoring spec (a DataValidation without its ranges), shared by both writers. */
+export type DvSpec = { type?: DataValidation["type"]; operator?: DataValidation["operator"]; formula1?: string; formula2?: string; values?: string[]; rangeRef?: string; allowBlank?: boolean };
 
 /** A differential format (dxf) a conditional-formatting rule applies when it matches. */
 export interface CfDxf { bg?: string; color?: string; bold?: boolean; italic?: boolean; }

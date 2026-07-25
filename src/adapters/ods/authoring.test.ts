@@ -77,6 +77,25 @@ describe("ods hyperlink + comment authoring", () => {
     expect(dv?.ranges.length).toBe(5);
   });
 
+  it("authors typed validations (whole between, text-length, custom) that round-trip", () => {
+    const mk = () => readWorkbook(ods(`<table:table-cell office:value-type="float" office:value="5"><text:p>5</text:p></table:table-cell>`));
+    let wb = mk();
+    setOdsDataValidation(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 3, c2: 1 }], { type: "whole", operator: "between", formula1: "1", formula2: "10", allowBlank: false });
+    let content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]!);
+    expect(content).toContain("of:cell-content-is-whole-number() and cell-content-is-between(1,10)");
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].validations?.[0]).toMatchObject({ type: "whole", operator: "between", formula1: "1", formula2: "10" });
+
+    wb = mk();
+    setOdsDataValidation(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 3, c2: 1 }], { type: "textLength", operator: "lessThanOrEqual", formula1: "5" });
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].validations?.[0]).toMatchObject({ type: "textLength", operator: "lessThanOrEqual", formula1: "5" });
+
+    wb = mk();
+    setOdsDataValidation(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 3, c2: 1 }], { type: "custom", formula1: "[.A1]>0" });
+    content = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]!);
+    expect(content).toContain("of:is-true-formula([.A1]&gt;0)"); // > is XML-escaped in the attribute
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].validations?.[0]).toMatchObject({ type: "custom", formula1: "[.A1]>0" });
+  });
+
   it("editing a cell's value preserves its note position, formatting and validation", () => {
     const wb = readWorkbook(ods(
       `<table:table-cell table:content-validation-name="v1" office:value-type="float" office:value="5">` +

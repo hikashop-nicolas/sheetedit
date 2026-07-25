@@ -65,14 +65,43 @@ export function setupDialogs(ctx: DialogCtx): {
   const openDvDialog = (): void => {
     const s = ctx.getSelRect(); const sheet = sheetNow();
     const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    const typeOpts = [
+      { value: "list", label: t("dvKindList") },
+      { value: "whole", label: t("dvKindWhole") },
+      { value: "decimal", label: t("dvKindDecimal") },
+      { value: "date", label: t("dvKindDate") },
+      { value: "time", label: t("dvKindTime") },
+      { value: "textLength", label: t("dvKindTextLen") },
+      { value: "custom", label: t("dvKindCustom") },
+    ];
+    const compared = ["whole", "decimal", "date", "time", "textLength"]; // types that take an operator + operands
+    const opOpts = [["between", t("dvOpBetween")], ["notBetween", t("dvOpNotBetween")], ["greaterThanOrEqual", "≥"], ["lessThanOrEqual", "≤"], ["greaterThan", ">"], ["lessThan", "<"], ["equal", "="], ["notEqual", "≠"]];
     dialog(t("dvEdit"), [
-      { key: "values", label: t("dvList"), type: "text", value: "" },
-      { key: "range", label: t("dvRange"), type: "text", value: "" },
+      { key: "type", label: t("dvType"), type: "select", value: "list", options: typeOpts },
+      { key: "values", label: t("dvList"), type: "text", value: "", showFor: { key: "type", values: ["list"] } },
+      { key: "range", label: t("dvRange"), type: "text", value: "", showFor: { key: "type", values: ["list"] } },
+      { key: "op", label: t("dvOp"), type: "select", value: "between", options: opOpts.map(([v2, l]) => ({ value: v2!, label: l! })), showFor: { key: "type", values: compared } },
+      { key: "v1", label: t("dvValue1"), type: "text", value: "", showFor: { key: "type", values: compared } },
+      { key: "v2", label: t("dvValue2"), type: "text", value: "", showFor: { key: "op", values: ["between", "notBetween"] } },
+      { key: "formula", label: t("dvFormula"), type: "text", value: "", showFor: { key: "type", values: ["custom"] } },
       { key: "blank", label: t("dvAllowBlank"), type: "checkbox", value: true },
     ], (v) => {
-      const values = String(v.values).split(",").map((x) => x.trim()).filter(Boolean);
-      const range = String(v.range).trim();
-      const spec = !values.length && !range ? null : { values: range ? undefined : values, rangeRef: range || undefined, allowBlank: !!v.blank };
+      const type = String(v.type) as NonNullable<import("../model").DataValidation["type"]>;
+      const allowBlank = !!v.blank;
+      let spec: import("../model").DvSpec | null;
+      if (type === "list") {
+        const values = String(v.values).split(",").map((x) => x.trim()).filter(Boolean);
+        const range = String(v.range).trim();
+        spec = !values.length && !range ? null : { type: "list", values: range ? undefined : values, rangeRef: range || undefined, allowBlank };
+      } else if (type === "custom") {
+        const f = String(v.formula).trim();
+        spec = f ? { type: "custom", formula1: f, allowBlank } : null;
+      } else {
+        const op = String(v.op) as NonNullable<import("../model").DataValidation["operator"]>;
+        const f1 = String(v.v1).trim();
+        const f2 = String(v.v2).trim();
+        spec = f1 || f2 ? { type, operator: op, formula1: f1 || undefined, formula2: (op === "between" || op === "notBetween") ? (f2 || undefined) : undefined, allowBlank } : null;
+      }
       if (wb.kind === "ods") setOdsDataValidation(wb, sheet, ranges, spec);
       else setXlsxDataValidation(sheet, ranges, spec);
       ctx.mark(); ctx.renderGrid();

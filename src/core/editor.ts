@@ -26,6 +26,7 @@ import { setupImageLayer } from "./ui/image-layer";
 import { setupShapeLayer } from "./ui/shape-layer";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
+import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
@@ -1913,20 +1914,25 @@ export function createSheetEditor(
       // when its value is not one of them.
       const dv = dvForCell(sheet, r, c);
       if (dv) {
-        td.classList.add("has-dv");
+        const isList = (dv.type ?? "list") === "list";
         const cur = cellDisplay(cell);
-        const allowed = resolveDvValues(dv, sheet);
-        if (cur !== "" && allowed.length && !allowed.includes(cur)) td.classList.add("sheetedit-dv-invalid");
-        const caret = document.createElement("button");
-        caret.type = "button";
-        caret.className = "sheetedit-dvbtn";
-        caret.tabIndex = -1;
-        caret.title = t("dvChoose");
-        caret.setAttribute("aria-label", t("dvChoose"));
-        caret.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>`;
-        caret.addEventListener("mousedown", (e) => e.preventDefault());
-        caret.addEventListener("click", (e) => { e.stopPropagation(); openDvMenu(td, r, c, dv); });
-        td.appendChild(caret);
+        const allowed = isList ? resolveDvValues(dv, sheet) : [];
+        // Flag a cell whose value breaks the rule (list membership, or the typed constraint).
+        if (cur !== "" && !validateCell(dv, cell?.value ?? "", cur, allowed)) td.classList.add("sheetedit-dv-invalid");
+        // A dropdown caret only for list rules; the constraint rules just outline invalid input.
+        if (isList) {
+          td.classList.add("has-dv");
+          const caret = document.createElement("button");
+          caret.type = "button";
+          caret.className = "sheetedit-dvbtn";
+          caret.tabIndex = -1;
+          caret.title = t("dvChoose");
+          caret.setAttribute("aria-label", t("dvChoose"));
+          caret.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>`;
+          caret.addEventListener("mousedown", (e) => e.preventDefault());
+          caret.addEventListener("click", (e) => { e.stopPropagation(); openDvMenu(td, r, c, dv); });
+          td.appendChild(caret);
+        }
       }
       // Autofilter: a caret on each header-row cell that opens the sort/filter menu.
       const af = sheet.autoFilter;

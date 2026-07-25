@@ -414,23 +414,21 @@ function readHyperlinks(sheet: Sheet, doc: Document, files: Record<string, Uint8
   }
 }
 
-/** Read list-type <dataValidation> entries (dropdowns) into sheet.validations. Other validation
-    types (whole/decimal/date/custom) are left to round-trip via the untouched sheet XML. */
+/** Read <dataValidation> entries into sheet.validations: list dropdowns plus the constraint types
+    (whole / decimal / date / time / textLength / custom), so all drive the grid's invalid outline. */
 function readDataValidations(sheet: Sheet, doc: Document): void {
   const dvs = doc.getElementsByTagName("dataValidation");
   if (!dvs.length) return;
+  const KNOWN = new Set(["list", "whole", "decimal", "date", "time", "textLength", "custom"]);
   const out: NonNullable<Sheet["validations"]> = [];
   for (const dv of Array.from(dvs)) {
-    if ((dv.getAttribute("type") || "") !== "list") continue;
+    const type = (dv.getAttribute("type") || "list") as NonNullable<import("../../core/model").DataValidation["type"]>;
+    if (!KNOWN.has(type)) continue;
     const sqref = dv.getAttribute("sqref") || (dv.getAttributeNS("http://schemas.microsoft.com/office/spreadsheetml/2009/9/main", "sqref") ?? "");
     if (!sqref) continue;
     const allowBlank = dv.getAttribute("allowBlank") === "1" || dv.getAttribute("allowBlank") === "true";
     const f1 = firstByLocal(dv, "formula1")?.textContent?.trim() ?? "";
-    let values: string[] | undefined;
-    let rangeRef: string | undefined;
-    if (f1.startsWith('"') && f1.endsWith('"')) values = f1.slice(1, -1).split(",").map((s) => s.trim());
-    else if (f1) rangeRef = f1;
-    else continue;
+    const f2 = firstByLocal(dv, "formula2")?.textContent?.trim() ?? "";
     const ranges: { r1: number; c1: number; r2: number; c2: number }[] = [];
     for (const range of sqref.split(/\s+/)) {
       const [a, b] = range.split(":");
@@ -438,7 +436,16 @@ function readDataValidations(sheet: Sheet, doc: Document): void {
       const p2 = b ? parseA1Ref(b) : p1;
       if (p1 && p2) ranges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
     }
-    if (ranges.length) out.push({ ranges, values, rangeRef, allowBlank });
+    if (!ranges.length) continue;
+    if (type === "list") {
+      let values: string[] | undefined, rangeRef: string | undefined;
+      if (f1.startsWith('"') && f1.endsWith('"')) values = f1.slice(1, -1).split(",").map((s) => s.trim());
+      else if (f1) rangeRef = f1;
+      else continue;
+      out.push({ ranges, values, rangeRef, allowBlank, type: "list" });
+    } else {
+      out.push({ ranges, allowBlank, type, operator: (dv.getAttribute("operator") || undefined) as import("../../core/model").DataValidation["operator"], formula1: f1 || undefined, formula2: f2 || undefined });
+    }
   }
   if (out.length) sheet.validations = out;
 }

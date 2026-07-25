@@ -23,10 +23,10 @@ function xlsxWithDv(): Uint8Array {
 }
 
 describe("xlsx data validation (dropdowns)", () => {
-  it("reads inline and range list validations, ignores non-list types", () => {
+  it("reads inline / range list validations and typed (non-list) rules", () => {
     const wb = readWorkbook(xlsxWithDv());
     const dvs = wb.sheets[0].validations!;
-    expect(dvs).toHaveLength(2); // the "whole" type is skipped
+    expect(dvs).toHaveLength(3); // two list rules + the "whole" constraint
     const inline = dvs.find((d) => d.values);
     expect(inline?.values).toEqual(["Yes", "No", "Maybe"]);
     expect(inline?.allowBlank).toBe(true);
@@ -34,5 +34,6 @@ describe("xlsx data validation (dropdowns)", () => {
     const range = dvs.find((d) => d.rangeRef);
     expect(range?.rangeRef).toBe("$D$1:$D$2");
     expect(range?.ranges[0]).toEqual({ r1: 1, c1: 2, r2: 1, c2: 2 });
+    expect(dvs.find((d) => d.type === "whole")).toBeTruthy();
   });
 });

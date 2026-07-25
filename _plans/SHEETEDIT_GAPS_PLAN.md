@@ -126,7 +126,11 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   workbook protection, print settings, outline grouping, themes.
 - **Recalc**: a large but partial function set; unsupported functions or circular refs yield an
   error value (the file's cached value is shown as a fallback; desktop apps recompute on open).
-- **Data validation**: only list (dropdown) rules are authored; other condition types round-trip.
+- **Data validation**: all rule types author + read + validate on both formats. List rules show a
+  dropdown; whole / decimal / date / time / text-length / custom-formula rules outline a cell whose
+  value breaks the rule (custom formulas are round-tripped, not evaluated live). xlsx writes the
+  type/operator/formula1/formula2; ods writes the LibreOffice-verified content-validation condition
+  (`is-between(a,b)` with commas, `cell-content()OP a` unspaced), which round-trips through LibreOffice.
 - **Correctness caveat**: an edited shared-string cell is rewritten as an inline string (its
   sharedStrings entry may become an unreferenced orphan); Excel-fidelity of authored pivots/charts
   is verified through LibreOffice, not real Excel.

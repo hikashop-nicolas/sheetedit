@@ -1,4 +1,4 @@
-import type { Cell, DataValidation, Sheet, Workbook } from "../../core/model";
+import type { Cell, DataValidation, DvSpec, Sheet, Workbook } from "../../core/model";
 import { colToLetters, ensureCell, firstByLocal, parseXmlOpt, removeByLocal, serializeXml } from "../../core/model";
 import { SS_MAIN, ensureXlsxCellEl } from "./shared";
 import { writeXlsxCharts } from "./chart-write";
@@ -473,31 +473,41 @@ export function setXlsxSparklineGroup(sheet: Sheet, style: SparkStyle, items: Sp
 }
 
 /** Add or remove a list data validation over the given ranges (1-based inclusive). */
-export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: number; r2: number; c2: number }[], spec: { values?: string[]; rangeRef?: string; allowBlank?: boolean } | null): void {
+export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: number; r2: number; c2: number }[], spec: DvSpec | null): void {
   const doc = sheet.doc, ws = doc?.documentElement;
   const ns = ws?.namespaceURI || SS_MAIN;
   const sqref = ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ");
+  const type = spec ? (spec.type ?? "list") : "list";
   if (doc && ws) {
     let dvs = ws.getElementsByTagName("dataValidations")[0];
     if (dvs) for (const dv of Array.from(dvs.getElementsByTagName("dataValidation"))) if (dv.getAttribute("sqref") === sqref) dv.parentNode?.removeChild(dv);
     if (spec) {
       if (!dvs) { dvs = doc.createElementNS(ns, "dataValidations"); insertWsChild(ws, dvs); }
       const dv = doc.createElementNS(ns, "dataValidation");
-      dv.setAttribute("type", "list");
+      dv.setAttribute("type", type);
+      if (type !== "list" && type !== "custom" && spec.operator) dv.setAttribute("operator", spec.operator);
       dv.setAttribute("allowBlank", spec.allowBlank ? "1" : "0");
       dv.setAttribute("showInputMessage", "1");
       dv.setAttribute("showErrorMessage", "1");
       dv.setAttribute("sqref", sqref);
-      const f1 = doc.createElementNS(ns, "formula1");
-      f1.textContent = spec.rangeRef ? spec.rangeRef : `"${(spec.values ?? []).join(",")}"`;
-      dv.appendChild(f1);
+      const addF = (local: string, text: string): void => { const f = doc.createElementNS(ns, local); f.textContent = text; dv.appendChild(f); };
+      if (type === "list") addF("formula1", spec.rangeRef ? spec.rangeRef : `"${(spec.values ?? []).join(",")}"`);
+      else {
+        if (spec.formula1 != null) addF("formula1", spec.formula1);
+        if ((spec.operator === "between" || spec.operator === "notBetween") && spec.formula2 != null) addF("formula2", spec.formula2);
+      }
       dvs.appendChild(dv);
       dvs.setAttribute("count", String(dvs.getElementsByTagName("dataValidation").length));
     } else if (dvs && !dvs.getElementsByTagName("dataValidation").length) dvs.parentNode?.removeChild(dvs);
   }
-  // Keep the in-memory validations (drive the dropdown) in sync.
+  // Keep the in-memory validations (drive the dropdown / invalid outline) in sync.
   sheet.validations = (sheet.validations ?? []).filter((v) => v.ranges.map((r) => `${colToLetters(r.c1)}${r.r1}:${colToLetters(r.c2)}${r.r2}`).join(" ") !== sqref);
-  if (spec) { const v: DataValidation = { ranges, allowBlank: spec.allowBlank }; if (spec.rangeRef) v.rangeRef = spec.rangeRef; else v.values = spec.values; sheet.validations.push(v); }
+  if (spec) {
+    const v: DataValidation = { ranges, allowBlank: spec.allowBlank, type };
+    if (type === "list") { if (spec.rangeRef) v.rangeRef = spec.rangeRef; else v.values = spec.values; }
+    else { v.operator = spec.operator; v.formula1 = spec.formula1; v.formula2 = spec.formula2; }
+    sheet.validations.push(v);
+  }
   sheet.layoutDirty = true;
 }
 
