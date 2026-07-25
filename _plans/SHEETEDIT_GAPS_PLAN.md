@@ -127,12 +127,19 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   workbook protection, print settings, outline grouping, themes.
 - **Recalc**: fast-formula-parser ships many of its functions as empty stubs, so the gaps are filled
   in core/functions.ts (statistics, multi-criteria aggregates, MATCH / XLOOKUP / XMATCH / CHOOSE /
-  LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family) and
-  core/dynamic-arrays.ts. A coverage probe over 81 real-world formulas went 18 -> 76 passing. Known
-  remaining: OFFSET / INDIRECT (must return a *reference*, so they need parser-context integration)
-  and LET (needs lazy name binding; the parser evaluates arguments eagerly). Unsupported functions or
-  circular refs still yield an error value with the file's cached value shown as a fallback, and the
-  editor recalculates on edit rather than on open (like Excel).
+  LOOKUP, SUBTOTAL / AGGREGATE, text and SWITCH), core/financial.ts (the whole financial family),
+  core/dynamic-arrays.ts (the Excel 365 shaping family) and core/reference-fns.ts (OFFSET /
+  INDIRECT). A coverage probe over 81 real-world formulas went 18 -> 81 passing.
+  - OFFSET / INDIRECT return a *reference*, not a value, so the range they name can feed an
+    aggregate or spill (`SUM(OFFSET(A1,0,0,3,1))`). OFFSET needs its first argument's ref intact,
+    which the parser only preserves for functions on its no-data-retrieve list, so allowRawRefs()
+    adds it there on each parser instance.
+  - LET has no runtime scope in the parser (arguments evaluate eagerly), so core/let-expand.ts
+    expands it away textually before parsing: innermost first, token-aware so it never rewrites
+    inside a string literal or an identifier used as a function call. The expansion also runs for
+    the dependency parser, so a LET formula still recalculates when its sources change.
+  Unsupported functions or circular refs still yield an error value with the file's cached value
+  shown as a fallback, and the editor recalculates on edit rather than on open (like Excel).
 - **Data validation**: all rule types author + read + validate on both formats. List rules show a
   dropdown; whole / decimal / date / time / text-length / custom-formula rules outline a cell whose
   value breaks the rule (custom formulas are round-tripped, not evaluated live). xlsx writes the

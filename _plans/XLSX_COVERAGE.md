@@ -55,8 +55,8 @@ formatting (dxf / colour scales / data bars), comments and notes. See Progress b
 - Formula coverage: the library leaves many common functions as empty stubs. Those are implemented
   in core/functions.ts and core/financial.ts (statistics, SUMIFS/COUNTIFS/AVERAGEIFS/MAXIFS/MINIFS,
   MATCH / XLOOKUP / XMATCH / CHOOSE / LOOKUP, SUBTOTAL / AGGREGATE, text, SWITCH, and the financial
-  family), so INDEX+MATCH and the other everyday idioms recalculate. OFFSET / INDIRECT (reference-
-  returning) and LET (lazy binding) remain unevaluated.
+  family), so INDEX+MATCH and the other everyday idioms recalculate. OFFSET / INDIRECT return real
+  references (core/reference-fns.ts) and LET is expanded before parsing (core/let-expand.ts).
 - Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
   the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
   authored on both formats too. Other preserved-only features above (form controls, slicers,
