@@ -26,7 +26,7 @@ import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSet
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
 import { subNames } from "./vba";
-import { editModuleSource, runWorkbookMacro, runnableSubs } from "./vba-macro";
+import { editModuleSource, findSheetHandler, findWorkbookHandler, hasEventHandlers, runWorkbookMacro, runnableSubs } from "./vba-macro";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { formDialog, type FormField } from "./ui/form-dialog";
@@ -1058,6 +1058,11 @@ export function createSheetEditor(
       recalc(wb);
       mark();
       renderGrid();
+      // Excel raises Worksheet_Change for a replace-all too, with the whole affected block.
+      fireSheetChange({
+        r1: Math.min(...changes.map((ch) => ch.r)), c1: Math.min(...changes.map((ch) => ch.c)),
+        r2: Math.max(...changes.map((ch) => ch.r)), c2: Math.max(...changes.map((ch) => ch.c)),
+      });
     },
   });
   wrap.addEventListener("keydown", (e) => {
@@ -1363,6 +1368,29 @@ export function createSheetEditor(
     note.className = "sheetedit-note";
     note.textContent = project?.modules.length ? t("vbaNote") : t("vbaNone");
     card.appendChild(note);
+
+    // The consent gate. Only shown when this workbook actually has handlers to run, so a workbook
+    // with ordinary macros is not asked a question that means nothing for it.
+    if (hasEventHandlers(wb)) {
+      const row = document.createElement("label");
+      row.className = "sheetedit-field is-inline sheetedit-vba-events";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = eventsEnabled;
+      box.addEventListener("change", () => {
+        eventsEnabled = box.checked;
+        // Turning it on is the moment the user consents, so Workbook_Open runs then rather than
+        // silently at open time before there was anyone to ask.
+        if (eventsEnabled) fireEvent(findWorkbookHandler(wb, "Workbook_Open"));
+      });
+      const span = document.createElement("span");
+      span.textContent = t("vbaEvents");
+      row.append(box, span);
+      const why = document.createElement("p");
+      why.className = "sheetedit-note";
+      why.textContent = t("vbaEventsNote");
+      card.append(row, why);
+    }
 
     if (project?.modules.length) {
       const list = document.createElement("div");
@@ -1812,6 +1840,7 @@ export function createSheetEditor(
     if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c) || sheet.condFormats?.length) renderGrid();
     else refreshDisplays(sheet);
     if (sheet.charts?.length) chartLayer.update(); // live-update any chart reading this cell
+    fireSheetChange({ r1: r, c1: c, r2: r, c2: c });
   };
 
   // On-device formula assistant: the fx-bar sparkle opens a popover that turns a plain-language
@@ -2310,6 +2339,45 @@ export function createSheetEditor(
       renderGrid();
     },
   });
+
+  // --- the workbook's own event macros -----------------------------------------
+  // Excel runs Workbook_Open and Worksheet_Change by itself. sheetedit does not, unless the user
+  // turns it on: a workbook that runs code the moment it opens is exactly what Excel's own
+  // "enable content" bar exists for. The consent lasts for this session and is never persisted.
+  let eventsEnabled = false;
+  let inEvent = false;
+
+  /** Run one event handler, if there is one and the user allowed it. */
+  const fireEvent = (handler: { module: string; source: string; proc: string } | undefined, target?: { sheetIndex: number; rect: { r1: number; c1: number; r2: number; c2: number } }): void => {
+    if (!eventsEnabled || !handler || inEvent) return;
+    // A Worksheet_Change handler that writes a cell would otherwise fire itself, for ever.
+    inEvent = true;
+    try {
+      const res = runWorkbookMacro(wb, handler.source, handler.module, handler.proc, {
+        activeSheet: active,
+        selection: sel ? { r1: sel.r1, c1: sel.c1, r2: sel.r2, c2: sel.c2 } : undefined,
+        activeCell: activeCell ?? undefined,
+        fileName: options.fileName,
+        ...(target ? { eventTarget: target } : {}),
+      });
+      if (!res.ok) { showNotice(`${t("vbaEventFailed")} ${res.error?.message ?? ""}`); return; }
+      if (res.undo && res.redo) {
+        history.push({ sheet: active, cells: [], undoExtra: res.undo, redoExtra: res.redo });
+        recalc(wb);
+        mark();
+        renderGrid();
+      }
+      if (res.messages.length) showNotice(res.messages.join(" | "));
+    } finally {
+      inEvent = false;
+    }
+  };
+
+  /** Worksheet_Change, with the cells that changed as its Target. */
+  const fireSheetChange = (rect: { r1: number; c1: number; r2: number; c2: number }): void => {
+    if (!eventsEnabled || inEvent) return;
+    fireEvent(findSheetHandler(wb, active, "Worksheet_Change"), { sheetIndex: active, rect });
+  };
 
   /**
    * Run the macro a control names. Excel qualifies the name with its module when it needs to; the

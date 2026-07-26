@@ -257,6 +257,9 @@ export interface Cell {
 
 export interface Sheet {
   name: string;
+  /** The VBA code name (xlsx `<sheetPr codeName>`), which is how a sheet's macro module is named
+      and the only way to tie a Worksheet_Change handler to the sheet it belongs to. */
+  codeName?: string;
   cells: Map<string, Cell>;
   maxRow: number; // 1-based extent of used cells (0 = empty)
   maxCol: number;

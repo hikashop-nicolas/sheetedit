@@ -4,7 +4,7 @@ import { parseModule } from "./vba-parse";
 import { VbaInterpreter } from "./vba-run";
 import { VbaError } from "./vba-value";
 import { VbaSyntaxError } from "./vba-lex";
-import { excelGlobals, type ExcelHost, type Rect } from "./vba-excel";
+import { excelGlobals, RangeObject, type ExcelHost, type Rect } from "./vba-excel";
 import { setModuleSource, VbaWriteError } from "./vba-write";
 import { vbaPartOf } from "./vba";
 
@@ -59,6 +59,8 @@ export interface MacroRunOptions {
   fileName?: string;
   /** Lowered in tests; the default is high enough that no honest macro reaches it. */
   maxSteps?: number;
+  /** The Range handed to an event handler as its Target argument. */
+  eventTarget?: { sheetIndex: number; rect: Rect };
 }
 
 export interface MacroRunResult {
@@ -126,9 +128,12 @@ export function runWorkbookMacro(
     maxSteps: options.maxSteps,
   });
 
+  const args = options.eventTarget
+    ? [new RangeObject(host, options.eventTarget.sheetIndex, [options.eventTarget.rect])]
+    : [];
   let result: { messages: string[] };
   try {
-    result = interp.run(procName);
+    result = interp.run(procName, args);
   } catch (e) {
     // Roll back before the caller sees anything, so a stopped macro leaves no trace.
     restore(wb, before);
@@ -203,3 +208,51 @@ export function editModuleSource(wb: Workbook, moduleName: string, source: strin
   apply(after, source)();
   return { ok: true, undo: apply(before, oldSource), redo: apply(after, source) };
 }
+
+// --- event handlers ------------------------------------------------------------
+// Excel runs these by itself. sheetedit does not, unless the user says so: a workbook that runs
+// code the moment it opens is the whole reason Excel grew its own "enable content" gate, and one
+// that runs code every time a cell is typed is the same problem spread thin.
+
+export interface MacroHandler {
+  /** The module declaring it, and its source, which is what runWorkbookMacro needs. */
+  module: string;
+  source: string;
+  proc: string;
+}
+
+/** Whether a module declares a procedure by that name, whatever its arguments. */
+function declares(source: string, proc: string): boolean {
+  return new RegExp(`^\\s*(?:Public\\s+|Private\\s+)?(?:Static\\s+)?Sub\\s+${proc}\\s*\\(`, "im").test(source);
+}
+
+/**
+ * A workbook-level handler such as Workbook_Open. It lives in the ThisWorkbook document module,
+ * whose name is localised ("DieseArbeitsmappe" in a German Excel), so the module is found by what
+ * it declares rather than by what it is called.
+ */
+export function findWorkbookHandler(wb: Workbook, proc: string): MacroHandler | undefined {
+  const mod = wb.vba?.modules.find((m) => declares(m.source, proc));
+  return mod ? { module: mod.name, source: mod.source, proc } : undefined;
+}
+
+/**
+ * A sheet-level handler such as Worksheet_Change. Its module is named after the sheet's VBA code
+ * name, which Excel keeps stable when the visible tab is renamed, so the tab name cannot be used.
+ */
+export function findSheetHandler(wb: Workbook, sheetIndex: number, proc: string): MacroHandler | undefined {
+  const code = wb.sheets[sheetIndex]?.codeName;
+  if (!code) return undefined;
+  const mod = wb.vba?.modules.find((m) => m.name.toLowerCase() === code.toLowerCase() && declares(m.source, proc));
+  return mod ? { module: mod.name, source: mod.source, proc } : undefined;
+}
+
+/** Whether this workbook has any event handler at all, which is what the consent toggle is for. */
+export function hasEventHandlers(wb: Workbook): boolean {
+  if (!wb.vba?.modules.length) return false;
+  if (findWorkbookHandler(wb, "Workbook_Open")) return true;
+  return wb.sheets.some((_s, i) => SHEET_EVENTS.some((e) => findSheetHandler(wb, i, e)));
+}
+
+/** The sheet events sheetedit raises. Everything else Excel fires is simply not raised. */
+export const SHEET_EVENTS = ["Worksheet_Change", "Worksheet_SelectionChange", "Worksheet_Activate"] as const;

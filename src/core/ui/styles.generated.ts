@@ -800,5 +800,6 @@ font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size:4;
 background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); border:1px solid var(--sheetedit-btn);
 }
 .sheetedit-vba-runs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; }
+.sheetedit-vba-events { margin:2px 0 0; }
 .sheetedit-vba-status { margin:8px 0 0; white-space:pre-wrap; }
 .sheetedit-vba-status.is-error { color:var(--sheetedit-error-text); }`;

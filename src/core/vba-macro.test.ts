@@ -229,3 +229,80 @@ describe("editing a module's source", () => {
     expect(getCell(wb.sheets[0]!, 2, 2)?.value).toBe("written");
   });
 });
+
+describe("finding event handlers", () => {
+  const bookWith = (modules: { name: string; source: string }[], codeNames: (string | undefined)[] = []): Workbook => {
+    const wb = workbook([[1]], Math.max(1, codeNames.length));
+    codeNames.forEach((code, i) => { if (wb.sheets[i] && code) wb.sheets[i]!.codeName = code; });
+    wb.vba = { codePage: 1252, locked: false, modules: modules.map((m) => ({ ...m, stream: m.name, kind: "class" as const })) };
+    return wb;
+  };
+
+  it("finds Workbook_Open wherever it lives, since the module's name is localised", async () => {
+    const { findWorkbookHandler } = await import("./vba-macro");
+    // A German Excel calls the workbook module DieseArbeitsmappe, so it cannot be found by name.
+    const wb = bookWith([{ name: "DieseArbeitsmappe", source: "Sub Workbook_Open()\r\nEnd Sub\r\n" }]);
+    expect(findWorkbookHandler(wb, "Workbook_Open")?.module).toBe("DieseArbeitsmappe");
+    expect(findWorkbookHandler(wb, "Workbook_BeforeClose")).toBeUndefined();
+  });
+
+  it("matches a sheet handler by code name, not by the visible tab name", async () => {
+    const { findSheetHandler } = await import("./vba-macro");
+    const wb = bookWith(
+      [{ name: "Sheet1", source: "Sub Worksheet_Change(ByVal Target As Range)\r\nEnd Sub\r\n" }],
+      ["Sheet1"],
+    );
+    wb.sheets[0]!.name = "Renamed by the user";
+    expect(findSheetHandler(wb, 0, "Worksheet_Change")?.module).toBe("Sheet1");
+  });
+
+  it("finds nothing for a sheet with no code name, which is every ODF sheet", async () => {
+    const { findSheetHandler } = await import("./vba-macro");
+    const wb = bookWith([{ name: "Sheet1", source: "Sub Worksheet_Change(ByVal Target As Range)\r\nEnd Sub\r\n" }]);
+    expect(findSheetHandler(wb, 0, "Worksheet_Change")).toBeUndefined();
+  });
+
+  it("does not confuse one sheet's module for another's", async () => {
+    const { findSheetHandler } = await import("./vba-macro");
+    const wb = bookWith(
+      [{ name: "Sheet2", source: "Sub Worksheet_Change(ByVal Target As Range)\r\nEnd Sub\r\n" }],
+      ["Sheet1", "Sheet2"],
+    );
+    expect(findSheetHandler(wb, 0, "Worksheet_Change")).toBeUndefined();
+    expect(findSheetHandler(wb, 1, "Worksheet_Change")?.module).toBe("Sheet2");
+  });
+
+  it("reports whether the workbook has anything to consent to", async () => {
+    const { hasEventHandlers } = await import("./vba-macro");
+    expect(hasEventHandlers(workbook([[1]]))).toBe(false);
+    expect(hasEventHandlers(bookWith([{ name: "M", source: "Sub Ordinary()\r\nEnd Sub\r\n" }]))).toBe(false);
+    expect(hasEventHandlers(bookWith([{ name: "TW", source: "Sub Workbook_Open()\r\nEnd Sub\r\n" }]))).toBe(true);
+  });
+});
+
+describe("running an event handler", () => {
+  it("hands Worksheet_Change its Target range", () => {
+    const wb = workbook([[1, 2]]);
+    const src = 'Sub Worksheet_Change(ByVal Target As Range)\r\n  Range("D1").Value = Target.Address\r\nEnd Sub\r\n';
+    const res = runWorkbookMacro(wb, src, "Sheet1", "Worksheet_Change", {
+      eventTarget: { sheetIndex: 0, rect: { r1: 1, c1: 2, r2: 1, c2: 2 } },
+    });
+    expect(res.ok, res.error?.message).toBe(true);
+    expect(at(wb, 1, 4)).toBe("$B$1");
+  });
+
+  it("reads the cell that changed through the Target it was given", () => {
+    const wb = workbook([[5]]);
+    const src = 'Sub Worksheet_Change(ByVal Target As Range)\r\n  Range("B1").Value = Target.Value * 2\r\nEnd Sub\r\n';
+    runWorkbookMacro(wb, src, "Sheet1", "Worksheet_Change", { eventTarget: { sheetIndex: 0, rect: { r1: 1, c1: 1, r2: 1, c2: 1 } } });
+    expect(at(wb, 1, 2)).toBe("10");
+  });
+
+  it("rolls back a handler that stops, like any other run", () => {
+    const wb = workbook([[1]]);
+    const src = 'Sub Worksheet_Change(ByVal Target As Range)\r\n  Range("B1").Value = 9\r\n  Application.Quit\r\nEnd Sub\r\n';
+    const res = runWorkbookMacro(wb, src, "Sheet1", "Worksheet_Change", { eventTarget: { sheetIndex: 0, rect: { r1: 1, c1: 1, r2: 1, c2: 1 } } });
+    expect(res.ok).toBe(false);
+    expect(at(wb, 1, 2)).toBe("");
+  });
+});

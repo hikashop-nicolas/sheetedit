@@ -438,6 +438,11 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         if (rowOutline.size) sheet.rowOutline = rowOutline;
         if (rowCollapsed.size) sheet.rowCollapsed = rowCollapsed;
       }
+      // <sheetPr codeName>: the name a sheet goes by in VBA, which is what its event module is
+      // called. Excel keeps it stable when the visible tab is renamed, so it cannot be derived.
+      const sheetPrEl = doc.getElementsByTagName("sheetPr")[0];
+      const codeName = sheetPrEl?.getAttribute("codeName");
+      if (codeName) sheet.codeName = codeName;
       // <sheetPr><outlinePr summaryBelow summaryRight/>: which side of a group its summary sits on.
       const outlinePr = doc.getElementsByTagName("outlinePr")[0];
       if (outlinePr) {
