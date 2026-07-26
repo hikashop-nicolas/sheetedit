@@ -1,4 +1,5 @@
 /// <reference types="cypress" />
+import { clickToolbar } from "../support/toolbar";
 
 const TIMEOUT = 15000;
 
@@ -30,7 +31,7 @@ describe("pivot tables", () => {
     // Select the source range A1:C7 (header + data).
     cy.get('input[aria-label="A1"]').focus();
     cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    clickToolbar("Insert pivot table");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     // Defaults: Region=Rows, Sales=Values(Sum). Make Product a column field for a crosstab.
     cy.get('.sheetedit-form-modal [data-field="role_1"]').select("columns");
@@ -46,7 +47,7 @@ describe("pivot tables", () => {
     open("cypress/fixtures/pivot.xlsx");
     cy.get('input[aria-label="A1"]').focus();
     cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    clickToolbar("Insert pivot table");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     // Region + Product both on rows, Sum of Sales, subtotals on.
     cy.get('.sheetedit-form-modal [data-field="role_1"]').select("rows");
@@ -64,7 +65,7 @@ describe("pivot tables", () => {
     open("cypress/fixtures/pivot.xlsx");
     cy.get('input[aria-label="A1"]').focus();
     cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    clickToolbar("Insert pivot table");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     cy.get('.sheetedit-form-modal [data-role="ok"]').click(); // Region rows, Sales values
     cy.get('input[aria-label="B2"]').should("have.value", "190"); // North total, one value column
@@ -85,7 +86,7 @@ describe("pivot tables", () => {
     open("cypress/fixtures/pivot.xlsx");
     cy.get('input[aria-label="A1"]').focus();
     cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Insert pivot table"]').click();
+    clickToolbar("Insert pivot table");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     cy.get('.sheetedit-form-modal [data-field="role_1"]').select("columns"); // crosstab (grand col to exclude)
     cy.get('.sheetedit-form-modal [data-role="ok"]').click();

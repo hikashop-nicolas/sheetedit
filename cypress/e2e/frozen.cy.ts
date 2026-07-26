@@ -6,6 +6,11 @@
 
 const TIMEOUT = 15000;
 
+// Split panes added three more scrollers carrying .sheetedit-grid, and cy.scrollTo refuses to act
+// on more than one element even when the other three are display:none. A frozen sheet keeps its
+// frozen row and column inside the one scroller, so that is still the element to scroll.
+const body = () => cy.get(".sheetedit-grid:not(.sheetedit-grid-split):not(.sheetedit-grid-right)");
+
 function open(fixture: string) {
   cy.visit("/");
   cy.get("#file").selectFile(fixture, { force: true });
@@ -21,7 +26,7 @@ describe("frozen panes", () => {
     cy.get('.sheetedit-tab[aria-selected="true"]').should("contain.text", "Frozen");
     cy.get('input[aria-label="A1"]').should("have.value", "A1");
 
-    cy.get(".sheetedit-grid").scrollTo(0, 700);
+    body().scrollTo(0, 700);
     cy.get('input[aria-label="D35"]', { timeout: TIMEOUT }).should("be.visible"); // scrolled down
     cy.get('input[aria-label="D1"]').should("be.visible"); // frozen top row still on screen
     // The frozen row sits above the visible body rows (pinned at the top, not floating mid-grid).
@@ -31,8 +36,8 @@ describe("frozen panes", () => {
 
   it("keeps the first column pinned while scrolling right", () => {
     open("cypress/fixtures/frozen.xlsx");
-    cy.get(".sheetedit-grid").scrollTo(0, 400); // bring some lower rows into the window
-    cy.get(".sheetedit-grid").scrollTo(600, 400);
+    body().scrollTo(0, 400); // bring some lower rows into the window
+    body().scrollTo(600, 400);
     cy.get('input[aria-label="J20"]', { timeout: TIMEOUT }).should("be.visible"); // scrolled right
     cy.get('input[aria-label="A20"]').should("be.visible"); // frozen first column still on screen
   });

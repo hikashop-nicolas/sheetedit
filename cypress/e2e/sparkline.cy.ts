@@ -1,4 +1,5 @@
 /// <reference types="cypress" />
+import { clickToolbar } from "../support/toolbar";
 
 // Cypress runs in en-US, so dialog labels/titles are the English strings.
 const TIMEOUT = 15000;
@@ -15,7 +16,7 @@ describe("sparklines", () => {
     // Select the numeric row B2:D2.
     cy.get('input[aria-label="B2"]').focus();
     cy.get('input[aria-label="D2"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Sparkline"]').click();
+    clickToolbar("Sparkline");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     // Data range prefilled from the selection; location prefilled just past it.
     cy.get('.sheetedit-form-modal [data-field="data"]').should("have.value", "B2:D2");
@@ -29,7 +30,7 @@ describe("sparklines", () => {
   it("shows a negative-colour field only for win/loss and column types", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="B2"]').focus();
-    cy.get('.sheetedit-toolbar [title="Sparkline"]').click();
+    clickToolbar("Sparkline");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     // Line (default): negative colour hidden.
     cy.get('.sheetedit-form-modal [data-field="negColor"]').should("not.be.visible");
@@ -43,7 +44,7 @@ describe("sparklines", () => {
     // A 2-D selection (A1:B3) defaults the location to a column of hosts, one per row.
     cy.get('input[aria-label="A1"]').focus();
     cy.get('input[aria-label="B3"]').trigger("mousedown", { shiftKey: true });
-    cy.get('.sheetedit-toolbar [title="Sparkline"]').click();
+    clickToolbar("Sparkline");
     cy.get(".sheetedit-form-modal", { timeout: TIMEOUT }).should("be.visible");
     cy.get('.sheetedit-form-modal [data-field="loc"]').should("have.value", "C1:C3");
     cy.get('.sheetedit-form-modal [data-role="ok"]').click();
