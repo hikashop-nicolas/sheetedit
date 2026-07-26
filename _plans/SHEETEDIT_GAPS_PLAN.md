@@ -322,6 +322,29 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     layout records each string's own place, so rewriting the middle of three moves the last
     correctly. Identity holds on all nine real streams for every property they carry.
   - Still open: the Image control, and any third-party ActiveX, which is irreducible.
+- **Grid metrics** come from the workbook, not from constants, and getting this wrong showed up as
+  an ActiveX bug rather than a layout one. A column's `width` is in character units of the NORMAL
+  STYLE's font, so the conversion needs THAT font's maximum digit width (7px for Calibri 11, 9px for
+  Calibri 14); hardcoding 7 ran a 14pt workbook's every column 28% narrow. An anchored object's
+  position is the sum of the widths to its left, so the error compounded and the file's combo boxes
+  drew on top of their own labels. `<sheetFormatPr defaultRowHeight/defaultColWidth>` was ignored
+  too, which did the same thing vertically. GOTCHA: honouring a 21px row needed the cell editor to
+  stop padding itself out to a height, since that put a 23px floor under every row.
+- **Text spill**: a text too long for its column runs on over the empty cells beside it, and stops
+  at the first that holds anything, as Excel does. The direction follows the alignment (a
+  right-aligned label runs back over its own label column); numbers do not spill; rich text does,
+  measured run by run. An edit re-renders rather than refreshing displays, since whether a neighbour
+  is empty is exactly what a spill depends on. GOTCHA found here: the off-screen twin used to
+  measure wrapped text was appended once and detached by the next render, after which every wrapped
+  cell measured zero high. The editor is laid OVER its cell (position:absolute, inset) rather than
+  sized by padding: a percentage height does not resolve inside a table cell, so height:100% left
+  the focus ring stopping short of the gridlines on any row taller than the text.
+- **Shape `<xdr:style>`**: a shape from Excel's gallery carries no fill or line of its own, only a
+  colour plus an INDEX into the theme's fillStyleLst / lnStyleLst, and a fontRef for its text. That
+  entry is usually a gradient of tints of the named colour. Ignoring it left every gallery shape
+  unfilled, which on a dark grid is an invisible button with unreadable text. Resolved now, with
+  DrawingML's lumMod / lumOff / tint / shade / satMod applied through HSL. APPROXIMATION: an SVG
+  fill is one colour, so the gradient's FIRST stop is taken rather than the gradient itself.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

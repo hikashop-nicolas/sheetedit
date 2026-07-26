@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 import { writeXlsx } from "./write";
 import { deleteXlsxShape } from "./shape-write";
@@ -37,6 +37,23 @@ describe("drawing shapes", () => {
     expect(sh[0].strokeWidth).toBe(2); // 19050 EMU / 9525
     expect(sh[0].text).toBe("Hi");
     expect(sh[0].anchor.fromCol).toBe(2); // B2
+  });
+
+  it("paints a gallery shape from its <xdr:style> theme references", () => {
+    // What Excel's shape gallery writes: no fill and no line of its own, only refs into the
+    // theme's format scheme. Ignoring them leaves the shape unfilled with unreadable text.
+    const styled = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:style><a:lnRef idx="1"><a:schemeClr val="accent3"/></a:lnRef><a:fillRef idx="2"><a:schemeClr val="accent3"/></a:fillRef><a:effectRef idx="1"><a:schemeClr val="accent3"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="dk1"/></a:fontRef></xdr:style><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>Go</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+    const theme = `<a:theme xmlns:a="${A}"><a:themeElements><a:clrScheme name="t"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="70AD47"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="A5A5A5"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fmtScheme name="f"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:gradFill><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:tint val="60000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:shade val="80000"/></a:schemeClr></a:gs></a:gsLst></a:gradFill></a:fillStyleLst><a:lnStyleLst><a:ln><a:solidFill><a:schemeClr val="phClr"><a:shade val="95000"/></a:schemeClr></a:solidFill></a:ln></a:lnStyleLst></a:fmtScheme></a:themeElements></a:theme>`;
+    const files = unzipSync(base(styled));
+    files["xl/theme/theme1.xml"] = strToU8(theme);
+    const sh = readWorkbook(zipSync(files)).sheets[0].shapes![0]!;
+    // fillRef idx 2 is the gradient; its first stop is accent3 lightened, so a pale green.
+    expect(sh.fill).toMatch(/^#[0-9a-f]{6}$/);
+    expect(sh.fill).not.toBe("#70ad47"); // transformed, not the raw accent
+    const lum = parseInt(sh.fill!.slice(3, 5), 16);
+    expect(lum, "the tint lightens it").toBeGreaterThan(0xad);
+    expect(sh.stroke).toBeDefined();
+    expect(sh.textColor).toBe("#000000"); // the fontRef's dk1
   });
 
   it("reads and authors the extended preset shapes (diamond / star / arrow)", () => {

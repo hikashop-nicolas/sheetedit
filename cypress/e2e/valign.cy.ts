@@ -5,7 +5,13 @@ function open(f: string) {
   cy.get("#file").selectFile(f, { force: true });
   cy.get(".sheetedit-table", { timeout: TIMEOUT }).should("exist");
 }
-const inTop = (ref: string) => cy.get(`input[aria-label="${ref}"]`).then(($e) => $e[0].getBoundingClientRect().top);
+// The editor covers its whole cell when the text is middle-aligned and shrinks to its own height
+// at the top or the bottom, so the box CENTRE is where the text actually sits; the box top is not.
+const inTop = (ref: string) =>
+  cy.get(`input[aria-label="${ref}"]`).then(($e) => {
+    const r = $e[0].getBoundingClientRect();
+    return r.top + r.height / 2;
+  });
 
 describe("vertical alignment", () => {
   it("aligns cell text top / middle / bottom within a tall row", () => {

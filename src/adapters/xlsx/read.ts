@@ -3,7 +3,7 @@ import { ensureCell, firstByLocal, formatNumber, key, noteExtent, numToStr, pars
 import { parseDxfs, readCondFormats } from "./condformat";
 import { readCharts } from "./chart-read";
 import { readImages } from "./image-read";
-import { readShapes } from "./shape-read";
+import { readShapes, readShapeStyleScheme } from "./shape-read";
 import { readSlicers } from "./slicer-read";
 import { readXlsxSlicerStyles } from "./slicer-style-read";
 import { readTimelines } from "./timeline-read";
@@ -376,6 +376,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const shared = readSharedStrings(files["xl/sharedStrings.xml"]);
   const theme = readTheme(files["xl/theme/theme1.xml"]);
   const themeMap = readThemeMap(files["xl/theme/theme1.xml"]);
+  const shapeStyles = readShapeStyleScheme(files["xl/theme/theme1.xml"]);
   wb.stylesDoc = files["xl/styles.xml"] ? parseXmlOpt(files["xl/styles.xml"]) : undefined;
   const styles = readXlsxStyles(wb.stylesDoc, theme);
   const dxfs = parseDxfs(wb.stylesDoc, theme);
@@ -534,7 +535,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       readComments(sheet, files, path);
       readCharts(sheet, files, path, themeMap);
       readImages(sheet, files, path);
-      readShapes(sheet, files, path, themeMap);
+      readShapes(sheet, files, path, themeMap, shapeStyles);
       readSparklines(sheet, doc);
     }
     wb.sheets.push(sheet);

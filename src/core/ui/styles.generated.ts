@@ -268,14 +268,16 @@ padding:3px 8px; text-align:center; user-select:none;
 .sheetedit-table td.frz { background:var(--sheetedit-cell-bg); }
 .sheetedit-table td.va-top { vertical-align:top; }
 .sheetedit-table td.va-bottom { vertical-align:bottom; }
-.sheetedit-table td.va-top > input, .sheetedit-table td.va-bottom > input { display:inline-block; height:auto; padding:2px 8px; }
+.sheetedit-table td.va-top > input { bottom:auto; height:auto; padding:2px 8px; }
+.sheetedit-table td.va-bottom > input { top:auto; height:auto; padding:2px 8px; }
 .sheetedit-colgrip { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:4; touch-action:none; }
 .sheetedit-rowgrip { position:absolute; left:0; bottom:-4px; width:100%; height:9px; cursor:row-resize; z-index:4; touch-action:none; }
 .sheetedit-colgrip:hover { box-shadow:inset -2px 0 0 0 var(--sheetedit-accent, #6e7bff); }
 .sheetedit-rowgrip:hover { box-shadow:inset 0 -2px 0 0 var(--sheetedit-accent, #6e7bff); }
+.sheetedit-table td { position:relative; }
 .sheetedit-table input {
-border:0; background:transparent; color:var(--sheetedit-cell-fg); font:inherit; padding:0 8px;
-width:100%; height:100%; box-sizing:border-box; outline:none;
+position:absolute; inset:0; border:0; background:transparent; color:var(--sheetedit-cell-fg);
+font:inherit; padding:0 8px; box-sizing:border-box; outline:none;
 }
 .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
 .sheetedit-table td.sheetedit-fillsrc { position:relative; }
