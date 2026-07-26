@@ -2,14 +2,14 @@ import {
   colToLetters, ensureCell, getCell, lettersToCol, numToStr, type Cell, type CellStyle,
   type Sheet, type StyleChange, type Workbook,
 } from "./model";
-import { setXlsxCellStyle } from "../adapters/xlsx/styles";
+import { clearXlsxCellStyle, setXlsxCellStyle } from "../adapters/xlsx/styles";
 import { setXlsxRowHidden } from "../adapters/xlsx/write";
-import { setOdsCellStyle } from "../adapters/ods/styles";
+import { clearOdsCellStyle, setOdsCellStyle } from "../adapters/ods/styles";
 import { setCellInput } from "./workbook";
 import { makeFormulaEvaluator } from "./recalc";
 import { canEditCell } from "./protection";
 import { filterHiddenRows, sortedPositions, sortRange, sortText, type SortKey } from "./range-ops";
-import { addSheet, deleteSheet, moveSheet, setSheetVisibility, sheetsEditable } from "./sheet-ops";
+import { addSheet, copySheet, deleteSheet, moveSheet, setSheetVisibility, sheetsEditable } from "./sheet-ops";
 import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "vbalang";
 
 // ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ export class RangeObject implements VbaObject {
     if (!s) throw new VbaError("that sheet no longer exists", 9);
     return s;
   }
-  private get first(): Rect {
+  get first(): Rect {
     const a = this.areas[0];
     if (!a) throw new VbaError("that range is empty", 1004);
     return a;
@@ -193,7 +193,7 @@ export class RangeObject implements VbaObject {
    * costs nothing. An explicitly written range is NOT clamped: `Range("A1:B2").Value = 7` has to
    * write all four cells even on an empty sheet.
    */
-  private clamped(rect: Rect): Rect {
+  clamped(rect: Rect): Rect {
     const sheet = this.sheet;
     return {
       r1: rect.r1, c1: rect.c1,
@@ -354,10 +354,9 @@ export class RangeObject implements VbaObject {
       case "worksheet": return new WorksheetObject(this.host, this.sheetIndex);
       case "specialcells": return this.specialCells(args);
       case "clearcontents": this.clearContents(); return EMPTY;
-      case "clear": case "clearformats":
-        // Only the contents part is modelled: there is no "reset to the default style" operation
-        // in sheetedit's style pools, and half-clearing would be worse than saying so.
-        throw new VbaError(`Range.${name} is not supported by sheetedit; use ClearContents`, 438);
+      case "clearformats": this.clearFormats(); return EMPTY;
+      // Clear takes the contents and the formatting together, as Excel does.
+      case "clear": this.clearContents(); this.clearFormats(); return EMPTY;
       case "select": {
         this.host.selection = { ...this.first };
         this.host.activeCell = { r: this.first.r1, c: this.first.c1 };
@@ -370,8 +369,10 @@ export class RangeObject implements VbaObject {
       case "find": return this.find(args, argNames);
       case "copy": case "cut": return this.copy(lower === "cut", args);
       case "pastespecial": case "paste": return this.paste();
-      case "replace": case "removeduplicates": case "texttocolumns": case "advancedfilter":
-        throw new VbaError(`Range.${name} is not supported by sheetedit yet`, 438);
+      case "replace": return this.replace(args, argNames);
+      case "removeduplicates": return this.removeDuplicates(args, argNames);
+      case "texttocolumns": return this.textToColumns(args, argNames);
+      case "advancedfilter": return this.advancedFilter(args, argNames);
       default:
         throw new VbaError(`Range.${name} is not supported by sheetedit`, 438);
     }
@@ -484,6 +485,19 @@ export class RangeObject implements VbaObject {
     }
   }
 
+  /** Take every cell back to the workbook's default formatting. */
+  private clearFormats(): void {
+    const sheet = this.sheet;
+    for (const { r, c } of this.cells()) {
+      const cell = getCell(sheet, r, c);
+      if (!cell || (!cell.style && !cell.cellStyle)) continue;
+      this.checkWritable(r, c);
+      this.host.onBeforeWrite?.(this.sheetIndex, r, c);
+      if (this.host.wb.kind === "ods") clearOdsCellStyle(cell);
+      else clearXlsxCellStyle(cell);
+    }
+  }
+
   private clearContents(): void {
     for (const { r, c } of this.cells()) {
       if (!getCell(this.sheet, r, c)) continue;
@@ -501,6 +515,207 @@ export class RangeObject implements VbaObject {
     sheet.merges = sheet.merges.filter((m) => !same(m));
     if (merge && (a.r1 !== a.r2 || a.c1 !== a.c2)) sheet.merges.push(a);
     this.host.onStructureChange?.();
+    return EMPTY;
+  }
+
+  /**
+   * Range.AdvancedFilter. The criteria range's first row names columns of this range; each
+   * following row is one set of conditions ANDed together, and the rows are ORed with each other,
+   * which is exactly how Excel reads it. Action is xlFilterInPlace (1), which hides the rows that
+   * do not match, or xlFilterCopy (2), which writes the matches at CopyToRange.
+   */
+  private advancedFilter(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const action = toNumber(namedArg(args, names, "Action", 0) ?? 1);
+    const criteriaArg = namedArg(args, names, "CriteriaRange", 1);
+    const unique = truthy(namedArg(args, names, "Unique", 3) ?? false);
+    const rect = this.clamped(this.first);
+    if (rect.r2 <= rect.r1) throw new VbaError("AdvancedFilter needs a range with a header row", 1004);
+
+    // Which column each header name refers to, so a criteria header can be matched to it.
+    const columnOf = new Map<string, number>();
+    for (let c = rect.c1; c <= rect.c2; c++) columnOf.set(sortText(this.sheet, rect.r1, c).toLowerCase(), c);
+
+    let tests: { col: number; op: string; operand: string }[][] = [];
+    if (criteriaArg instanceof RangeObject) {
+      const cr = criteriaArg.clamped(criteriaArg.first);
+      const crSheet = this.host.wb.sheets[criteriaArg.sheetIndex];
+      if (!crSheet) throw new VbaError("that sheet no longer exists", 9);
+      for (let r = cr.r1 + 1; r <= cr.r2; r++) {
+        const row: { col: number; op: string; operand: string }[] = [];
+        for (let c = cr.c1; c <= cr.c2; c++) {
+          const raw = sortText(crSheet, r, c);
+          if (!raw) continue; // a blank criterion cell places no condition
+          const header = sortText(crSheet, cr.r1, c).toLowerCase();
+          const col = columnOf.get(header);
+          if (col === undefined) throw new VbaError(`the criteria range names a column "${sortText(crSheet, cr.r1, c)}" the range does not have`, 1004);
+          const m = /^([<>]=?|<>|=)?(.*)$/.exec(raw)!;
+          row.push({ col, op: m[1] ?? "=", operand: m[2] ?? "" });
+        }
+        // A criteria row with nothing in it matches everything, as it does in Excel.
+        tests.push(row);
+      }
+    }
+    if (!tests.length) tests = [[]]; // no criteria range: every row qualifies
+
+    const matches = (r: number): boolean =>
+      tests.some((row) => row.every((t) => matchesCriterion(sortText(this.sheet, r, t.col), t.op, t.operand)));
+
+    const seen = new Set<string>();
+    const kept: number[] = [];
+    for (let r = rect.r1 + 1; r <= rect.r2; r++) {
+      if (!matches(r)) continue;
+      if (unique) {
+        const key = [];
+        for (let c = rect.c1; c <= rect.c2; c++) key.push(sortText(this.sheet, r, c));
+        const sig = key.join("\u0000");
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+      }
+      kept.push(r);
+    }
+
+    if (action === 2) {
+      const to = namedArg(args, names, "CopyToRange", 2);
+      if (!(to instanceof RangeObject)) throw new VbaError("xlFilterCopy needs a CopyToRange", 1004);
+      const dest = to.first;
+      const target = this.host.wb.sheets[to.sheetIndex];
+      if (!target) throw new VbaError("that sheet no longer exists", 9);
+      const write = (dr: number, from: number): void => {
+        for (let c = rect.c1; c <= rect.c2; c++) {
+          const r = dest.r1 + dr, dc = dest.c1 + (c - rect.c1);
+          if (!canEditCell(target, r, dc)) throw new VbaError(`${target.name}!${a1(r, dc, false)} is locked on a protected sheet`, 1004);
+          this.host.onBeforeWrite?.(to.sheetIndex, r, dc);
+          const cell = getCell(this.sheet, from, c);
+          setCellInput(target, r, dc, cell?.formula != null ? `=${cell.formula}` : cell?.value ?? "");
+        }
+      };
+      write(0, rect.r1); // the header goes across too
+      kept.forEach((r, i) => write(i + 1, r));
+      return EMPTY;
+    }
+
+    // In place: hide what did not qualify, through the same set the grid's own filter uses.
+    const hidden = new Set<number>();
+    for (let r = rect.r1 + 1; r <= rect.r2; r++) if (!kept.includes(r)) hidden.add(r);
+    const sheet = this.sheet;
+    if (this.host.wb.kind === "xlsx") {
+      for (let r = rect.r1 + 1; r <= rect.r2; r++) {
+        const was = sheet.filterHidden?.has(r) ?? false;
+        if (hidden.has(r) !== was) setXlsxRowHidden(sheet, r, hidden.has(r));
+      }
+    }
+    sheet.filterHidden = hidden.size ? hidden : undefined;
+    if (this.host.wb.kind === "ods") sheet.odsDirty = true;
+    this.host.onStructureChange?.();
+    return EMPTY;
+  }
+
+  /**
+   * Range.Replace, which rewrites matching text in place. Returns True when anything changed, as
+   * Excel does, so `If Not rng.Replace(...) Then` behaves.
+   */
+  private replace(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const what = namedArg(args, names, "What", 0);
+    if (what === undefined) throw new VbaError("Replace needs something to look for", 1004);
+    const needle = toStr(what);
+    if (!needle) throw new VbaError("Replace needs something to look for", 1004);
+    const with_ = toStr(namedArg(args, names, "Replacement", 1) ?? "");
+    const whole = toNumber(namedArg(args, names, "LookAt", 2) ?? 2) === 1; // xlWhole = 1
+    const caseSensitive = truthy(namedArg(args, names, "MatchCase", 4) ?? false);
+    let changed = false;
+    for (const { r, c } of this.cells()) {
+      const cell = getCell(this.sheet, r, c);
+      // A formula's text is what Excel replaces in, and the result stays a formula.
+      const text = cell?.formula != null ? `=${cell.formula}` : cell?.value ?? "";
+      if (!text) continue;
+      const next = whole
+        ? (equalsText(text, needle, caseSensitive) ? with_ : text)
+        : replaceAll(text, needle, with_, caseSensitive);
+      if (next === text) continue;
+      this.checkWritable(r, c);
+      this.host.onBeforeWrite?.(this.sheetIndex, r, c);
+      setCellInput(this.sheet, r, c, next);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Range.RemoveDuplicates. Rows whose key columns repeat an earlier row are dropped and the rest
+   * pulled up, which is what Excel does: the range keeps its size and empties out at the bottom.
+   */
+  private removeDuplicates(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const rect = this.clamped(this.first);
+    const header = toNumber(namedArg(args, names, "Header", 1) ?? 2) === 1; // xlYes = 1
+    const columnsArg = namedArg(args, names, "Columns", 0);
+    // Columns are 1-based WITHIN the range. Absent means every column takes part.
+    const given: VbaValue[] = columnsArg === undefined ? []
+      : columnsArg instanceof VbaArray ? columnsArg.values() : [columnsArg];
+    const offsets = given.length
+      ? given.map((v) => toNumber(v) - 1)
+      : Array.from({ length: rect.c2 - rect.c1 + 1 }, (_v, i) => i);
+    const cols = offsets.map((o) => rect.c1 + o);
+    if (cols.some((c) => c < rect.c1 || c > rect.c2)) throw new VbaError("a RemoveDuplicates column is outside the range", 1004);
+
+    const r0 = rect.r1 + (header ? 1 : 0);
+    const seen = new Set<string>();
+    const keep: string[][] = [];
+    for (let r = r0; r <= rect.r2; r++) {
+      const key = cols.map((c) => sortText(this.sheet, r, c)).join("\u0000");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const row: string[] = [];
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        const cell = getCell(this.sheet, r, c);
+        row.push(cell?.formula != null ? `=${cell.formula}` : cell?.value ?? "");
+      }
+      keep.push(row);
+    }
+    for (let r = r0; r <= rect.r2; r++) {
+      const row = keep[r - r0];
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        this.checkWritable(r, c);
+        this.host.onBeforeWrite?.(this.sheetIndex, r, c);
+        setCellInput(this.sheet, r, c, row ? row[c - rect.c1] ?? "" : "");
+      }
+    }
+    return EMPTY;
+  }
+
+  /**
+   * Range.TextToColumns, delimited only. The fixed-width form needs a FieldInfo list of column
+   * starts that has no meaning without Excel's own text measuring, so it refuses rather than
+   * splitting somewhere else.
+   */
+  private textToColumns(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    // xlDelimited = 1, xlFixedWidth = 2.
+    const kind = toNumber(namedArg(args, names, "DataType", 1) ?? 1);
+    if (kind === 2) throw new VbaError("TextToColumns cannot split on fixed widths in sheetedit", 438);
+    const flag = (n: string, at: number): boolean => truthy(namedArg(args, names, n, at) ?? false);
+    const delimiters: string[] = [];
+    if (flag("Tab", 3)) delimiters.push("\t");
+    if (flag("Semicolon", 4)) delimiters.push(";");
+    if (flag("Comma", 5)) delimiters.push(",");
+    if (flag("Space", 6)) delimiters.push(" ");
+    const other = namedArg(args, names, "OtherChar", 8);
+    if (flag("Other", 7) && other !== undefined) delimiters.push(toStr(other));
+    if (!delimiters.length) throw new VbaError("TextToColumns needs at least one delimiter", 1004);
+
+    const destArg = namedArg(args, names, "Destination", 0);
+    const dest = destArg instanceof RangeObject ? destArg.first : this.first;
+    const destSheet = destArg instanceof RangeObject ? destArg.sheetIndex : this.sheetIndex;
+    const a = this.clamped(this.first);
+    // Excel splits the FIRST column of the range, row by row.
+    const rows: string[][] = [];
+    for (let r = a.r1; r <= a.r2; r++) rows.push(splitOn(sortText(this.sheet, r, a.c1), delimiters));
+    const target = this.host.wb.sheets[destSheet];
+    if (!target) throw new VbaError("that sheet no longer exists", 9);
+    rows.forEach((parts, i) => parts.forEach((text, j) => {
+      const r = dest.r1 + i, c = dest.c1 + j;
+      if (!canEditCell(target, r, c)) throw new VbaError(`${target.name}!${a1(r, c, false)} is locked on a protected sheet`, 1004);
+      this.host.onBeforeWrite?.(destSheet, r, c);
+      setCellInput(target, r, c, text);
+    }));
     return EMPTY;
   }
 
@@ -837,8 +1052,20 @@ export class WorksheetObject implements VbaObject {
         this.host.print(this.index);
         return EMPTY;
       }
-      case "copy": case "exportasfixedformat":
-        throw new VbaError(`Worksheet.${name} is not supported by sheetedit yet`, 438);
+      case "copy": {
+        if (!sheetsEditable(this.host.wb)) throw new VbaError("sheets cannot be copied in this format", 1004);
+        const to = this.destinationIndex(args, argNames);
+        // Copy with neither Before nor After makes a NEW WORKBOOK in Excel, which a page cannot do.
+        if (to === undefined) throw new VbaError("Copy needs a Before or After sheet: sheetedit cannot open a new workbook", 1004);
+        const at = copySheet(this.host.wb, this.index);
+        moveSheet(this.host.wb, at, Math.min(to, this.host.wb.sheets.length - 1));
+        this.host.activeSheet = Math.min(to, this.host.wb.sheets.length - 1);
+        this.host.onStructureChange?.();
+        return EMPTY;
+      }
+      case "exportasfixedformat":
+        // A browser can only reach a PDF through the print dialog, where the user chooses it.
+        throw new VbaError("sheetedit cannot export a PDF from a macro; PrintOut opens the print dialog instead", 1004);
       default:
         throw new VbaError(`Worksheet.${name} is not supported by sheetedit`, 438);
     }
@@ -1029,6 +1256,8 @@ export const XL_CONSTANTS: Record<string, number> = {
   XLVALUES: -4163, XLFORMULAS: -4123, XLWHOLE: 1, XLPART: 2,
   XLBYROWS: 1, XLBYCOLUMNS: 2, XLNEXT: 1, XLPREVIOUS: 2,
   XLASCENDING: 1, XLDESCENDING: 2, XLYES: 1, XLNO: 2, XLGUESS: 0,
+  XLDELIMITED: 1, XLFIXEDWIDTH: 2,
+  XLFILTERINPLACE: 1, XLFILTERCOPY: 2,
   XLEDGETOP: 8, XLEDGEBOTTOM: 9, XLEDGELEFT: 7, XLEDGERIGHT: 10,
   XLTHIN: 2, XLMEDIUM: -4138, XLTHICK: 4, XLCONTINUOUS: 1,
   XLLEFT: -4131, XLRIGHT: -4152, XLCENTER: -4108, XLTOP: -4160, XLBOTTOM: -4107,
@@ -1110,4 +1339,30 @@ function matchesCriterion(text: string, op: string, operand: string): boolean {
     case "<=": return numeric ? n <= m : text <= operand;
     default: throw new VbaError(`AutoFilter criterion "${op}${operand}" is not supported by sheetedit`, 1004);
   }
+}
+
+const equalsText = (a: string, b: string, caseSensitive: boolean): boolean =>
+  caseSensitive ? a === b : a.toLowerCase() === b.toLowerCase();
+
+/** Replace every occurrence, honouring case-insensitivity without a regex over user text. */
+function replaceAll(text: string, needle: string, with_: string, caseSensitive: boolean): string {
+  if (caseSensitive) return text.split(needle).join(with_);
+  const hay = text.toLowerCase(), find = needle.toLowerCase();
+  let out = "", at = 0;
+  for (;;) {
+    const i = hay.indexOf(find, at);
+    if (i < 0) return out + text.slice(at);
+    out += text.slice(at, i) + with_;
+    at = i + needle.length;
+  }
+}
+
+/** Split on any of several delimiters, which is how TextToColumns takes its flags. */
+function splitOn(text: string, delimiters: string[]): string[] {
+  let parts = [text];
+  for (const d of delimiters) {
+    if (!d) continue;
+    parts = parts.flatMap((p) => p.split(d));
+  }
+  return parts;
 }

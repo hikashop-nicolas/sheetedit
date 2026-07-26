@@ -280,3 +280,10 @@ export function setOdsSheetHidden(doc: Document, table: Element, hidden: boolean
   props.setAttributeNS(ODS.table, "table:display", hidden ? "false" : "true");
   table.setAttributeNS(ODS.table, "table:style-name", internOdsStyle(doc, autoStyles, "table", "ta", style));
 }
+
+/** Reset a cell to the default formatting. The writer drops table:style-name when there is none. */
+export function clearOdsCellStyle(cell: Cell): void {
+  cell.style = undefined;
+  cell.cellStyle = undefined;
+  cell.edited = true;
+}

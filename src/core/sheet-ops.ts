@@ -1,4 +1,4 @@
-import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "./model";
+import { parseXmlOpt, serializeXml, type Cell, type Sheet, type Workbook } from "./model";
 import { createWorksheet, uniqueSheetName } from "../adapters/xlsx/sheet-create";
 import { setOdsSheetHidden } from "../adapters/ods/styles";
 
@@ -49,6 +49,43 @@ export function addSheet(wb: Workbook, base = "Sheet"): number {
   else if (wb.kind === "ods") createOdsTable(wb, name);
   else throw new Error("this file type has no sheets");
   return wb.sheets.length - 1;
+}
+
+/**
+ * Duplicate a sheet's contents into a new one and return its index. Cells (values, formulas,
+ * number formats and their style index, which points at the workbook-wide pool either way), column
+ * widths, row heights, merges and print setup come across.
+ *
+ * What does NOT: the drawing layer (charts, images, shapes, controls) and anything else living in
+ * its own part, because each of those needs its part copied and re-registered, and a half-copied
+ * drawing is worse than an absent one. A copy is a copy of the grid.
+ */
+export function copySheet(wb: Workbook, index: number): number {
+  const src = wb.sheets[index];
+  if (!src) throw new Error("no such sheet");
+  const at = addSheet(wb, src.name);
+  const dst = wb.sheets[at];
+  if (!dst) throw new Error("the copy could not be created");
+  for (const cell of src.cells.values()) {
+    const copy: Cell = {
+      row: cell.row, col: cell.col, value: cell.value, kind: cell.kind,
+      display: cell.display, formula: cell.formula, numFmt: cell.numFmt, style: cell.style,
+      cellStyle: cell.cellStyle, edited: true, fDirty: cell.formula != null, numFmtDirty: cell.numFmt != null,
+    };
+    dst.cells.set(`${cell.row}:${cell.col}`, copy);
+  }
+  dst.maxRow = src.maxRow;
+  dst.maxCol = src.maxCol;
+  if (src.colWidths) dst.colWidths = new Map(src.colWidths);
+  if (src.rowHeights) dst.rowHeights = new Map(src.rowHeights);
+  if (src.hiddenRows) dst.hiddenRows = new Set(src.hiddenRows);
+  if (src.hiddenCols) dst.hiddenCols = new Set(src.hiddenCols);
+  if (src.merges) dst.merges = src.merges.map((m) => ({ ...m }));
+  if (src.printSetup) dst.printSetup = { ...src.printSetup };
+  if (src.autoFilter) dst.autoFilter = { ...src.autoFilter };
+  dst.outlineDirty = true;
+  if (wb.kind === "ods") dst.odsDirty = true;
+  return at;
 }
 
 /** Rename the sheet at `index`; returns the applied (deduped) name. */

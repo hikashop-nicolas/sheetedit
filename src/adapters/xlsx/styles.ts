@@ -267,3 +267,15 @@ export function setXlsxCellNumFmt(wb: Workbook, sheet: Sheet, cell: Cell, fmt: s
   cell.edited = true;
   wb.stylesDirty = true;
 }
+
+/**
+ * Reset a cell to the workbook's default formatting, which is what ClearFormats means. There is no
+ * StyleChange that expresses "none": the setter merges with what is already there, so the style
+ * index is dropped instead, taking the cell back to xf 0.
+ */
+export function clearXlsxCellStyle(cell: Cell): void {
+  cell.el?.removeAttribute("s");
+  cell.style = undefined;
+  cell.cellStyle = undefined;
+  cell.edited = true;
+}

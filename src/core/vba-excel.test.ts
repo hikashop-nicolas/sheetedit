@@ -313,7 +313,7 @@ describe("what is not modelled", () => {
     const wb = bareWorkbook([[1]]);
     const cases: [string, RegExp][] = [
       ['Range("A1").PivotTable', /Range.PivotTable is not supported/],
-      ['Range("A1").RemoveDuplicates', /Range.RemoveDuplicates is not supported by sheetedit yet/],
+      ["ActiveSheet.ExportAsFixedFormat", /cannot export a PDF from a macro/],
       ['Range("A1").FormulaR1C1 = "=RC[-1]"', /FormulaR1C1 is not supported/],
       ['Range("A1").Font.Shadow = True', /Font.Shadow is not supported/],
     ];
@@ -676,5 +676,236 @@ describe("Worksheet.Move and PrintOut", () => {
     run("Worksheets(2).PrintOut", wb, { print: (i) => printed.push(i) });
     expect(printed).toEqual([1]);
     expect(() => run("Worksheets(2).PrintOut", three())).toThrow(/printing is not available/);
+  });
+});
+
+describe("Range.Replace", () => {
+  const data = (): Workbook => bareWorkbook([["one two", "TWO"], ["two", 2]]);
+
+  it("rewrites every occurrence and reports that it changed something", () => {
+    const wb = data();
+    expect(evalIn('Range("A1:B2").Replace("two", "2")', wb)).toBe(true);
+    expect([at(wb, 1, 1), at(wb, 1, 2), at(wb, 2, 1)]).toEqual(["one 2", "2", "2"]);
+  });
+
+  it("ignores case unless MatchCase says not to", () => {
+    const wb = data();
+    run('Range("A1:B2").Replace What:="two", Replacement:="x", MatchCase:=True', wb);
+    expect([at(wb, 1, 1), at(wb, 1, 2)]).toEqual(["one x", "TWO"]);
+  });
+
+  it("matches the whole cell on xlWhole", () => {
+    const wb = data();
+    run('Range("A1:B2").Replace What:="two", Replacement:="x", LookAt:=xlWhole', wb);
+    expect([at(wb, 1, 1), at(wb, 2, 1)]).toEqual(["one two", "x"]);
+  });
+
+  it("says nothing changed when nothing matched", () => {
+    expect(evalIn('Range("A1:B2").Replace("zzz", "x")', data())).toBe(false);
+  });
+
+  it("replaces inside a formula, and it stays a formula", () => {
+    const wb = bareWorkbook([[1], [2]]);
+    run('Range("C1").Formula = "=A1+A2"\nRange("C1").Replace "A1", "A2"', wb);
+    expect(getCell(wb.sheets[0]!, 1, 3)?.formula).toBe("A2+A2");
+  });
+});
+
+describe("Range.RemoveDuplicates", () => {
+  it("drops repeated rows and pulls the rest up", () => {
+    const wb = bareWorkbook([["a", 1], ["b", 2], ["a", 1], ["c", 3]]);
+    run('Range("A1:B4").RemoveDuplicates', wb);
+    expect([at(wb, 1, 1), at(wb, 2, 1), at(wb, 3, 1), at(wb, 4, 1)]).toEqual(["a", "b", "c", ""]);
+  });
+
+  it("compares only the key columns it is given", () => {
+    const wb = bareWorkbook([["a", 1], ["a", 2], ["b", 3]]);
+    run('Range("A1:B3").RemoveDuplicates Columns:=1', wb);
+    // Row 2 repeats "a" in the key column even though its second column differs.
+    expect([at(wb, 1, 1), at(wb, 2, 1), at(wb, 3, 1)]).toEqual(["a", "b", ""]);
+  });
+
+  it("keeps the header row when told there is one", () => {
+    const wb = bareWorkbook([["Name"], ["a"], ["a"]]);
+    run('Range("A1:A3").RemoveDuplicates Columns:=1, Header:=xlYes', wb);
+    expect([at(wb, 1, 1), at(wb, 2, 1), at(wb, 3, 1)]).toEqual(["Name", "a", ""]);
+  });
+
+  it("stops on a key column outside the range", () => {
+    expect(() => run('Range("A1:B2").RemoveDuplicates Columns:=5', bareWorkbook([["a", 1], ["a", 1]])))
+      .toThrow(/outside the range/);
+  });
+});
+
+describe("Range.TextToColumns", () => {
+  it("splits the first column on a delimiter, in place", () => {
+    const wb = bareWorkbook([["a,b,c"], ["d,e,f"]]);
+    run('Range("A1:A2").TextToColumns Comma:=True', wb);
+    expect([at(wb, 1, 1), at(wb, 1, 2), at(wb, 1, 3)]).toEqual(["a", "b", "c"]);
+    expect([at(wb, 2, 1), at(wb, 2, 2), at(wb, 2, 3)]).toEqual(["d", "e", "f"]);
+  });
+
+  it("writes to a Destination when given one", () => {
+    const wb = bareWorkbook([["a;b"]]);
+    run('Range("A1").TextToColumns Destination:=Range("C5"), Semicolon:=True', wb);
+    expect([at(wb, 5, 3), at(wb, 5, 4)]).toEqual(["a", "b"]);
+    expect(at(wb, 1, 1)).toBe("a;b"); // the source is left alone
+  });
+
+  it("takes several delimiters at once", () => {
+    const wb = bareWorkbook([["a,b;c"]]);
+    run('Range("A1").TextToColumns Comma:=True, Semicolon:=True', wb);
+    expect([at(wb, 1, 1), at(wb, 1, 2), at(wb, 1, 3)]).toEqual(["a", "b", "c"]);
+  });
+
+  it("refuses fixed width rather than splitting somewhere of its own choosing", () => {
+    expect(() => run('Range("A1").TextToColumns DataType:=xlFixedWidth', bareWorkbook([["ab"]])))
+      .toThrow(/fixed widths/);
+  });
+
+  it("stops when no delimiter was named", () => {
+    expect(() => run('Range("A1").TextToColumns', bareWorkbook([["a,b"]]))).toThrow(/at least one delimiter/);
+  });
+});
+
+describe("Range.AdvancedFilter", () => {
+  // A1:B4 is the data with a header row; D1:E3 is the criteria range, also with a header row.
+  const data = (): Workbook => bareWorkbook([
+    ["Fruit", "Qty", "", "Fruit", "Qty"],
+    ["apple", 5, "", "apple", ""],
+    ["pear", 2, "", "", ">4"],
+    ["apple", 9],
+  ]);
+
+  it("hides the rows that fail the criteria, in place", () => {
+    const wb = data();
+    // Two criteria rows: Fruit = apple, OR Qty > 4. Row 3 (pear, 2) fails both.
+    run('Range("A1:B4").AdvancedFilter Action:=xlFilterInPlace, CriteriaRange:=Range("D1:E3")', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []]).toEqual([3]);
+  });
+
+  it("ANDs the cells of one criteria row", () => {
+    const wb = bareWorkbook([
+      ["Fruit", "Qty", "", "Fruit", "Qty"],
+      ["apple", 5, "", "apple", ">6"],
+      ["apple", 9],
+      ["pear", 9],
+    ]);
+    // One row: Fruit = apple AND Qty > 6. Only row 3 qualifies.
+    run('Range("A1:B4").AdvancedFilter Action:=xlFilterInPlace, CriteriaRange:=Range("D1:E2")', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []].sort((a, b) => a - b)).toEqual([2, 4]);
+  });
+
+  it("copies the matches, header and all, to CopyToRange", () => {
+    const wb = data();
+    run('Range("A1:B4").AdvancedFilter Action:=xlFilterCopy, CriteriaRange:=Range("D1:E3"), CopyToRange:=Range("A10")', wb);
+    expect([at(wb, 10, 1), at(wb, 10, 2)]).toEqual(["Fruit", "Qty"]);
+    expect([at(wb, 11, 1), at(wb, 12, 1)]).toEqual(["apple", "apple"]);
+    expect(at(wb, 13, 1)).toBeUndefined(); // a copy writes its rows and stops; it clears no tail
+    expect(wb.sheets[0]!.filterHidden).toBeUndefined(); // a copy hides nothing
+  });
+
+  it("drops repeats when asked for unique rows only", () => {
+    const wb = bareWorkbook([["Fruit"], ["apple"], ["apple"], ["pear"]]);
+    run('Range("A1:A4").AdvancedFilter Action:=xlFilterCopy, CopyToRange:=Range("C1"), Unique:=True', wb);
+    expect([at(wb, 1, 3), at(wb, 2, 3), at(wb, 3, 3)]).toEqual(["Fruit", "apple", "pear"]);
+    expect(at(wb, 4, 3)).toBeUndefined();
+  });
+
+  it("keeps every row when there is no criteria range at all", () => {
+    const wb = data();
+    run('Range("A1:B4").AdvancedFilter Action:=xlFilterInPlace', wb);
+    expect(wb.sheets[0]!.filterHidden).toBeUndefined();
+  });
+
+  it("stops when the criteria name a column the range does not have", () => {
+    const wb = bareWorkbook([["Fruit", "", "Colour"], ["apple", "", "red"]]);
+    expect(() => run('Range("A1:A2").AdvancedFilter Action:=xlFilterInPlace, CriteriaRange:=Range("C1:C2")', wb))
+      .toThrow(/does not have/);
+  });
+
+  it("stops when a copy has nowhere to go", () => {
+    expect(() => run('Range("A1:B4").AdvancedFilter Action:=xlFilterCopy', data())).toThrow(/needs a CopyToRange/);
+  });
+});
+
+describe("Range.Clear and ClearFormats", () => {
+  const styled = (): Workbook => {
+    const wb = readWorkbook(makeXlsx(), "book.xlsx");
+    run('Range("A1").Value = 5\nRange("A1").Font.Bold = True\nRange("A1").Interior.Color = &HFF0000', wb);
+    return wb;
+  };
+
+  it("ClearFormats takes the styling off and leaves the value", () => {
+    const wb = styled();
+    expect(getCell(wb.sheets[0]!, 1, 1)?.cellStyle?.bold).toBe(true);
+    run('Range("A1").ClearFormats', wb);
+    const cell = getCell(wb.sheets[0]!, 1, 1)!;
+    expect(cell.cellStyle).toBeUndefined();
+    expect(cell.style).toBeUndefined();
+    expect(cell.value).toBe("5");
+  });
+
+  it("Clear takes both", () => {
+    const wb = styled();
+    run('Range("A1").Clear', wb);
+    const cell = getCell(wb.sheets[0]!, 1, 1)!;
+    expect(cell.cellStyle).toBeUndefined();
+    expect(cell.value).toBe("");
+  });
+
+  it("drops the style index from the file, not only from the model", async () => {
+    const { writeWorkbook } = await import("./workbook");
+    const { strFromU8, unzipSync } = await import("fflate");
+    const wb = styled();
+    expect(strFromU8(unzipSync(writeWorkbook(wb))["xl/worksheets/sheet1.xml"]!)).toMatch(/<c r="A1"[^>]*\ss="/);
+    run('Range("A1").ClearFormats', wb);
+    expect(strFromU8(unzipSync(writeWorkbook(wb))["xl/worksheets/sheet1.xml"]!)).not.toMatch(/<c r="A1"[^>]*\ss="/);
+  });
+});
+
+describe("Worksheet.Copy", () => {
+  const book = (): Workbook => {
+    const wb = readWorkbook(makeXlsx(), "book.xlsx");
+    run('Range("A1").Value = 7\nRange("B2").Formula = "=A1*2"\nRange("A1").Font.Bold = True', wb);
+    return wb;
+  };
+
+  it("duplicates the grid next to the original", () => {
+    const wb = book();
+    run("Worksheets(1).Copy After:=Worksheets(1)", wb);
+    expect(wb.sheets).toHaveLength(2);
+    const copy = wb.sheets[1]!;
+    expect(getCell(copy, 1, 1)?.value).toBe("7");
+    expect(getCell(copy, 2, 2)?.formula).toBe("A1*2");
+    expect(getCell(copy, 1, 1)?.cellStyle?.bold).toBe(true);
+  });
+
+  it("gives the copy its own cells, so editing one leaves the other alone", () => {
+    const wb = book();
+    run("Worksheets(1).Copy After:=Worksheets(1)", wb);
+    run('Worksheets(2).Range("A1").Value = 99', wb);
+    expect(getCell(wb.sheets[0]!, 1, 1)?.value).toBe("7");
+    expect(getCell(wb.sheets[1]!, 1, 1)?.value).toBe("99");
+  });
+
+  it("puts it before when told Before", () => {
+    const wb = book();
+    const original = wb.sheets[0]!.name;
+    run("Worksheets(1).Copy Before:=Worksheets(1)", wb);
+    expect(wb.sheets[1]!.name).toBe(original);
+  });
+
+  it("survives a save and re-read", async () => {
+    const { writeWorkbook } = await import("./workbook");
+    const wb = book();
+    run("Worksheets(1).Copy After:=Worksheets(1)", wb);
+    const back = readWorkbook(writeWorkbook(wb), "book.xlsx");
+    expect(back.sheets).toHaveLength(2);
+    expect(getCell(back.sheets[1]!, 1, 1)?.value).toBe("7");
+  });
+
+  it("refuses the no-argument form, which makes a new workbook in Excel", () => {
+    expect(() => run("Worksheets(1).Copy", book())).toThrow(/cannot open a new workbook/);
   });
 });

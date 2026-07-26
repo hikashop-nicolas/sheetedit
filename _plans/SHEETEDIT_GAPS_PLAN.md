@@ -274,6 +274,16 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
 - **Preserved-only**: ActiveX (Windows COM in a .bin part; carried through a save, never rendered).
+- **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
+  Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
+  (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element
+  parses fine and LibreOffice ignores it entirely. Sheets share table styles, so hiding one clones
+  its style rather than editing it, or its neighbours vanish too. Both directions LibreOffice-verified.
+- **What a macro still cannot do**: Worksheet.ExportAsFixedFormat (a browser reaches a PDF only
+  through the print dialog, where the user chooses it), Worksheet.Copy with no Before/After (that
+  makes a new workbook in Excel), Workbook.Save/SaveAs/Close, and anything reaching outside the
+  page. Worksheet.Copy copies the grid, not the drawing layer: a chart or image needs its own part
+  copied and re-registered, and a half-copied drawing is worse than an absent one.
 - **Form controls** are read, rendered and interactive: the linked cell is the point, so a checkbox
   writes TRUE/FALSE there, a dropdown the 1-based index, a spinner its value, each triggering a
   recalc. State is read from ctrlProps with the VML as fallback (files predating ctrlProps have only
