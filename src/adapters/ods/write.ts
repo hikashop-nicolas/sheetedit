@@ -5,6 +5,7 @@ import { ODS, a1ToOdf } from "./shared";
 import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } from "./styles";
 import { writeOdsFreezes } from "./freeze-write";
 import { writeOdsProtections } from "./protection-write";
+import { writeOdsPrintSetups } from "./print-write";
 // ---------------------------------------------------------------------------
 // ods write: cell/row emission and the save pass
 // ---------------------------------------------------------------------------
@@ -598,6 +599,7 @@ export function setOdsMerge(sheet: Sheet, r1: number, c1: number, r2: number, c2
 export function writeOds(wb: Workbook): void {
   writeOdsFreezes(wb); // frozen panes live in settings.xml, not content.xml
   writeOdsProtections(wb); // sheet / workbook protection lives on the table elements
+  writeOdsPrintSetups(wb); // page setup spans styles.xml (layout + master) and the table itself
   const doc = wb.contentDoc!;
   for (const sheet of wb.sheets) {
     const table = sheet.tableEl;

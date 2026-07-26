@@ -20,6 +20,7 @@ import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
+import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -335,6 +336,15 @@ export function injectStyles(): void {
     .sheetedit-notice[hidden] { display:none; }
     /* A locked cell on a protected sheet: still selectable and copyable, just not typeable. */
     .sheetedit-grid td.locked > input { cursor:default; }
+    /* Page breaks and the print area, drawn as cell borders rather than an overlay: they then
+       follow scrolling, virtualization and split panes for free. */
+    .sheetedit-grid td.pgbrk-top, .sheetedit-grid th.pgbrk-top { border-top:2px dashed #4f7bd6 !important; }
+    .sheetedit-grid td.pgbrk-left, .sheetedit-grid th.pgbrk-left { border-left:2px dashed #4f7bd6 !important; }
+    .sheetedit-grid td.pa-top { border-top:2px solid #2f6f3f !important; }
+    .sheetedit-grid td.pa-bottom { border-bottom:2px solid #2f6f3f !important; }
+    .sheetedit-grid td.pa-left { border-left:2px solid #2f6f3f !important; }
+    .sheetedit-grid td.pa-right { border-right:2px solid #2f6f3f !important; }
+    .sheetedit-grid td.pa-out { background-image:linear-gradient(rgba(120,120,130,.10), rgba(120,120,130,.10)); }
     .sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
     .sheetedit-tab {
       font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-bottom:none;
@@ -497,6 +507,29 @@ export function createSheetEditor(
   let active = 0;
   let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
   let sparkAt = new Map<string, NonNullable<Sheet["sparklines"]>[number]>(); // host cell -> sparkline, per render
+  // Print decoration for the active sheet, per render: the lines that start a page and the print
+  // area, so a cell can be marked without re-scanning the setup for every one of them.
+  let brkRows = new Set<number>();
+  let brkCols = new Set<number>();
+  let printAreas: { r1: number; c1: number; r2: number; c2: number }[] = [];
+  /** Border classes for a cell that sits on a page break or a print-area edge. */
+  const markPrintEdges = (td: HTMLElement, sheet: Sheet, r: number, c: number): void => {
+    if (brkRows.has(r)) td.classList.add("pgbrk-top");
+    if (brkCols.has(c)) td.classList.add("pgbrk-left");
+    if (!printAreas.length) return;
+    let inside = false;
+    for (const a of printAreas) {
+      if (r < a.r1 || r > a.r2 || c < a.c1 || c > a.c2) continue;
+      inside = true;
+      if (r === a.r1) td.classList.add("pa-top");
+      if (r === a.r2) td.classList.add("pa-bottom");
+      if (c === a.c1) td.classList.add("pa-left");
+      if (c === a.c2) td.classList.add("pa-right");
+    }
+    // Shade what would not be printed, but only within the used range: tinting the empty grid to
+    // the right of a small print area would read as a rendering fault.
+    if (!inside && r <= sheet.maxRow && c <= sheet.maxCol) td.classList.add("pa-out");
+  };
   /** The pane the user last pointed at; a split shows some cells twice and this picks the copy
       they are actually working in. */
   let lastPane: Pane | null = null;
@@ -1499,6 +1532,83 @@ export function createSheetEditor(
     });
   };
 
+  // --- print setup -------------------------------------------------------------
+  /** Change the active sheet's page setup and flag it for the writer. */
+  const updatePrint = (change: (p: PrintSetup) => void): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const p: PrintSetup = { ...(sheet.printSetup ?? {}) };
+    change(p);
+    sheet.printSetup = p;
+    sheet.printDirty = true;
+    mark();
+    renderGrid();
+  };
+  const MARGIN_PRESETS: Record<string, PrintSetup["margins"]> = {
+    narrow: { left: 0.25, right: 0.25, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    normal: { ...DEFAULT_MARGINS },
+    wide: { left: 1, right: 1, top: 1, bottom: 1, header: 0.5, footer: 0.5 },
+  };
+  /** Which preset the current margins match, for pre-selecting the dropdown. */
+  const marginPresetName = (m: PrintSetup["margins"]): string => {
+    for (const [name, preset] of Object.entries(MARGIN_PRESETS))
+      if (m && preset && (["left", "right", "top", "bottom", "header", "footer"] as const).every((k) => Math.abs(m[k] - preset[k]) < 0.001)) return name;
+    return "normal";
+  };
+  const openPrintDialog = (): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const p = sheet.printSetup ?? {};
+    const scaling = p.fitToPage && (p.fitToWidth || p.fitToHeight) ? "fit" : p.scale != null && p.scale !== 100 ? "percent" : "none";
+    const fields: FormField[] = [
+      { key: "note", label: t("printNoPrinting"), type: "note" },
+      { key: "orientation", label: t("printOrientation"), type: "select", value: p.orientation ?? "portrait", options: [
+        { value: "portrait", label: t("printPortrait") },
+        { value: "landscape", label: t("printLandscape") },
+      ] },
+      { key: "paper", label: t("printPaper"), type: "select", value: String(p.paperSize ?? DEFAULT_PAPER), options: Object.entries(PAPER_SIZES).map(([id, s]) => ({ value: id, label: s.name })) },
+      { key: "scaling", label: t("printScaling"), type: "select", value: scaling, options: [
+        { value: "none", label: t("printScaleNormal") },
+        { value: "percent", label: t("printScalePercent") },
+        { value: "fit", label: t("printScaleFit") },
+      ] },
+      { key: "scale", label: t("printScaleValue"), type: "text", value: String(p.scale ?? 100), showFor: { key: "scaling", values: ["percent"] } },
+      { key: "margins", label: t("printMargins"), type: "select", value: marginPresetName(p.margins), options: [
+        { value: "narrow", label: t("printMarginNarrow") },
+        { value: "normal", label: t("printMarginNormal") },
+        { value: "wide", label: t("printMarginWide") },
+      ] },
+      { key: "gridLines", label: t("printGridLines"), type: "checkbox", value: !!p.gridLines },
+      { key: "headings", label: t("printHeadings"), type: "checkbox", value: !!p.headings },
+      { key: "centerH", label: t("printCenterH"), type: "checkbox", value: !!p.horizontalCentered },
+      { key: "centerV", label: t("printCenterV"), type: "checkbox", value: !!p.verticalCentered },
+      { key: "hint", label: t("printFieldHint"), type: "note" },
+      { key: "hl", label: t("printHeaderLeft"), type: "text", value: p.header?.left ?? "" },
+      { key: "hc", label: t("printHeaderCenter"), type: "text", value: p.header?.center ?? "" },
+      { key: "hr", label: t("printHeaderRight"), type: "text", value: p.header?.right ?? "" },
+      { key: "fc", label: t("printFooterCenter"), type: "text", value: p.footer?.center ?? "" },
+    ];
+    formDialog(wrap, t("printSetup"), fields, (vals) => {
+      updatePrint((next) => {
+        next.orientation = String(vals.orientation) as PrintSetup["orientation"];
+        next.paperSize = Number(vals.paper) || DEFAULT_PAPER;
+        const mode = String(vals.scaling);
+        // The three scaling modes are mutually exclusive, so each one clears the others.
+        if (mode === "fit") { next.fitToPage = true; next.fitToWidth = 1; next.fitToHeight = 0; next.scale = 100; }
+        else if (mode === "percent") { next.fitToPage = false; next.fitToWidth = undefined; next.fitToHeight = undefined; next.scale = Math.min(400, Math.max(10, Number(vals.scale) || 100)); }
+        else { next.fitToPage = false; next.fitToWidth = undefined; next.fitToHeight = undefined; next.scale = 100; }
+        next.margins = { ...MARGIN_PRESETS[String(vals.margins)]! };
+        next.gridLines = !!vals.gridLines;
+        next.headings = !!vals.headings;
+        next.horizontalCentered = !!vals.centerH;
+        next.verticalCentered = !!vals.centerV;
+        const hl = String(vals.hl), hc = String(vals.hc), hr = String(vals.hr), fc = String(vals.fc);
+        next.header = hl || hc || hr ? { ...(hl ? { left: hl } : {}), ...(hc ? { center: hc } : {}), ...(hr ? { right: hr } : {}) } : undefined;
+        next.footer = fc ? { center: fc } : undefined;
+      });
+    });
+  };
+
   const openLineMenu = (e: MouseEvent, axisOf: "row" | "col", line: number) => {
     const axis = axisOf;
     e.preventDefault();
@@ -1587,6 +1697,40 @@ export function createSheetEditor(
       if (axis === "row") item(t("freezeRowsAbove"), () => setFreeze(Math.max(0, base - 1), fc));
       else item(t("freezeColsLeft"), () => setFreeze(fr, Math.max(0, base - 1)));
       if (fr > 0 || fc > 0) item(t("unfreeze"), () => setFreeze(0, 0));
+    }
+    // Print: a page break at the clicked line, and repeating this run on every page.
+    if (caps.printSetup) {
+      const sheet = wb.sheets[active];
+      const p = sheet?.printSetup;
+      const sep3 = document.createElement("div");
+      sep3.className = "sheetedit-pop-sep";
+      pop.appendChild(sep3);
+      const item = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); run(); });
+        pop.appendChild(b);
+      };
+      const breaks = (axisOf === "row" ? p?.rowBreaks : p?.colBreaks) ?? [];
+      // A break at line 1 would start a page before the sheet begins, so it is never offered.
+      if (base > 1) {
+        item(breaks.includes(base) ? t("printBreakRemove") : t("printBreakAdd"), () =>
+          updatePrint((next) => {
+            if (axisOf === "row") next.rowBreaks = toggleBreak(next.rowBreaks, base);
+            else next.colBreaks = toggleBreak(next.colBreaks, base);
+          }));
+      }
+      const titles = axisOf === "row" ? p?.titleRows : p?.titleCols;
+      const span = { from: base, to: base + n - 1 };
+      const sameSpan = titles && titles.from === span.from && titles.to === span.to;
+      item(sameSpan ? t("printTitlesClear") : t(axisOf === "row" ? "printTitleRows" : "printTitleCols"), () =>
+        updatePrint((next) => {
+          const value = sameSpan ? undefined : span;
+          if (axisOf === "row") next.titleRows = value;
+          else next.titleCols = value;
+        }));
     }
     document.body.appendChild(pop);
     lineMenu = pop;
@@ -2228,8 +2372,44 @@ export function createSheetEditor(
     });
     trailingIcons.push(freezeBtn);
   }
+  if (caps.printSetup) {
+    const PRINT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5V2.5h7v4"/><rect x="2" y="6.5" width="12" height="5" rx="1"/><path d="M4.5 10h7v3.5h-7z"/></svg>`;
+    const printBtn: HTMLButtonElement = tbIcon(PRINT_ICON, t("printSetup"), () => {
+      closeLineMenu();
+      const p = wb.sheets[active]?.printSetup;
+      const pop = document.createElement("div");
+      pop.className = "sheetedit-pop";
+      const item = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); run(); });
+        pop.appendChild(b);
+      };
+      item(t("printSetup"), () => openPrintDialog());
+      const sep = document.createElement("div");
+      sep.className = "sheetedit-pop-sep";
+      pop.appendChild(sep);
+      // The print area comes from the selection, so it is only offered when there is one.
+      if (sel) item(t("printAreaSet"), () => updatePrint((next) => { next.printArea = [{ ...sel! }]; }));
+      if (p?.printArea?.length) item(t("printAreaClear"), () => updatePrint((next) => { next.printArea = undefined; }));
+      if (p?.rowBreaks?.length || p?.colBreaks?.length)
+        item(t("printBreaksClear"), () => updatePrint((next) => { next.rowBreaks = undefined; next.colBreaks = undefined; }));
+      document.body.appendChild(pop);
+      lineMenu = pop;
+      const r = printBtn.getBoundingClientRect();
+      pop.style.left = `${Math.round(Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))}px`;
+      pop.style.top = `${Math.round(r.bottom + 4)}px`;
+      const onOutside = (ev: Event) => {
+        if (!pop.contains(ev.target as Node)) { closeLineMenu(); document.removeEventListener("pointerdown", onOutside, true); }
+      };
+      setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+    });
+    trailingIcons.push(printBtn);
+  }
   if (caps.protection) {
-    const LOCK_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/></svg>`;
+    const LOCK_ICON =`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/></svg>`;
     const protBtn: HTMLButtonElement = tbIcon(LOCK_ICON, t("protection"), () => {
       closeLineMenu();
       const sheet = wb.sheets[active];
@@ -2403,6 +2583,7 @@ export function createSheetEditor(
       }
       const cell = getCell(sheet, r, c);
       if (cell?.kind === "n") td.classList.add("num");
+      markPrintEdges(td, sheet, r, c);
       const sheetProtected = isProtected(sheet);
       const input = document.createElement("input");
       input.type = "text";
@@ -2678,6 +2859,7 @@ export function createSheetEditor(
     const rn = document.createElement("th");
     rn.className = "rownum";
     rn.dataset.r = String(r); // the outline gutter measures rows off these
+    if (brkRows.has(r)) rn.classList.add("pgbrk-top"); // carry the break line into the gutter
     rn.textContent = String(r);
     rn.title = t("selectRow", { row: r });
     rn.addEventListener("click", () => {
@@ -2830,6 +3012,7 @@ export function createSheetEditor(
       const th = document.createElement("th");
       th.className = "colhead";
       th.dataset.c = String(c); // the pane divider snaps to these edges
+      if (brkCols.has(c)) th.classList.add("pgbrk-left");
       th.textContent = colToLetters(c);
       th.title = t("selectColumn", { col: colToLetters(c) });
       th.addEventListener("click", () => {
@@ -3266,6 +3449,11 @@ export function createSheetEditor(
     condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet, { evaluator: makeFormulaEvaluator(wb), sheetName: sheet.name }, dateToSerial(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate())) : new Map();
     sparkAt = new Map();
     for (const sp of sheet.sparklines ?? []) sparkAt.set(key(sp.host.r, sp.host.c), sp);
+    brkRows = new Set(sheet.printSetup?.rowBreaks ?? []);
+    brkCols = new Set(sheet.printSetup?.colBreaks ?? []);
+    // Only an explicit print area is drawn; the implicit "whole used range" is not a boundary the
+    // user set, so outlining it would be noise.
+    printAreas = sheet.printSetup?.printArea ?? [];
     computeWrapHeights(sheet); // measure wrap cells so rows grow to fit
     rebuildSizeIndexes(sheet);
 

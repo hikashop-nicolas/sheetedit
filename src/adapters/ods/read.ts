@@ -3,6 +3,7 @@ import { formatNumber, getCell, key, noteExtent, numToStr, parseA1Ref, parseXml,
 import { pivotColumnItems, type PivotFunc } from "../../core/pivot";
 import { durationToSerial, isoToSerial } from "../../core/dates";
 import type { SheetLock, SheetProtection } from "../../core/protection";
+import { readOdsPrintSetup } from "./print-read";
 
 const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", countnums: "countNums", average: "average", min: "min", max: "max" };
 import { readOdsCharts } from "./chart-read";
@@ -264,6 +265,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     buildOdsStyleMapCf(sheet, styles); // standard <style:map> CF (the interoperable mechanism)
     wb.sheets.push(sheet);
   }
+  readOdsPrintSetup(wb, files); // page setup lives in styles.xml, keyed through the table style
   readOdsCharts(wb, files);
   readOdsImages(wb, files);
   readOdsShapes(wb);

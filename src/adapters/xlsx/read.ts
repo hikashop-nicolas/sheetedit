@@ -11,6 +11,7 @@ import { readSparklines } from "./sparkline-read";
 import { readXlsxPivots } from "./pivot-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtection } from "../../core/protection";
+import { readXlsxPrintNames, readXlsxPrintSetup } from "./print-read";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
 function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: number } | null {
@@ -422,6 +423,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
         const rng = parseRangeRef(afRef);
         if (rng) sheet.autoFilter = rng;
       }
+      readXlsxPrintSetup(sheet, doc);
       // Sheet protection: <sheetProtection sheet="1" .../>. Every boolean attribute names an action
       // that is BLOCKED, and each has its own default, so only the stated ones are recorded.
       const spEl = doc.getElementsByTagName("sheetProtection")[0];
@@ -477,6 +479,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   readXlsxPivots(wb, files);
   readSlicers(wb, files); // after pivots: a slicer borrows its pivot cache to label items
+  readXlsxPrintNames(wb, wbDoc); // sheet-scoped names, so every sheet must already be in place
   readXlsxSlicerStyles(wb, files, theme); // user-defined slicer styles, so the overlay can colour by name
   readTimelines(wb, files);
   return wb;

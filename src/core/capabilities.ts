@@ -29,6 +29,8 @@ export interface WorkbookCapabilities {
   freezePanes: boolean;
   /** Sheet / workbook protection (enforce, author, write back). */
   protection: boolean;
+  /** Page setup for printing (author + write back; the grid shows breaks and the print area). */
+  printSetup: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -44,6 +46,7 @@ const NONE: WorkbookCapabilities = {
   outline: false,
   freezePanes: false,
   protection: false,
+  printSetup: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -59,6 +62,7 @@ const XLSX: WorkbookCapabilities = {
   outline: true,
   freezePanes: true,
   protection: true,
+  printSetup: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -81,6 +85,9 @@ const ODS: WorkbookCapabilities = {
   // ODF has table:protected + the loext permission flags; it lacks the format / sort / filter /
   // pivot granularity, so those keep their (blocked) defaults on an ods round-trip.
   protection: true,
+  // ODF states page setup as a page-layout + master-page pair in styles.xml, reached through the
+  // table style; print ranges, repeated rows and page breaks live in content.xml.
+  printSetup: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

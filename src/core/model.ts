@@ -303,6 +303,11 @@ export interface Sheet {
   /** The pane boundary is a draggable SPLIT rather than a frozen one. Both render the same way
       here (the leading pane stays put); the difference is what the file records. */
   paneSplit?: boolean;
+  /** Page setup for printing (paper, margins, header/footer, print area, page breaks). Not used to
+      render the grid, but shown as a print-area / page-break overlay and written back per format. */
+  printSetup?: import("./print").PrintSetup;
+  /** The print setup changed in the UI -> it is rewritten on save. */
+  printDirty?: boolean;
   /** Sheet protection: whether the sheet is protected and which actions it blocks. Enforced in the
       grid (locked cells become read-only) and written back per format. */
   protection?: import("./protection").SheetProtection;

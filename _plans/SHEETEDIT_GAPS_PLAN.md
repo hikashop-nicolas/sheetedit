@@ -270,7 +270,20 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
-- **Preserved-only, not authored yet**: form controls / ActiveX, print settings, themes.
+- **Preserved-only, not authored yet**: form controls / ActiveX, themes.
+- **Print settings** are read, rendered and authored in both formats. The model is stated in xlsx's
+  terms (inches, a paper-size id, scale as a percentage) because that format is the more explicit of
+  the two; the ods adapter converts to ODF's page-layout / master-page pair. The print area and the
+  page breaks are drawn on the grid as cell borders rather than an overlay, so they follow scrolling,
+  virtualization and split panes for free.
+  - The two margin models differ: an xlsx top margin encloses the header block, an ODF page margin
+    stops where it starts. Converted both ways and asserted on in the tests.
+  - LibreOffice computes an OOXML margin from header CONTENT height plus the header's own
+    margin-bottom, ignoring fo:min-height, and defaults that margin to 20mm when absent - which
+    inflated every ods -> xlsx margin by ~0.5in. Fixed by stating the spacing the way LibreOffice
+    states it (block height less one nominal text line, 0.1389in), verified at exactly 0.75in.
+  - Header/footer text keeps the file's raw &-codes, so formatting codes round-trip; only the ODF
+    write path drops font/size codes, since ODF states those as span styles.
 - **Protection** is read, enforced and authored in both formats. The flags are stated the way OOXML
   states them (each one names a BLOCKED action, each with its own default), and the ods adapter
   inverts them, because ODF's loext flags are permissions. Two layers decide editability: the sheet

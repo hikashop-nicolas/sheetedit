@@ -187,6 +187,38 @@ per column, `.ods` nests the rows in `<table:table-row-group>` (with `table:disp
 collapsed one). Verified through LibreOffice round-trips both ways. ODS **column** groups are read
 and preserved but not authored.
 
+## Print settings
+
+sheetedit does not print, so page setup is carried, shown and authored for whatever does: Excel,
+LibreOffice, or a PDF export. Two parts of it are visible on the grid, which is what makes the rest
+checkable: the **print area** is outlined in green, and **page breaks** are drawn as blue dashed
+lines that continue into the row and column headers.
+
+The toolbar's printer button holds **Page setup** (orientation, paper size, scaling or fit-to-width,
+margins, print gridlines and headings, centring, and the header/footer regions), plus **Set** /
+**Clear print area** from the selection and **Reset page breaks**. The row and column header menus
+carry **Insert** / **Remove page break** and **Repeat these rows (or columns) on every page**.
+
+Header and footer text keeps the file's own field codes (`&P` page, `&N` total pages, `&D` date,
+`&T` time, `&A` sheet, `&F` file), so a header sheetedit did not author round-trips exactly,
+formatting codes included.
+
+`.xlsx` writes `<printOptions>`, `<pageMargins>`, `<pageSetup>`, `<headerFooter>` and the row/column
+break lists, with the print area and repeated rows as the sheet-scoped `_xlnm.Print_Area` and
+`_xlnm.Print_Titles` names. `.ods` writes a `<style:page-layout>` plus `<style:master-page>` pair in
+`styles.xml` (reached through the table's own style), `table:print-ranges`, a
+`<table:table-header-rows>` group, and `fo:break-before="page"` on the row or column style.
+
+Two conversions needed care, and both were pinned down against LibreOffice rather than guessed:
+
+- **Margins mean different things.** An xlsx top margin encloses the header block; an ODF page margin
+  stops where that block starts. The adapters convert both ways, so a 0.75in top margin with a 0.3in
+  header becomes a 0.3in ODF page margin over a 0.45in header block, and back.
+- **LibreOffice derives an OOXML margin from the header's content height plus its own spacing,
+  ignoring `fo:min-height`**, and defaults that spacing to 20mm when absent, which inflated the
+  margin by about half an inch on every `.ods` conversion. Writing the spacing the way LibreOffice
+  writes it in its own files makes the margin survive exactly.
+
 ## Sheet and workbook protection
 
 Protection is read, **enforced in the grid** and authored, in both formats. On a protected sheet a
