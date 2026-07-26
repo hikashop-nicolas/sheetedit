@@ -255,3 +255,28 @@ export function odsColStyle(doc: Document, autoStyles: Element, px: number): str
 }
 
 // Set one column's width (px), splitting the <table:table-column> run that covers it.
+
+/**
+ * Hide or show a sheet in ODF. Unlike xlsx, which states this on the sheet element, ODF puts it in
+ * the sheet's TABLE STYLE as `<style:table-properties table:display>`, which LibreOffice confirmed:
+ * an attribute on `<table:table>` itself is ignored.
+ *
+ * Sheets often share one table style, so hiding one must not hide its neighbours: the style is
+ * cloned before the flag changes, and the clone interned like any other automatic style.
+ */
+export function setOdsSheetHidden(doc: Document, table: Element, hidden: boolean): void {
+  const autoStyles = ensureOdsAutoStyles(doc);
+  const current = table.getAttribute("table:style-name");
+  const existing = current ? findOdsStyleByName(doc, current) : undefined;
+  const style = existing
+    ? (existing.cloneNode(true) as Element)
+    : doc.createElementNS(ODS.style, "style:style");
+  style.removeAttribute("style:name");
+  let props = Array.from(style.children).find((e) => e.localName === "table-properties");
+  if (!props) {
+    props = doc.createElementNS(ODS.style, "style:table-properties");
+    style.appendChild(props);
+  }
+  props.setAttributeNS(ODS.table, "table:display", hidden ? "false" : "true");
+  table.setAttributeNS(ODS.table, "table:style-name", internOdsStyle(doc, autoStyles, "table", "ta", style));
+}

@@ -9,7 +9,7 @@ import { setCellInput } from "./workbook";
 import { makeFormulaEvaluator } from "./recalc";
 import { canEditCell } from "./protection";
 import { filterHiddenRows, sortedPositions, sortRange, sortText, type SortKey } from "./range-ops";
-import { addSheet, deleteSheet, sheetsEditable } from "./sheet-ops";
+import { addSheet, deleteSheet, moveSheet, setSheetVisibility, sheetsEditable } from "./sheet-ops";
 import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "vbalang";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,8 @@ export interface ExcelHost {
   onBeforeWrite?: (sheetIndex: number, row: number, col: number) => void;
   /** Called when something other than a cell changed (sheet added, row hidden, protection). */
   onStructureChange?: () => void;
+  /** Print a sheet. Absent when the host has no print path, which makes PrintOut refuse. */
+  print?: (sheetIndex: number) => void;
   /**
    * What Copy / Cut put down and PasteSpecial picks up. It lives on the host rather than on a
    * Range so a macro can copy from one sheet and paste into another, as Excel does.
@@ -762,7 +764,7 @@ export class WorksheetObject implements VbaObject {
     return new RangeObject(this.host, this.index, [sel]);
   }
 
-  get(name: string, args: VbaValue[]): VbaValue {
+  get(name: string, args: VbaValue[], argNames?: (string | undefined)[]): VbaValue {
     const lower = name.toLowerCase();
     switch (lower) {
       case "name": return this.sheet.name;
@@ -820,7 +822,22 @@ export class WorksheetObject implements VbaObject {
         this.host.onStructureChange?.();
         return EMPTY;
       }
-      case "visible": case "copy": case "move": case "printout": case "exportasfixedformat":
+      // xlSheetVisible = -1, xlSheetHidden = 0, xlSheetVeryHidden = 2.
+      case "visible": return this.sheet.visibility === "veryHidden" ? 2 : this.sheet.visibility ? 0 : -1;
+      case "move": {
+        const to = this.destinationIndex(args, argNames);
+        if (to === undefined) throw new VbaError("Move needs a Before or After sheet", 1004);
+        moveSheet(this.host.wb, this.index, to);
+        this.host.activeSheet = to;
+        this.host.onStructureChange?.();
+        return EMPTY;
+      }
+      case "printout": {
+        if (!this.host.print) throw new VbaError("printing is not available here", 1004);
+        this.host.print(this.index);
+        return EMPTY;
+      }
+      case "copy": case "exportasfixedformat":
         throw new VbaError(`Worksheet.${name} is not supported by sheetedit yet`, 438);
       default:
         throw new VbaError(`Worksheet.${name} is not supported by sheetedit`, 438);
@@ -834,7 +851,36 @@ export class WorksheetObject implements VbaObject {
       this.host.onStructureChange?.();
       return;
     }
+    if (lower === "visible") {
+      // True / False, or one of the xlSheetVisible / Hidden / VeryHidden constants.
+      const n = typeof value === "boolean" ? (value ? -1 : 0) : toNumber(value);
+      const next = n === 2 ? "veryHidden" : n === 0 ? "hidden" : undefined;
+      try {
+        setSheetVisibility(this.host.wb, this.index, next);
+      } catch (e) {
+        throw new VbaError((e as Error).message, 1004);
+      }
+      this.host.onStructureChange?.();
+      return;
+    }
     throw new VbaError(`Worksheet.${name} cannot be assigned by sheetedit`, 438);
+  }
+
+  /**
+   * Where a Move lands. Before puts the sheet at that sheet's place, After just past it, but the
+   * move takes it out of the list first: everything after its old position shifts down by one, so
+   * moving a sheet FORWARD lands one lower than the naive index.
+   */
+  private destinationIndex(args: VbaValue[], names: (string | undefined)[] | undefined): number | undefined {
+    const indexOf = (v: VbaValue | undefined): number | undefined =>
+      v instanceof WorksheetObject ? v.index : undefined;
+    const b = indexOf(namedArg(args, names, "Before", 0));
+    const a = indexOf(namedArg(args, names, "After", 1));
+    const target = b ?? a;
+    if (target === undefined) return undefined;
+    const shift = this.index < target ? 1 : 0;
+    const at = (b !== undefined ? b : target + 1) - shift;
+    return Math.max(0, Math.min(at, this.host.wb.sheets.length - 1));
   }
 }
 

@@ -1,5 +1,6 @@
-import { parseXmlOpt, serializeXml, type Workbook } from "./model";
+import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "./model";
 import { createWorksheet, uniqueSheetName } from "../adapters/xlsx/sheet-create";
+import { setOdsSheetHidden } from "../adapters/ods/styles";
 
 // Add / rename / delete / reorder sheets, for both .xlsx and .ods. Each op mutates the model
 // (wb.sheets) and the file immediately (xlsx: xl/workbook.xml + rels + content-types; ods: the
@@ -64,6 +65,37 @@ export function renameSheet(wb: Workbook, index: number, name: string): string {
     sheet.tableEl?.setAttributeNS(ODS_TABLE, "table:name", clean);
   }
   return clean;
+}
+
+/** How many sheets the user can actually see, which is what gates hiding another one. */
+export const visibleSheetCount = (wb: Workbook): number => wb.sheets.filter((s) => !s.visibility).length;
+
+/**
+ * Show or hide a sheet. Both formats state this on the sheet's own element, so it is written
+ * straight through rather than deferred to the save path.
+ *
+ * "Very hidden" is xlsx-only and cannot be undone from a UI, only by a macro, which is the whole
+ * point of it; ODF has no equivalent and stores it as an ordinary hidden sheet.
+ */
+export function setSheetVisibility(wb: Workbook, index: number, visibility: Sheet["visibility"]): void {
+  const sheet = wb.sheets[index];
+  if (!sheet) throw new Error("no such sheet");
+  if (visibility && !sheet.visibility && visibleSheetCount(wb) <= 1) {
+    throw new Error("a workbook must keep at least one visible sheet");
+  }
+  sheet.visibility = visibility;
+  sheet.visibilityDirty = true;
+  if (wb.kind === "xlsx") {
+    const doc = parseXmlOpt(wb.files["xl/workbook.xml"]);
+    const el = doc && sheetEls(doc)[index];
+    if (!doc || !el) return;
+    if (!visibility) el.removeAttribute("state");
+    else el.setAttribute("state", visibility === "veryHidden" ? "veryHidden" : "hidden");
+    wb.files["xl/workbook.xml"] = serializeXml(doc);
+  } else if (wb.kind === "ods") {
+    const table = sheet.tableEl;
+    if (table && wb.contentDoc) setOdsSheetHidden(wb.contentDoc, table, !!visibility);
+  }
 }
 
 /** Delete the sheet at `index` (a workbook must keep at least one). */

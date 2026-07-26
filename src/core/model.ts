@@ -260,6 +260,11 @@ export interface Sheet {
   /** The VBA code name (xlsx `<sheetPr codeName>`), which is how a sheet's macro module is named
       and the only way to tie a Worksheet_Change handler to the sheet it belongs to. */
   codeName?: string;
+  /** Tab visibility (xlsx `<sheet state>`, ODF `table:display`). Absent = visible. Excel's
+      "very hidden" cannot be undone from the UI, only by a macro, which is the point of it. */
+  visibility?: "hidden" | "veryHidden";
+  /** The visibility changed in the UI -> the workbook part is rewritten on save. */
+  visibilityDirty?: boolean;
   cells: Map<string, Cell>;
   maxRow: number; // 1-based extent of used cells (0 = empty)
   maxCol: number;

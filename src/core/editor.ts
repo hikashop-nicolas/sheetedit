@@ -19,7 +19,7 @@ import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } f
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
 import { columnFilterValues, filterHiddenRows, sortedPositions, sortRange } from "./range-ops";
-import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
+import { addSheet, renameSheet, deleteSheet, moveSheet, setSheetVisibility, sheetsEditable, visibleSheetCount } from "./sheet-ops";
 import { SHEETEDIT_CSS } from "./ui/styles.generated";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
@@ -1337,6 +1337,8 @@ export function createSheetEditor(
       selection: sel ? { r1: sel.r1, c1: sel.c1, r2: sel.r2, c2: sel.c2 } : undefined,
       activeCell: activeCell ?? undefined,
       fileName: options.fileName,
+      // Worksheet.PrintOut opens the browser's print dialog, which is the only printing a page has.
+      print: (sheetIndex) => doPrint({ scope: "sheet" }, sheetIndex),
     });
     if (!res.ok) {
       const where = res.error?.line != null ? ` (${res.error.module}, line ${res.error.line})` : ` (${res.error?.module})`;
@@ -1590,9 +1592,9 @@ export function createSheetEditor(
    * stylesheet hides everything else.
    */
   let printRoot: HTMLElement | null = null;
-  const doPrint = (job: PrintJob): void => {
+  const doPrint = (job: PrintJob, sheetIndex = active): void => {
     printRoot?.remove();
-    const result = buildPrintJob(wb, active, options.fileName ?? "", job);
+    const result = buildPrintJob(wb, sheetIndex, options.fileName ?? "", job);
     if (!result) {
       showNotice(t("printNothing"));
       return;
@@ -3867,7 +3869,7 @@ export function createSheetEditor(
     });
     input.addEventListener("blur", () => finish(true));
   }
-  function showTabMenu(i: number, x: number): void {
+  function showTabMenu(i: number, x: number, tabEl: HTMLElement): void {
     const menu = document.createElement("div");
     menu.className = "sheetedit-pop sheetedit-tabmenu";
     const add = (label: string, fn: () => void, disabled = false): void => {
@@ -3879,10 +3881,20 @@ export function createSheetEditor(
       it.addEventListener("click", () => { menu.remove(); fn(); });
       menu.appendChild(it);
     };
-    add(t("sheetRename"), () => beginRenameTab(tabs.children[i] as HTMLElement, i));
+    add(t("sheetRename"), () => beginRenameTab(tabEl, i));
     add(t("sheetMoveLeft"), () => doMoveSheet(i, i - 1), i === 0);
     add(t("sheetMoveRight"), () => doMoveSheet(i, i + 1), i === wb.sheets.length - 1);
     add(t("sheetDelete"), () => doDeleteSheet(i), wb.sheets.length <= 1);
+    // A workbook has to keep one tab the user can reach, so the last visible sheet cannot hide.
+    add(t("sheetHide"), () => doSetVisibility(i, "hidden"), visibleSheetCount(wb) <= 1);
+    // "Very hidden" is Excel's macro-only state, so a sheet in it is not offered here either.
+    const hidden = wb.sheets.map((s, k) => ({ s, k })).filter(({ s }) => s.visibility === "hidden");
+    if (hidden.length) {
+      const sep = document.createElement("div");
+      sep.className = "sheetedit-pop-sep";
+      menu.appendChild(sep);
+      for (const { s: h, k } of hidden) add(`${t("sheetUnhide")}: ${h.name}`, () => doSetVisibility(k, undefined));
+    }
     wrap.appendChild(menu);
     menu.style.left = `${Math.min(x, wrap.getBoundingClientRect().width - menu.offsetWidth - 6)}px`;
     menu.style.bottom = "40px";
@@ -3890,9 +3902,33 @@ export function createSheetEditor(
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
 
+  /** Hide or show a sheet, as one undo step. Hiding the active sheet moves off it first. */
+  const doSetVisibility = (index: number, visibility: Sheet["visibility"]): void => {
+    if (!allow(!isStructureLocked(wb), "protectedStructure")) return;
+    const before = wb.sheets[index]?.visibility;
+    const apply = (v: Sheet["visibility"]): void => {
+      setSheetVisibility(wb, index, v);
+      if (v && active === index) {
+        const to = wb.sheets.findIndex((s) => !s.visibility);
+        if (to >= 0) switchSheet(to);
+      }
+      renderTabs();
+    };
+    try {
+      recordWorkbook(() => apply(visibility), () => apply(before));
+    } catch (e) {
+      showNotice((e as Error).message);
+      return;
+    }
+    mark();
+  };
+
   const renderTabs = () => {
     tabs.innerHTML = "";
-    wb.sheets.forEach((sheet, i) => {
+    // A hidden sheet draws no tab, so the DOM order stops matching the sheet order and the
+    // keyboard walk has to move through the visible ones rather than through the indices.
+    const shown = wb.sheets.map((s, i) => ({ s, i })).filter(({ s }) => !s.visibility);
+    shown.forEach(({ s: sheet, i }, pos) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "sheetedit-tab";
@@ -3903,19 +3939,19 @@ export function createSheetEditor(
       b.addEventListener("click", () => switchSheet(i));
       if (canManageSheets) {
         b.addEventListener("dblclick", (e) => { e.preventDefault(); beginRenameTab(b, i); });
-        b.addEventListener("contextmenu", (e) => { e.preventDefault(); showTabMenu(i, b.offsetLeft); });
+        b.addEventListener("contextmenu", (e) => { e.preventDefault(); showTabMenu(i, b.offsetLeft, b); });
       }
       // Left/Right (Home/End) move between sheet tabs, activating and focusing each.
       b.addEventListener("keydown", (e) => {
-        const n = wb.sheets.length;
+        const n = shown.length;
         let to = -1;
-        if (e.key === "ArrowRight") to = (i + 1) % n;
-        else if (e.key === "ArrowLeft") to = (i - 1 + n) % n;
+        if (e.key === "ArrowRight") to = (pos + 1) % n;
+        else if (e.key === "ArrowLeft") to = (pos - 1 + n) % n;
         else if (e.key === "Home") to = 0;
         else if (e.key === "End") to = n - 1;
         if (to < 0) return;
         e.preventDefault();
-        switchSheet(to);
+        switchSheet(shown[to]!.i);
         (tabs.children[to] as HTMLElement | undefined)?.focus();
       });
       tabs.appendChild(b);

@@ -253,6 +253,9 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
+    // ODF keeps sheet visibility in the TABLE STYLE, not on the table element: LibreOffice ignores
+    // a table:display attribute written directly on <table:table>. There is no "very hidden".
+    if (tableHidden(contentDoc, table)) sheet.visibility = "hidden";
     const fz = freezeByName.get(name);
     if (fz) { sheet.freeze = { rows: fz.rows, cols: fz.cols }; if (fz.split) sheet.paneSplit = true; }
     const prot = readOdsProtection(table);
@@ -824,3 +827,15 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
   return out;
 }
 
+
+/** Whether a sheet's table style says `table:display="false"`. */
+function tableHidden(doc: Document, table: Element): boolean {
+  const name = table.getAttribute("table:style-name");
+  if (!name) return false;
+  for (const st of Array.from(doc.getElementsByTagName("style:style"))) {
+    if (st.getAttribute("style:name") !== name || st.getAttribute("style:family") !== "table") continue;
+    const props = Array.from(st.children).find((e) => e.localName === "table-properties");
+    return props?.getAttribute("table:display") === "false";
+  }
+  return false;
+}

@@ -315,7 +315,6 @@ describe("what is not modelled", () => {
       ['Range("A1").PivotTable', /Range.PivotTable is not supported/],
       ['Range("A1").RemoveDuplicates', /Range.RemoveDuplicates is not supported by sheetedit yet/],
       ['Range("A1").FormulaR1C1 = "=RC[-1]"', /FormulaR1C1 is not supported/],
-      ["ActiveSheet.Visible", /Worksheet.Visible is not supported by sheetedit yet/],
       ['Range("A1").Font.Shadow = True', /Font.Shadow is not supported/],
     ];
     for (const [src, message] of cases) expect(() => run(src, wb), src).toThrow(message);
@@ -599,5 +598,83 @@ describe("adding and deleting sheets", () => {
 
   it("refuses to delete the only sheet", () => {
     expect(() => run("ActiveSheet.Delete", bareWorkbook([[1]]))).toThrow(/at least one sheet/);
+  });
+});
+
+describe("Worksheet.Visible", () => {
+  const two = (): Workbook => {
+    const wb = readWorkbook(makeXlsx(), "book.xlsx");
+    // makeXlsx has one sheet; a second is needed before one can be hidden.
+    wb.sheets.push({ name: "Data", cells: new Map(), maxRow: 0, maxCol: 0 });
+    return wb;
+  };
+
+  it("reads the xl constants Excel uses, not True/False", () => {
+    const wb = two();
+    expect(evalIn("Worksheets(2).Visible", wb)).toBe(-1); // xlSheetVisible
+    wb.sheets[1]!.visibility = "hidden";
+    expect(evalIn("Worksheets(2).Visible", wb)).toBe(0);
+    wb.sheets[1]!.visibility = "veryHidden";
+    expect(evalIn("Worksheets(2).Visible", wb)).toBe(2);
+  });
+
+  it("hides on False and on xlSheetHidden alike", () => {
+    for (const src of ["Worksheets(2).Visible = False", "Worksheets(2).Visible = xlSheetHidden"]) {
+      const wb = two();
+      run(src, wb);
+      expect(wb.sheets[1]!.visibility, src).toBe("hidden");
+    }
+  });
+
+  it("sets very hidden, which is the state only a macro can reach", () => {
+    const wb = two();
+    run("Worksheets(2).Visible = xlSheetVeryHidden", wb);
+    expect(wb.sheets[1]!.visibility).toBe("veryHidden");
+  });
+
+  it("shows a hidden sheet again", () => {
+    const wb = two();
+    wb.sheets[1]!.visibility = "hidden";
+    run("Worksheets(2).Visible = True", wb);
+    expect(wb.sheets[1]!.visibility).toBeUndefined();
+  });
+
+  it("stops rather than leaving a workbook with no reachable sheet", () => {
+    const wb = two();
+    wb.sheets[1]!.visibility = "hidden";
+    expect(() => run("Worksheets(1).Visible = False", wb)).toThrow(/at least one visible sheet/);
+  });
+});
+
+describe("Worksheet.Move and PrintOut", () => {
+  const three = (): Workbook => {
+    const wb = bareWorkbook([[1]]);
+    wb.sheets.push({ name: "B", cells: new Map(), maxRow: 0, maxCol: 0 });
+    wb.sheets.push({ name: "C", cells: new Map(), maxRow: 0, maxCol: 0 });
+    return wb;
+  };
+
+  it("moves a sheet before another", () => {
+    const wb = three();
+    run('Worksheets("C").Move Before:=Worksheets(1)', wb);
+    expect(wb.sheets.map((s) => s.name)).toEqual(["C", "Sheet1", "B"]);
+  });
+
+  it("moves a sheet after another", () => {
+    const wb = three();
+    run('Worksheets(1).Move After:=Worksheets("C")', wb);
+    expect(wb.sheets.map((s) => s.name)).toEqual(["B", "C", "Sheet1"]);
+  });
+
+  it("stops when told neither Before nor After", () => {
+    expect(() => run('Worksheets("B").Move', three())).toThrow(/Before or After/);
+  });
+
+  it("prints through the host, and says so when there is no host to print with", () => {
+    const printed: number[] = [];
+    const wb = three();
+    run("Worksheets(2).PrintOut", wb, { print: (i) => printed.push(i) });
+    expect(printed).toEqual([1]);
+    expect(() => run("Worksheets(2).PrintOut", three())).toThrow(/printing is not available/);
   });
 });

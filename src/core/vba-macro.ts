@@ -61,6 +61,8 @@ export interface MacroRunOptions {
   maxSteps?: number;
   /** The Range handed to an event handler as its Target argument. */
   eventTarget?: { sheetIndex: number; rect: Rect };
+  /** What Worksheet.PrintOut does. Absent means a macro cannot print, and says so. */
+  print?: (sheetIndex: number) => void;
 }
 
 export interface MacroRunResult {
@@ -112,6 +114,7 @@ export function runWorkbookMacro(
   const host: ExcelHost = {
     wb,
     activeSheet: options.activeSheet ?? 0,
+    ...(options.print ? { print: options.print } : {}),
     selection: options.selection,
     activeCell: options.activeCell,
     onBeforeWrite: (sheet, r, c) => {

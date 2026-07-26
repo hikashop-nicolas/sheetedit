@@ -380,7 +380,11 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
     let target = (rid && rels.get(rid)) || `worksheets/sheet${n}.xml`;
     const path = target.startsWith("/") ? target.slice(1) : "xl/" + target.replace(/^\.\//, "");
     const wsFile = files[path];
+    // <sheet state="hidden"|"veryHidden">: a tab the workbook does not show.
+    const state = (sheetEl.getAttribute("state") ?? "").toLowerCase();
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, path };
+    if (state === "hidden") sheet.visibility = "hidden";
+    else if (state === "veryhidden") sheet.visibility = "veryHidden";
     if (wsFile) {
       const doc = parseXml(wsFile);
       const sheetData = doc.getElementsByTagName("sheetData")[0];
