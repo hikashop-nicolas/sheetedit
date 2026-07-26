@@ -343,8 +343,13 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   colour plus an INDEX into the theme's fillStyleLst / lnStyleLst, and a fontRef for its text. That
   entry is usually a gradient of tints of the named colour. Ignoring it left every gallery shape
   unfilled, which on a dark grid is an invisible button with unreadable text. Resolved now, with
-  DrawingML's lumMod / lumOff / tint / shade / satMod applied through HSL. APPROXIMATION: an SVG
-  fill is one colour, so the gradient's FIRST stop is taken rather than the gradient itself.
+  DrawingML's lumMod / lumOff / tint / shade / satMod applied through HSL. The gradient is rendered
+  AS a gradient: the overlay emits an SVG `<linearGradient>` def per shape and fills from it, with
+  `<a:lin ang>` (60000ths of a degree, clockwise from east, which is already SVG's y-down sense)
+  giving the direction. `shape.fill` still carries the first stop, so the property editor and the
+  writer keep a single colour to work with. A shape's OWN `<a:gradFill>` is read the same way.
+  GOTCHA: an SVG gradient id is document-global, so the ids are sequenced; a fixed one would make
+  every shape on the page take the first shape's gradient.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

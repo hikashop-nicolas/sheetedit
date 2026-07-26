@@ -4,6 +4,7 @@ import { readWorkbook } from "../../index";
 import { writeXlsx } from "./write";
 import { deleteXlsxShape } from "./shape-write";
 import { writeWorkbook } from "../../core/workbook";
+import { shapeSvg } from "../../core/ui/shape-layer";
 
 const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -54,6 +55,26 @@ describe("drawing shapes", () => {
     expect(lum, "the tint lightens it").toBeGreaterThan(0xad);
     expect(sh.stroke).toBeDefined();
     expect(sh.textColor).toBe("#000000"); // the fontRef's dk1
+    // The recipe is a two-stop gradient, and it is kept as one rather than flattened.
+    expect(sh.fillGradient?.stops.length).toBe(2);
+    expect(sh.fillGradient?.stops[0]!.pos).toBe(0);
+    expect(sh.fillGradient?.stops[1]!.pos).toBe(1);
+    expect(sh.fillGradient?.stops[0]!.color).toBe(sh.fill); // fill is the first stop
+    expect(sh.fillGradient?.angle).toBe(90); // no <a:lin>, so top to bottom
+    const svg = shapeSvg(sh, 100, 40);
+    expect(svg).toContain("<linearGradient");
+    expect(svg).toMatch(/fill="url\(#sheetedit-grad-\d+\)"/);
+    expect(svg).toContain(`stop-color="${sh.fillGradient!.stops[1]!.color}"`);
+  });
+
+  it("reads a shape's own gradFill, with the angle the file states", () => {
+    const own = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst><a:lin ang="0"/></a:gradFill></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>G</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+    const sh = readWorkbook(base(own)).sheets[0].shapes![0]!;
+    expect(sh.fill).toBe("#ff0000");
+    expect(sh.fillGradient?.angle).toBe(0); // left to right
+    expect(sh.fillGradient?.stops.map((x) => x.color)).toEqual(["#ff0000", "#0000ff"]);
+    // ang 0 runs along x, so the gradient vector spans the box horizontally.
+    expect(shapeSvg(sh, 100, 40)).toContain(`x1="0" y1="0.5" x2="1" y2="0.5"`);
   });
 
   it("reads and authors the extended preset shapes (diamond / star / arrow)", () => {

@@ -1,4 +1,4 @@
-import { parseXmlOpt, type Sheet, type ShapeGeom, type SheetShape } from "../../core/model";
+import { parseXmlOpt, type Sheet, type ShapeGeom, type ShapeGradient, type SheetShape } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
 
 // Read the drawing shapes on a worksheet: sheet rels -> drawingN.xml -> each <xdr:sp> (auto shape)
@@ -98,24 +98,56 @@ export function readShapeStyleScheme(file: Uint8Array | undefined): ShapeStyleSc
   return { fills: listOf("fillStyleLst"), lines: listOf("lnStyleLst") };
 }
 
-/**
- * The colour an <a:fillRef>/<a:lnRef> resolves to. The referenced recipe is usually a gradient;
- * we take its FIRST stop, since an SVG fill is one colour and the top stop is what the shape
- * mostly reads as. Not pixel-identical to Excel's gradient, but the right colour family.
- */
-function styleRefColor(ref: Element | undefined, list: Element[], theme: Record<string, string>): string | undefined {
+/** One <a:srgbClr>/<a:schemeClr> resolved, with its transforms applied. `phClr` is the placeholder
+    a theme recipe uses for whatever colour the shape's style names. */
+function colorOfClr(clr: Element | undefined, theme: Record<string, string>, phClr?: string): string | undefined {
+  if (!clr) return undefined;
+  const val = clr.getAttribute("val") ?? "";
+  const base = clr.localName === "srgbClr" ? `#${val}` : val === "phClr" ? phClr : theme[val];
+  return base ? transformColor(base, clr) : undefined;
+}
+
+/** A fill or line element resolved to what to paint with: a colour, or a gradient. */
+export interface ShapePaint {
+  color?: string;
+  gradient?: ShapeGradient;
+}
+
+/** <a:solidFill> / <a:gradFill> / <a:noFill> -> a paint. */
+function paintOf(el: Element | undefined, theme: Record<string, string>, phClr?: string): ShapePaint | undefined {
+  if (!el) return undefined;
+  if (el.localName === "noFill") return undefined;
+  if (el.localName === "gradFill") {
+    const gsLst = Array.from(el.children).find((c) => c.localName === "gsLst");
+    const stops = (gsLst ? Array.from(gsLst.children) : [])
+      .map((gs) => ({ pos: Number(gs.getAttribute("pos") || "0") / 100000, color: colorOfClr(gs.firstElementChild ?? undefined, theme, phClr) }))
+      .filter((s): s is { pos: number; color: string } => !!s.color);
+    if (!stops.length) return undefined;
+    // <a:lin ang> is in 60000ths of a degree, clockwise from east. A <a:path> (radial / from a
+    // shape's centre) has no linear angle; render it top to bottom, which is what it mostly reads as.
+    const lin = Array.from(el.children).find((c) => c.localName === "lin");
+    const angle = lin ? Number(lin.getAttribute("ang") || "0") / 60000 : 90;
+    return { color: stops[0]!.color, gradient: stops.length > 1 ? { angle, stops } : undefined };
+  }
+  // solidFill, or an element that simply wraps a colour (a style ref, an <a:ln>).
+  const clr = Array.from(el.children).find((c) => c.localName === "srgbClr" || c.localName === "schemeClr");
+  const color = colorOfClr(clr, theme, phClr);
+  return color ? { color } : undefined;
+}
+
+/** The paint an <a:fillRef>/<a:lnRef> resolves to: its colour, poured into the theme recipe its
+    idx names (idx 0 means none; a recipe is usually a gradient of tints of that colour). */
+function styleRefPaint(ref: Element | undefined, list: Element[], theme: Record<string, string>): ShapePaint | undefined {
   if (!ref) return undefined;
   const base = colorFrom(ref, theme);
   if (!base) return undefined;
   const idx = Number(ref.getAttribute("idx") || "0");
-  // idx 0 means "no fill"; otherwise it is 1-based into the list.
   if (!idx) return undefined;
   const recipe = list[idx - 1];
-  if (!recipe) return base;
-  if (recipe.localName === "noFill") return undefined;
-  // Both a solid and a gradient carry the placeholder colour to transform.
-  const stop = descend(recipe, "schemeClr").find((c) => c.getAttribute("val") === "phClr") ?? descend(recipe, "srgbClr")[0];
-  return stop ? transformColor(base, stop) : base;
+  if (!recipe) return { color: base };
+  // An <a:ln> recipe holds the fill one level down.
+  const target = recipe.localName === "ln" ? Array.from(recipe.children).find((c) => /Fill$/.test(c.localName)) : recipe;
+  return paintOf(target, theme, base) ?? { color: base };
 }
 
 /** Populate sheet.shapes from the worksheet's drawing parts. */
@@ -143,11 +175,13 @@ export function readShapes(
       const noFill = spPr ? !!kid(spPr, "noFill") : false;
       // The shape's own paint wins; a shape that states none falls back to its <xdr:style> refs.
       const style = kid(sp, "style");
-      const styleFill = style && styleScheme ? styleRefColor(kid(style, "fillRef"), styleScheme.fills, theme) : undefined;
-      const fill = noFill ? undefined : colorFrom(spPr ? kid(spPr, "solidFill") : undefined, theme) ?? styleFill;
+      const ownFill = spPr ? paintOf(kid(spPr, "solidFill") ?? kid(spPr, "gradFill"), theme) : undefined;
+      const styleFill = style && styleScheme ? styleRefPaint(kid(style, "fillRef"), styleScheme.fills, theme) : undefined;
+      const paint = noFill ? undefined : ownFill ?? styleFill;
+      const fill = paint?.color;
       const ln = spPr ? kid(spPr, "ln") : undefined;
-      const styleStroke = style && styleScheme ? styleRefColor(kid(style, "lnRef"), styleScheme.lines, theme) : undefined;
-      const stroke = colorFrom(ln ? kid(ln, "solidFill") : undefined, theme) ?? (ln && kid(ln, "noFill") ? undefined : styleStroke);
+      const styleStroke = style && styleScheme ? styleRefPaint(kid(style, "lnRef"), styleScheme.lines, theme) : undefined;
+      const stroke = colorFrom(ln ? kid(ln, "solidFill") : undefined, theme) ?? (ln && kid(ln, "noFill") ? undefined : styleStroke?.color);
       const lw = ln?.getAttribute("w");
       const txt = descend(sp, "t").map((t) => t.textContent ?? "").join("");
       const rPr = descend(sp, "r")[0] ? kid(descend(sp, "r")[0], "rPr") : undefined;
@@ -157,6 +191,7 @@ export function readShapes(
         preset: prst ?? undefined,
         anchor,
         fill,
+        ...(paint?.gradient ? { fillGradient: paint.gradient } : {}),
         stroke,
         strokeWidth: lw ? Math.max(1, Math.round(Number(lw) / 9525)) : undefined,
         text: txt || undefined,

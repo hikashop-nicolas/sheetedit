@@ -508,6 +508,13 @@ export interface SheetControl {
     but keeps its original preset name so it round-trips. */
 export type ShapeGeom = "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "diamond" | "parallelogram" | "hexagon" | "pentagon" | "star" | "rightArrow";
 
+/** A linear gradient fill. `angle` is in degrees clockwise from the positive x axis, as DrawingML
+    measures it, and `pos` runs 0..1 along that direction. */
+export interface ShapeGradient {
+  angle: number;
+  stops: { pos: number; color: string }[];
+}
+
 /** A drawing shape anchored on a sheet. Rendered as an SVG box over the grid; authored + written
     back (xlsx xdr:sp in the drawing part, ods draw:rect/ellipse/line/custom-shape). */
 export interface SheetShape {
@@ -517,6 +524,9 @@ export interface SheetShape {
   preset?: string;
   anchor: import("./chart-model").ChartAnchor;
   fill?: string;        // css hex, or undefined = no fill
+  /** A gradient fill, when the file gives one. `fill` still carries its first stop, so anything
+      wanting a single colour (the property editor, the writer) has one. */
+  fillGradient?: ShapeGradient;
   stroke?: string;      // outline css hex, or undefined = no outline
   strokeWidth?: number; // px (default 1)
   text?: string;

@@ -21,9 +21,31 @@ export interface ShapeLayerDeps {
 }
 
 
+// SVG gradient ids have to be unique in the document, since a fill refers to one by id and the
+// first match wins across every overlay on the page.
+let gradSeq = 0;
+
+/** A <linearGradient> def for a shape's gradient fill, plus the url() that names it. */
+function gradientDef(g: NonNullable<SheetShape["fillGradient"]>): { def: string; url: string } {
+  const id = `sheetedit-grad-${++gradSeq}`;
+  // DrawingML measures the angle clockwise from east, which is the direction SVG's y-down user
+  // space already runs, so the vector goes straight across the bounding box through its centre.
+  const rad = (g.angle * Math.PI) / 180;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+  const [x1, y1, x2, y2] = [0.5 - dx / 2, 0.5 - dy / 2, 0.5 + dx / 2, 0.5 + dy / 2];
+  const stops = g.stops
+    .map((s) => `<stop offset="${Math.max(0, Math.min(1, s.pos))}" stop-color="${s.color}"/>`)
+    .join("");
+  return {
+    def: `<defs><linearGradient id="${id}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${stops}</linearGradient></defs>`,
+    url: `url(#${id})`,
+  };
+}
+
 /** Build the SVG markup for one shape at the given pixel size. */
 export function shapeSvg(sh: SheetShape, w: number, h: number): string {
-  const fill = sh.fill ?? "none";
+  const grad = sh.fillGradient?.stops.length ? gradientDef(sh.fillGradient) : undefined;
+  const fill = grad?.url ?? sh.fill ?? "none";
   const stroke = sh.stroke ?? (sh.fill ? "none" : "#000000");
   const sw = sh.strokeWidth ?? 1;
   const inset = sw / 2; // keep the stroke inside the box
@@ -54,7 +76,7 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
     const esc = sh.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     label = `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" dominant-baseline="central" fill="${sh.textColor ?? "#000000"}" font-size="13" font-family="sans-serif">${esc}</text>`;
   }
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${body}${label}</svg>`;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grad?.def ?? ""}${body}${label}</svg>`;
 }
 
 export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
