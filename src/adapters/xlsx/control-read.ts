@@ -227,6 +227,7 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
   if (ctl.kind === "button") ctl.macro ??= `${ctl.name}_Click`;
   const parsed = binPath && files[binPath] ? readActiveXStream(files[binPath]) : undefined;
   if (!parsed) return;
+  ctl.activeXBinPath = binPath;
   if (parsed.caption) ctl.label = parsed.caption;
   if (parsed.value !== undefined) {
     ctl.activeXValue = parsed.value;

@@ -228,9 +228,20 @@ caption and value on the same published-spec basis as everything else here. A bu
 handler its name implies (`CommandButton1` runs `CommandButton1_Click` from the sheet's own code
 module). A control with a **linked cell** is live: an ActiveX combo lists the items its
 `listFillRange` names, resolving a defined name, and writing the chosen **text** to that cell,
-which is where the two control families differ (a form control writes the item's position). One
-with no linked cell is shown with its state and left read-only, since changing it would mean
-writing a Windows component's own saved data. A third-party ActiveX control is genuinely opaque,
+which is where the two control families differ (a form control writes the item's position). A control's own persisted state is
+written back too, so a checkbox toggled here is still toggled when the file is reopened.
+
+That writer is deliberately conservative. Where the new text is the same length as the old, the
+bytes are patched **in place**, so the stream stays byte-identical down to its padding; only a
+change of length rebuilds the block, carrying the parts sheetedit does not model (picture streams,
+font properties, a combo's column widths) across untouched. It refuses outright on a control whose
+layout the reader would not vouch for, since a write must not proceed where a read would not.
+
+**Verified by round-trip, not by a second implementation.** Writing an unchanged value back returns
+the original bytes exactly, on every real stream tested, and a changed one reads back correctly
+through the whole save. But LibreOffice does not surface ActiveX from `.xlsx` at all, so unlike the
+VBA writer, which an independent engine could be made to *run*, there is no outside judge here. It
+opens a rewritten file without complaint, and that is all that proves. A third-party ActiveX control is genuinely opaque,
 since OOXML says its content is determined by the control itself, and it is preserved untouched.
 
 State lives in two places in an `.xlsx` and both are read and written: the modern `ctrlProps` part

@@ -85,7 +85,9 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
    * it on save would be worse than one that plainly does not take edits.
    */
   const readOnlyActiveX = (ctl: SheetControl): boolean =>
-    !!ctl.activeX && ctl.kind !== "button" && !ctl.linkedCell;
+    !!ctl.activeX && ctl.kind !== "button" && !ctl.linkedCell
+    // Writable once its persisted value was understood well enough to put back.
+    && !(ctl.activeXBinPath && ctl.activeXValue !== undefined);
 
   const build = (ctl: SheetControl): HTMLElement => {
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
@@ -108,6 +110,8 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         if (readOnlyActiveX(ctl)) { input.disabled = true; label.title = deps.activeXTitle; }
         input.addEventListener("change", () => {
           ctl.checked = input.checked;
+          // An ActiveX checkbox persists "1" or "0" as text, which is what goes back in its part.
+          if (ctl.activeX) ctl.activeXValue = input.checked ? "1" : "0";
           // One radio on means the rest of its group off, which is the only thing that makes a
           // radio a radio. Its group is the group box drawn around it, or the sheet when none is.
           const cleared = ctl.kind === "radio" && input.checked ? clearGroup(ctl) : [];

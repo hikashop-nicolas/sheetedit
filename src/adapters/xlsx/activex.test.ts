@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { kindOfClsid, readActiveXStream } from "./activex-read";
+import { kindOfClsid, readActiveXStream, setActiveXValue } from "./activex-read";
 
 // The bytes here are SYNTHETIC, built from [MS-OFORMS], because the real ActiveX files available
 // are other people's business documents: fine to develop against locally, not to commit.
@@ -160,5 +160,57 @@ describe("MorphData controls", () => {
   it("handles a caption needing padding and one that needs none", () => {
     expect(readActiveXStream(checkbox("1", "Go", "G"))?.caption).toBe("Go");
     expect(readActiveXStream(checkbox("1", "Four", "Grp1"))?.caption).toBe("Four");
+  });
+});
+
+describe("writing a value back", () => {
+  it("returns byte-identical output when the value does not change", () => {
+    // The strongest check there is: nothing moves, so padding and every unmodelled trailing block
+    // must come through untouched. Confirmed against four real Excel-written streams.
+    const bytes = checkbox("0", "CheckBox1", "DataEntry");
+    expect([...setActiveXValue(bytes, "0")!]).toEqual([...bytes]);
+  });
+
+  it("keeps the caption and the size when the value grows", () => {
+    const before = checkbox("0", "CheckBox1", "DataEntry", 2831, 767);
+    const after = setActiveXValue(before, "a much longer value")!;
+    expect(readActiveXStream(after)).toEqual({
+      kind: "checkbox", size: { cx: 2831, cy: 767 },
+      value: "a much longer value", caption: "CheckBox1", groupName: "DataEntry",
+    });
+  });
+
+  it("keeps them when it shrinks", () => {
+    const after = setActiveXValue(checkbox("aaaaaaaa", "CheckBox1", "DataEntry"), "1")!;
+    expect(readActiveXStream(after)).toMatchObject({ value: "1", caption: "CheckBox1", groupName: "DataEntry" });
+  });
+
+  it("carries the trailing blocks it does not model across a resize", () => {
+    // TextProps sits after the ExtraDataBlock and must survive, or the control loses its font.
+    const font = [0x00, 0x02, 0x18, 0x00, ...[0x35, 0, 0, 0], ...[0x07, 0, 0, 0x80], 0xf0, 0, 0, 0, 0x00, 0x02, 0x00, 0x00, ...[..."Calibri"].map((c) => c.charCodeAt(0)), 0];
+    const base = checkbox("0", "CheckBox1", "DataEntry");
+    const withTail = new Uint8Array([...base, ...font]);
+    const after = setActiveXValue(withTail, "longer than before")!;
+    expect([...after.subarray(after.length - font.length)]).toEqual(font);
+  });
+
+  it("refuses a control it could not read, rather than writing into the dark", () => {
+    const broken = checkbox("0", "CheckBox1", "DataEntry");
+    broken[18] = (broken[18]! + 4) & 0xff; // cb no longer matches, so the walk is not trusted
+    expect(setActiveXValue(broken, "1")).toBeUndefined();
+    // A button carries no Value at all, so there is nothing to set.
+    expect(setActiveXValue(button("Go"), "1")).toBeUndefined();
+  });
+
+  it("switches to UTF-16 for text a single byte cannot hold", () => {
+    const after = setActiveXValue(checkbox("0", "C", "G"), "漢字")!;
+    expect(readActiveXStream(after)?.value).toBe("漢字");
+  });
+
+  it("round-trips through the reader whatever the length", () => {
+    for (const v of ["", "1", "ab", "abc", "abcd", "abcde", "a longer one still"]) {
+      const after = setActiveXValue(checkbox("0", "Cap", "Grp"), v)!;
+      expect(readActiveXStream(after)?.value ?? "", JSON.stringify(v)).toBe(v);
+    }
   });
 });

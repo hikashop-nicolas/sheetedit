@@ -106,3 +106,24 @@ describe("an ActiveX combo in the grid", () => {
     host.remove();
   });
 });
+
+describe("a change survives the save", () => {
+  it("puts the new value in the part, and reads it back from the saved file", async () => {
+    const { writeWorkbook } = await import("./workbook");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, book(), { fileName: "a.xlsm" });
+    await frame();
+    const select = host.querySelector<HTMLSelectElement>(".sheetedit-ctrlbox select")!;
+    select.value = "Wed";
+    select.dispatchEvent(new Event("change"));
+    await frame();
+
+    // Round trip: the control's own persisted binary carries the new value, not just the cell.
+    const saved = await ed.getBytes();
+    const back = readWorkbook(saved as Uint8Array, "a.xlsm").sheets[0]!.controls![0]!;
+    expect(back.activeXValue).toBe("Wed");
+    ed.destroy();
+    host.remove();
+  });
+});

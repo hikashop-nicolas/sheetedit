@@ -476,6 +476,8 @@ export interface SheetControl {
   activeX?: boolean;
   /** ActiveX: the control's persisted value, as the file spells it. */
   activeXValue?: string;
+  /** ActiveX: the part holding that value, so a change can be written back into it. */
+  activeXBinPath?: string;
   /** List controls: the range the items come from, and the 1-based selection (0 = nothing). */
   sourceRange?: string;
   selected?: number;

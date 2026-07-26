@@ -302,10 +302,17 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     lists from the named range and writes the chosen TEXT to the linked cell, where a form control
     writes the item's position. Verified against the real file, whose three combos carry
     RegionList / MonthList / DayList and linked cells H9 / H5 / C7.
-  - Still to do: an MS-OFORMS WRITER, so a control with no linked cell could have its persisted
-    state changed. Feasible (the reader proves the layout is understood, and cb would catch a wrong
-    field width) but it could only be self-verified: LibreOffice does not surface ActiveX from xlsx,
-    so there is no independent judge for it the way there was for the VBA writer.
+  - DONE: an MS-OFORMS writer for the Value. Same length patches IN PLACE so the stream stays
+    byte-identical including padding; a length change rebuilds the ExtraDataBlock and carries the
+    unmodelled trailing blocks (StreamData, TextProps, rgColumnInfo) across. It refuses on any
+    control the reader would not vouch for, so a write never proceeds where a read would not.
+    Identity confirmed on four real Excel streams, and a change survives editor -> save -> reread.
+  - VERIFICATION CAVEAT, and it is a real one. LibreOffice does not surface ActiveX from xlsx, so
+    unlike the VBA writer (which an independent engine was made to RUN) there is no outside judge.
+    It reopens a rewritten workbook without complaint, and that only proves the package is not
+    corrupt. Excel remains the untested case.
+  - Still open: Caption and the other string properties are read but only Value can be written, and
+    a control's binary is left alone entirely when its mask is unmodelled (ScrollBar, SpinButton).
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

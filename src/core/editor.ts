@@ -30,6 +30,7 @@ import { editModuleSource, findSheetHandler, findWorkbookHandler, hasEventHandle
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { hasActiveX } from "../adapters/xlsx/control-read";
+import { setActiveXValue } from "../adapters/xlsx/activex-read";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -2363,6 +2364,14 @@ export function createSheetEditor(
     },
     onChange: (changed) => {
       const sheet = wb.sheets[active];
+      // An ActiveX control keeps its own state in a persisted binary, so the change goes there as
+      // well as to any linked cell. A part whose layout was not understood is left alone.
+      for (const ctl of changed) {
+        if (!ctl.activeX || !ctl.activeXBinPath || ctl.activeXValue === undefined) continue;
+        const bin = wb.files[ctl.activeXBinPath];
+        const next = bin ? setActiveXValue(bin, ctl.activeXValue) : undefined;
+        if (next) wb.files[ctl.activeXBinPath] = next;
+      }
       // A control with no linked cell still remembers its own state; there is just nowhere to put
       // it. A radio that cleared its group brings the rest along, in one undo step.
       const writes = changed.flatMap((ctl) => {
