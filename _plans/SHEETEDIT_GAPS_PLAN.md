@@ -273,7 +273,23 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
-- **Preserved-only**: ActiveX (Windows COM in a .bin part; carried through a save, never rendered).
+- **Preserved-only**: ActiveX (carried through a save, never rendered). The macro dialog now says so,
+  since the control otherwise leaves an unexplained gap on the grid.
+  - RESEARCHED 2026-07-26, and it corrects an earlier claim here that the `.bin` is untouchable.
+    **[MS-OFORMS]** is a public, normative Microsoft Open Specification for exactly this binary
+    persistence, so a Forms 2.0 control (which is what Excel's ActiveX toolbox inserts) is
+    parseable on the same clean-room basis as MS-OVBA. A THIRD-PARTY COM control still is not: the
+    OOXML spec says the content "shall be solely determined by the corresponding object", so its
+    format belongs to whoever wrote the control.
+  - The surprise is where the data sits. A real `activeX1.xml` (checked against one in the wild)
+    carries ONLY `ax:classid` plus a relationship to the `.bin` when persistence is
+    `persistStreamInit`. Caption, value, size, colours and the linked cell are all in the binary.
+    So there is no cheap "read the XML and render it" half: the work IS the MS-OFORMS parser.
+  - Blocked on samples. Apache POI's 14 macro-enabled test workbooks contain no ActiveX part at
+    all, and the public files that do are business documents or malware corpora, so neither the
+    licence nor the absence of real data can be relied on. Every solid piece of this project was
+    built against genuine files, and hand-built fixtures are what hid the missing styles
+    relationship and the PROJECTVERSION desync.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element
