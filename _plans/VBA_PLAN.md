@@ -161,4 +161,20 @@ inside sheetedit and move later.
   step, including the parts that touch no cell (hidden rows, a rename, protection), and a run that
   stops is rolled back before the caller sees the error, so a half-run macro can never be saved.
   Errors name the module and line. `MsgBox` output is shown after the run rather than blocking.
-- [ ] Stage 5 (write back), after 4
+- [x] **Stage 5** - MS-OVBA compressor, CFB writer, and `setModuleSource`, which replaces one
+  module inside an existing `vbaProject.bin`. The macro viewer's source box is editable and saves
+  through it, as one undo step; the source is parsed first, so syntactic nonsense cannot be saved,
+  and `setModuleSource` reads its own output back before returning it.
+
+  Two decisions worth keeping in mind:
+
+  - The **performance cache** (the compiled p-code in front of the source) is dropped and
+    `MODULEOFFSET` set to 0. Leaving a stale cache next to changed source is the one outcome that
+    must not happen: the workbook would show one thing and run another.
+  - The **directory tree is preserved** rather than rebuilt: same entries, same order, same links,
+    same CLSIDs and timestamps, with only start sector and size rewritten. A vbaProject.bin holds
+    parts sheetedit does not model, and inventing values for them would be worse than leaving them.
+
+  Verified against LibreOffice, an independent implementation: a rewritten `.xlsm` converted with
+  `--convert-to fods` carries the new source, both new procedures, and no trace of the old one.
+  Not verified against Excel itself, which is not available here.

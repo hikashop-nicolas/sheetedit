@@ -25,7 +25,7 @@ import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSet
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
 import { subNames } from "./vba";
-import { runWorkbookMacro, runnableSubs } from "./vba-macro";
+import { editModuleSource, runWorkbookMacro, runnableSubs } from "./vba-macro";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { formDialog, type FormField } from "./ui/form-dialog";
@@ -1364,15 +1364,20 @@ export function createSheetEditor(
     if (project?.modules.length) {
       const list = document.createElement("div");
       list.className = "sheetedit-vba-list";
-      const pre = document.createElement("pre");
+      // Editable: the source IS the macro now that sheetedit can write it back. Saving parses it
+      // first, so syntactic nonsense cannot reach the file.
+      const pre = document.createElement("textarea");
       pre.className = "sheetedit-vba-src";
+      pre.spellcheck = false;
       const runs = document.createElement("div");
       runs.className = "sheetedit-vba-runs";
       const status = document.createElement("p");
       status.className = "sheetedit-note sheetedit-vba-status";
+      let current = 0;
       const show = (i: number): void => {
+        current = i;
         const mod = project.modules[i]!;
-        pre.textContent = mod.source;
+        pre.value = mod.source;
         for (const [j, b] of [...list.children].entries()) b.classList.toggle("is-current", j === i);
         // Naming the procedures is what makes a long module readable at a glance.
         const subs = subNames(mod.source);
@@ -1381,6 +1386,21 @@ export function createSheetEditor(
         // nothing to supply them, and a Function is not something a user "runs".
         status.textContent = "";
         runs.textContent = "";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "sheetedit-dlg-btn";
+        save.textContent = t("vbaSave");
+        save.addEventListener("click", () => {
+          const target = project.modules[current]!;
+          const res = editModuleSource(wb, target.name, pre.value);
+          status.classList.toggle("is-error", !res.ok);
+          if (!res.ok) { status.textContent = `${t("vbaSaveFailed")} ${res.error ?? ""}`; return; }
+          if (res.undo && res.redo) history.push({ sheet: active, cells: [], undoExtra: res.undo, redoExtra: res.redo });
+          mark();
+          show(current); // the Run list follows whatever the module now declares
+          status.textContent = t("vbaSaved"); // after show(), which clears the status line
+        });
+        runs.appendChild(save);
         const runnable = runnableSubs(mod.source);
         if (!runnable.length) {
           const none = document.createElement("span");
@@ -1389,6 +1409,7 @@ export function createSheetEditor(
           runs.appendChild(none);
           return;
         }
+
         for (const name of runnable) {
           const b = document.createElement("button");
           b.type = "button";

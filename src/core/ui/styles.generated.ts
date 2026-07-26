@@ -794,7 +794,8 @@ background:var(--sheetedit-btn); color:var(--sheetedit-text); border:1px solid v
 }
 .sheetedit-vba-mod.is-current { background:var(--sheetedit-accent); border-color:var(--sheetedit-accent); color:var(--sheetedit-accent-fg); }
 .sheetedit-vba-src {
-margin:0; max-height:52vh; overflow:auto; padding:9px 11px; border-radius:7px; white-space:pre;
+margin:0; width:100%; height:52vh; overflow:auto; padding:9px 11px; border-radius:7px;
+white-space:pre; resize:vertical; box-sizing:border-box;
 font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size:4;
 background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); border:1px solid var(--sheetedit-btn);
 }

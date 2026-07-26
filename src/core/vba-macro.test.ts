@@ -168,3 +168,64 @@ describe("MsgBox", () => {
     expect(res.messages).toEqual(["all done"]);
   });
 });
+
+describe("editing a module's source", () => {
+  const workbookWithMacros = async (): Promise<Workbook> => {
+    const { readFileSync } = await import("node:fs");
+    const { unzipSync } = await import("fflate");
+    const { readVbaProject } = await import("./vba");
+    const files = unzipSync(new Uint8Array(readFileSync("src/fixtures/macros-cp950.xlsm")));
+    const wb = workbook();
+    wb.files = files as unknown as Record<string, Uint8Array>;
+    wb.vba = readVbaProject(files["xl/vbaProject.bin"]!);
+    return wb;
+  };
+
+  it("writes the new source into the project and back out again on undo", async () => {
+    const wb = await workbookWithMacros();
+    const { readVbaProject } = await import("./vba");
+    const { editModuleSource } = await import("./vba-macro");
+    const before = wb.vba!.modules.find((m) => m.name === "Module1")!.source;
+
+    const next = 'Sub Button1_Click()\r\n    Range("A1").Value = 5\r\nEnd Sub\r\n';
+    const res = editModuleSource(wb, "Module1", next);
+    expect(res.ok, res.error).toBe(true);
+    expect(wb.vba!.modules.find((m) => m.name === "Module1")!.source).toBe(next);
+    // The bytes that will be saved carry it too, which is the point of the whole stage.
+    expect(readVbaProject(wb.files["xl/vbaProject.bin"]!)!.modules.find((m) => m.name === "Module1")!.source).toBe(next);
+
+    res.undo!();
+    expect(wb.vba!.modules.find((m) => m.name === "Module1")!.source).toBe(before);
+    expect(readVbaProject(wb.files["xl/vbaProject.bin"]!)!.modules.find((m) => m.name === "Module1")!.source).toBe(before);
+  });
+
+  it("refuses source it cannot parse, and changes nothing", async () => {
+    const wb = await workbookWithMacros();
+    const { editModuleSource } = await import("./vba-macro");
+    const before = wb.files["xl/vbaProject.bin"]!;
+    const res = editModuleSource(wb, "Module1", "Sub Broken(\r\nEnd Sub\r\n");
+    expect(res.ok).toBe(false);
+    expect(wb.files["xl/vbaProject.bin"]).toBe(before);
+    expect(wb.vba!.modules.find((m) => m.name === "Module1")!.source).toMatch(/bingo/);
+  });
+
+  it("names a module the workbook does not have", async () => {
+    const wb = await workbookWithMacros();
+    const { editModuleSource } = await import("./vba-macro");
+    expect(editModuleSource(wb, "Nope", "Sub A()\r\nEnd Sub\r\n").error).toMatch(/no module called Nope/);
+  });
+
+  it("says so when the workbook has no macro project at all", async () => {
+    const { editModuleSource } = await import("./vba-macro");
+    expect(editModuleSource(workbook(), "Module1", "").ok).toBe(false);
+  });
+
+  it("makes a saved edit runnable straight away", async () => {
+    const wb = await workbookWithMacros();
+    const { editModuleSource } = await import("./vba-macro");
+    editModuleSource(wb, "Module1", 'Sub Button1_Click()\r\n    Range("B2").Value = "written"\r\nEnd Sub\r\n');
+    const res = runWorkbookMacro(wb, wb.vba!.modules.find((m) => m.name === "Module1")!.source, "Module1", "Button1_Click");
+    expect(res.ok, res.error?.message).toBe(true);
+    expect(getCell(wb.sheets[0]!, 2, 2)?.value).toBe("written");
+  });
+});

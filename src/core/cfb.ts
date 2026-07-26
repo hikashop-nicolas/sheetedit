@@ -31,6 +31,11 @@ export interface CfbEntry {
 
 export interface CfbFile {
   entries: CfbEntry[];
+  /** The directory's raw sectors, so a writer can keep the tree exactly as it was found. */
+  dirBytes: Uint8Array;
+  /** Sector size in bytes, and the size below which a stream lives in the mini stream. */
+  sectorSize: number;
+  miniCutoff: number;
   /** Read one stream's bytes by directory index. */
   read(index: number): Uint8Array;
   /** Find an entry by name (case-insensitive), optionally under a parent storage. */
@@ -214,5 +219,5 @@ export function readCfb(bytes: Uint8Array): CfbFile {
     return hit ? read(hit.index) : undefined;
   };
 
-  return { entries, read, find, paths, readPath };
+  return { entries, dirBytes, sectorSize, miniCutoff, read, find, paths, readPath };
 }

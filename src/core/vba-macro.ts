@@ -5,6 +5,8 @@ import { VbaInterpreter } from "./vba-run";
 import { VbaError } from "./vba-value";
 import { VbaSyntaxError } from "./vba-lex";
 import { excelGlobals, type ExcelHost, type Rect } from "./vba-excel";
+import { setModuleSource, VbaWriteError } from "./vba-write";
+import { vbaPartOf } from "./vba";
 
 // ---------------------------------------------------------------------------
 // Running a macro against the workbook (Stage 4 of _plans/VBA_PLAN.md)
@@ -155,4 +157,49 @@ function restore(wb: Workbook, snap: Snapshot): void {
     if (sheet) applyFields(sheet, c.r, c.c, c.fields);
   }
   restoreSheets(wb, snap.sheets);
+}
+
+export interface ModuleEditResult {
+  ok: boolean;
+  /** Why the edit was refused. Nothing has changed when this is set. */
+  error?: string;
+  undo?: () => void;
+  redo?: () => void;
+}
+
+/**
+ * Replace one module's source in the workbook's macro project.
+ *
+ * The source is parsed first: the plan's rule for this stage is that an edit must not be able to
+ * save syntactic nonsense into a file Excel will then refuse to compile. setModuleSource then
+ * verifies its own output by reading it back, so a write that produced something sheetedit cannot
+ * parse never reaches the caller either.
+ */
+export function editModuleSource(wb: Workbook, moduleName: string, source: string): ModuleEditResult {
+  const project = wb.vba;
+  const mod = project?.modules.find((m) => m.name === moduleName);
+  if (!project || !mod) return { ok: false, error: `there is no module called ${moduleName}` };
+  try {
+    parseModule(source, moduleName);
+  } catch (e) {
+    const where = e instanceof VbaSyntaxError ? ` (line ${e.line})` : "";
+    return { ok: false, error: `${(e as Error).message}${where}` };
+  }
+  const key = wb.files["xl/vbaProject.bin"] ? "xl/vbaProject.bin" : "xl/vbaproject.bin";
+  const before = vbaPartOf(wb.files);
+  if (!before) return { ok: false, error: "this workbook has no macro project" };
+
+  let after: Uint8Array;
+  try {
+    after = setModuleSource(before, moduleName, source);
+  } catch (e) {
+    return { ok: false, error: e instanceof VbaWriteError ? e.message : (e as Error).message };
+  }
+  const oldSource = mod.source;
+  const apply = (bin: Uint8Array, text: string) => (): void => {
+    wb.files[key] = bin;
+    mod.source = text;
+  };
+  apply(after, source)();
+  return { ok: true, undo: apply(before, oldSource), redo: apply(after, source) };
 }
