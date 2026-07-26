@@ -1107,6 +1107,54 @@ export function createSheetEditor(
     mark();
     renderGrid();
   };
+
+  // --- undo for sheet-level settings -------------------------------------------
+  // A cell edit records its own fields, but protection, page setup, panes and outline grouping live
+  // on the sheet, so a step for one of those carries a before/after snapshot of those fields
+  // instead. Maps and sets are copied, or undo would hand back the very object it is meant to
+  // restore.
+  const SETTING_KEYS = ["protection", "printSetup", "freeze", "paneSplit", "rowOutline", "colOutline",
+    "rowCollapsed", "colCollapsed", "hiddenRows", "hiddenCols", "summaryBelow", "summaryRight"] as const;
+  type SettingKey = (typeof SETTING_KEYS)[number];
+  type SettingsSnap = { [K in SettingKey]?: Sheet[K] };
+  const cloneSetting = <T,>(v: T): T => (v instanceof Map ? (new Map(v) as T) : v instanceof Set ? (new Set(v) as T) : v);
+  const snapSettings = (sheet: Sheet): SettingsSnap => {
+    const out: SettingsSnap = {};
+    for (const k of SETTING_KEYS) Object.assign(out, { [k]: cloneSetting(sheet[k]) });
+    return out;
+  };
+  const restoreSettings = (sheet: Sheet, snap: SettingsSnap): void => {
+    for (const k of SETTING_KEYS) Object.assign(sheet, { [k]: cloneSetting(snap[k]) });
+    // The dirty flags are forced rather than restored: the model has just diverged from whatever was
+    // last written, so every affected part has to be re-emitted. Restoring a stale "clean" flag
+    // after a save would leave the undone change missing from the file.
+    sheet.protectionDirty = true;
+    sheet.printDirty = true;
+    sheet.freezeDirty = true;
+    sheet.outlineDirty = true;
+    if (wb.kind === "ods") sheet.odsDirty = true;
+  };
+  /** Run a change to this sheet's settings as an undoable step. */
+  const recordSettings = (mutate: () => void): void => {
+    const si = active;
+    const sheet = wb.sheets[si];
+    if (!sheet) return;
+    const before = snapSettings(sheet);
+    mutate();
+    const after = snapSettings(sheet);
+    history.push({
+      sheet: si,
+      cells: [],
+      undoExtra: () => { const s2 = wb.sheets[si]; if (s2) restoreSettings(s2, before); },
+      redoExtra: () => { const s2 = wb.sheets[si]; if (s2) restoreSettings(s2, after); },
+    });
+  };
+  /** The same, for a change that lives on the workbook rather than a sheet. */
+  const recordWorkbook = (apply: () => void, revert: () => void): void => {
+    apply();
+    history.push({ sheet: active, cells: [], undoExtra: revert, redoExtra: apply });
+  };
+
   const doUndo = () => {
     const step = history.popUndo();
     if (step) applyStep(step, "undo");
@@ -1208,9 +1256,11 @@ export function createSheetEditor(
   const setFreeze = (rows: number, cols: number, asSplit?: boolean): void => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    sheet.freeze = rows > 0 || cols > 0 ? { rows, cols } : undefined;
-    sheet.paneSplit = sheet.freeze && asSplit ? true : undefined;
-    sheet.freezeDirty = true;
+    recordSettings(() => {
+      sheet.freeze = rows > 0 || cols > 0 ? { rows, cols } : undefined;
+      sheet.paneSplit = sheet.freeze && asSplit ? true : undefined;
+      sheet.freezeDirty = true;
+    });
     mark();
     renderGrid();
   };
@@ -1220,16 +1270,19 @@ export function createSheetEditor(
     const sheet = wb.sheets[active];
     if (!sheet) return;
     // Unprotecting drops the file's password hash with it, which the dialog warns about.
-    sheet.protection = prot;
-    sheet.protectionDirty = true;
+    recordSettings(() => {
+      sheet.protection = prot;
+      sheet.protectionDirty = true;
+    });
     mark();
     renderGrid();
   };
   const setStructureProtection = (on: boolean): void => {
-    wb.protection = on ? { ...wb.protection, structure: true } : { ...wb.protection, structure: undefined };
-    wb.protectionDirty = true;
+    const before = wb.protection;
+    const after = on ? { ...wb.protection, structure: true } : { ...wb.protection, structure: undefined };
+    const set = (v: typeof before): void => { wb.protection = v; wb.protectionDirty = true; renderTabs(); };
+    recordWorkbook(() => set(after), () => set(before));
     mark();
-    renderTabs();
   };
   // Protect-sheet dialog: the allowances, phrased as permissions the way Excel and Calc phrase
   // them, then stored as the formats' blocked-action flags.
@@ -1317,7 +1370,14 @@ export function createSheetEditor(
       opt.appendChild(chips);
       opt.addEventListener("click", () => {
         close();
-        setWorkbookTheme(wb, { ...theme, colors: { ...theme.colors } });
+        // Switching back to the previous palette is an exact inverse: the cells kept their theme
+        // references, so re-resolving against the old theme restores every colour it had changed.
+        const previous = wb.theme;
+        const next = { ...theme, colors: { ...theme.colors } };
+        recordWorkbook(
+          () => setWorkbookTheme(wb, next),
+          () => { if (previous) setWorkbookTheme(wb, previous); },
+        );
         mark();
         renderGrid();
       });
@@ -1342,10 +1402,12 @@ export function createSheetEditor(
   const updatePrint = (change: (p: PrintSetup) => void): void => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const p: PrintSetup = { ...(sheet.printSetup ?? {}) };
-    change(p);
-    sheet.printSetup = p;
-    sheet.printDirty = true;
+    recordSettings(() => {
+      const p: PrintSetup = { ...(sheet.printSetup ?? {}) };
+      change(p);
+      sheet.printSetup = p;
+      sheet.printDirty = true;
+    });
     mark();
     renderGrid();
   };
@@ -1492,7 +1554,13 @@ export function createSheetEditor(
         b.type = "button";
         b.className = "sheetedit-pop-item";
         b.textContent = text;
-        b.addEventListener("click", () => { closeLineMenu(); if (!sheet) return; run(); if (wb.kind === "ods") sheet.odsDirty = true; mark(); renderGrid(); });
+        b.addEventListener("click", () => {
+          closeLineMenu();
+          if (!sheet) return;
+          recordSettings(() => { run(); if (wb.kind === "ods") sheet.odsDirty = true; });
+          mark();
+          renderGrid();
+        });
         pop.appendChild(b);
       };
       const sep = document.createElement("div");
@@ -2060,15 +2128,19 @@ export function createSheetEditor(
     onToggle: (level, line, collapse) => {
       const sheet = wb.sheets[active];
       if (!sheet) return;
-      setGroupCollapsed(sheet, "row", line, level, collapse, totalRows);
-      if (wb.kind === "ods") sheet.odsDirty = true;
+      recordSettings(() => {
+        setGroupCollapsed(sheet, "row", line, level, collapse, totalRows);
+        if (wb.kind === "ods") sheet.odsDirty = true;
+      });
       mark(); renderGrid();
     },
     onLevel: (level) => {
       const sheet = wb.sheets[active];
       if (!sheet) return;
-      showOutlineLevel(sheet, "row", level, totalRows);
-      if (wb.kind === "ods") sheet.odsDirty = true;
+      recordSettings(() => {
+        showOutlineLevel(sheet, "row", level, totalRows);
+        if (wb.kind === "ods") sheet.odsDirty = true;
+      });
       mark(); renderGrid();
     },
   });

@@ -271,6 +271,16 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
 - **Preserved-only, not authored yet**: form controls / ActiveX.
+- **Undo covers the sheet-level settings** (protection, page setup, panes, outline grouping) and the
+  workbook theme, not just cell edits. A cell edit records its own fields; these live on the sheet,
+  so the step carries a before/after snapshot instead, via the history's existing undoExtra /
+  redoExtra closures. Two things that bite:
+  - Maps and sets must be CLONED into the snapshot, or undo hands back the very object it is meant
+    to restore and the next edit corrupts it.
+  - The dirty flags are FORCED true on restore rather than snapshotted. After a save the flag is
+    clear; restoring that stale value would leave the undone change missing from the next save.
+  - A theme switch is its own inverse: cells keep their theme references, so re-resolving against
+    the previous palette restores every colour it changed.
 - **Workbook themes** are read (palette + scheme fonts) and switchable. The trick is that cell styles
   keep the theme *reference* (index + tint) beside the resolved colour, so a switch re-resolves
   instead of having baked in whatever palette the file was read with. Cells share the style objects

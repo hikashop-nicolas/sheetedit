@@ -187,6 +187,16 @@ per column, `.ods` nests the rows in `<table:table-row-group>` (with `table:disp
 collapsed one). Verified through LibreOffice round-trips both ways. ODS **column** groups are read
 and preserved but not authored.
 
+## Undo
+
+Ctrl+Z covers cell edits and, since they are just as easy to trigger by accident, the sheet-level
+settings too: protecting a sheet, page setup and print area, freeze and split panes, outline
+grouping, and a workbook theme switch. A theme switch is exactly reversible because the cells keep
+their references to the palette rather than the colours it resolved to.
+
+Row and column insert/delete clear the history, because they shift every recorded position and
+steps from before them cannot replay safely.
+
 ## Workbook themes
 
 A workbook's theme is a named palette of twelve colours plus a heading and a body font. Cells do not
