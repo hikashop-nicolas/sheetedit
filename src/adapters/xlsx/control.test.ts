@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook, writeWorkbook } from "../../core/workbook";
+import { absoluteRange, absoluteRef, createXlsxControl, deleteXlsxControl, updateXlsxControlLinks } from "./control-create";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -151,5 +152,116 @@ describe("xlsx form controls", () => {
     check.dirty = true;
     writeWorkbook(wb);
     expect(check.dirty).toBe(false);
+  });
+});
+
+/** A workbook with no controls at all, to create them from scratch in. */
+function bare(): Uint8Array {
+  return zipSync({
+    "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`),
+    "_rels/.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+    "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${R}"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+    "xl/worksheets/sheet1.xml": strToU8(`<worksheet xmlns="${MAIN}"><sheetData><row r="1"><c r="D1" t="inlineStr"><is><t>Alpha</t></is></c></row></sheetData></worksheet>`),
+  });
+}
+
+describe("reference helpers", () => {
+  it("normalises a reference to absolute form", () => {
+    expect(absoluteRef("b2")).toBe("$B$2");
+    expect(absoluteRef("$B$2")).toBe("$B$2");
+    expect(absoluteRef("nonsense")).toBeUndefined();
+  });
+  it("normalises a range, and rejects a broken one", () => {
+    expect(absoluteRange("d1:d3")).toBe("$D$1:$D$3");
+    expect(absoluteRange("D1")).toBe("$D$1");
+    expect(absoluteRange("D1:")).toBeUndefined();
+  });
+});
+
+describe("creating form controls", () => {
+  it("builds every part a control needs, so a reader can find it", () => {
+    const wb = readWorkbook(bare());
+    const sheet = wb.sheets[0]!;
+    const ctl = createXlsxControl(wb, sheet, { kind: "checkbox", label: "Go", linkedCell: "$B$1", at: { r1: 1, c1: 3, r2: 2, c2: 5 } })!;
+    expect(ctl).toBeTruthy();
+    const out = unzipSync(writeWorkbook(wb));
+    const dec = (p: string) => strFromU8(out[p]!);
+    // The props part, its content type, its relationship, the VML shape, and the worksheet entry.
+    expect(out[ctl.propsPath!]).toBeTruthy();
+    expect(dec("[Content_Types].xml")).toContain("controlproperties");
+    expect(dec("[Content_Types].xml")).toMatch(/Extension="vml"/);
+    expect(dec("xl/worksheets/_rels/sheet1.xml.rels")).toContain("ctrlProp");
+    expect(dec("xl/worksheets/_rels/sheet1.xml.rels")).toContain("vmlDrawing");
+    expect(dec(ctl.vmlPath!)).toMatch(/ObjectType="Checkbox"/);
+    const ws = dec("xl/worksheets/sheet1.xml");
+    expect(ws).toContain("<controls>");
+    expect(ws).toContain("legacyDrawing");
+  });
+
+  it("round-trips a created control through the reader", () => {
+    const wb = readWorkbook(bare());
+    createXlsxControl(wb, wb.sheets[0]!, { kind: "checkbox", label: "Go", linkedCell: "$B$1", at: { r1: 1, c1: 3, r2: 2, c2: 5 } });
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!.controls!;
+    expect(back.length).toBe(1);
+    expect(back[0]!.kind).toBe("checkbox");
+    expect(back[0]!.label).toBe("Go");
+    expect(back[0]!.linkedCell).toBe("$B$1");
+    expect(back[0]!.checked).toBe(false);
+    expect(back[0]!.anchor?.fromCol).toBe(3);
+  });
+
+  it("a created dropdown carries its source range", () => {
+    const wb = readWorkbook(bare());
+    createXlsxControl(wb, wb.sheets[0]!, { kind: "dropdown", linkedCell: "$B$2", sourceRange: "$D$1:$D$3", at: { r1: 3, c1: 3, r2: 4, c2: 5 } });
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!.controls![0]!;
+    expect(back.kind).toBe("dropdown");
+    expect(back.sourceRange).toBe("$D$1:$D$3");
+    expect(back.selected).toBe(0);
+  });
+
+  it("a second control reuses the sheet's one VML drawing", () => {
+    const wb = readWorkbook(bare());
+    const sheet = wb.sheets[0]!;
+    const a = createXlsxControl(wb, sheet, { kind: "checkbox", at: { r1: 1, c1: 1, r2: 2, c2: 3 } })!;
+    const b = createXlsxControl(wb, sheet, { kind: "spin", at: { r1: 3, c1: 1, r2: 4, c2: 3 } })!;
+    expect(b.vmlPath).toBe(a.vmlPath);
+    expect(b.shapeId).not.toBe(a.shapeId); // distinct shapes, or they would collide
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0]!.controls!.length).toBe(2);
+  });
+
+  it("adds a control to a workbook that already had one", () => {
+    const wb = readWorkbook(book());
+    const sheet = wb.sheets[0]!;
+    createXlsxControl(wb, sheet, { kind: "spin", linkedCell: "$B$5", at: { r1: 6, c1: 3, r2: 7, c2: 5 } });
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!.controls!;
+    expect(back.length).toBe(3);
+    expect(back.some((c) => c.kind === "spin" && c.linkedCell === "$B$5")).toBe(true);
+  });
+
+  it("deletes a control and everything belonging to it", () => {
+    const wb = readWorkbook(book());
+    const sheet = wb.sheets[0]!;
+    const victim = sheet.controls![0]!;
+    const propsPath = victim.propsPath!;
+    deleteXlsxControl(wb, sheet, victim);
+    expect(wb.files[propsPath]).toBeUndefined();
+    const out = writeWorkbook(wb);
+    const back = readWorkbook(out).sheets[0]!.controls!;
+    expect(back.length).toBe(1);
+    expect(back[0]!.name).toBe("Drop Down 2");
+    // The shape must go too, or the VML keeps drawing a control nothing points at.
+    expect(strFromU8(unzipSync(out)[victim.vmlPath!]!)).not.toContain("_x0000_s1025");
+  });
+
+  it("rewrites a linked cell in both parts", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![0]!;
+    ctl.linkedCell = "$Z$9";
+    updateXlsxControlLinks(wb, ctl);
+    const out = writeWorkbook(wb);
+    expect(strFromU8(unzipSync(out)["xl/ctrlProps/ctrlProp1.xml"]!)).toMatch(/fmlaLink="\$Z\$9"/);
+    expect(strFromU8(unzipSync(out)[ctl.vmlPath!]!)).toMatch(/<x:FmlaLink>\$Z\$9<\/x:FmlaLink>/);
+    expect(readWorkbook(out).sheets[0]!.controls![0]!.linkedCell).toBe("$Z$9");
   });
 });

@@ -11,7 +11,7 @@ import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
-import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook } from "./model";
+import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook, SheetControl } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, recalc } from "./recalc";
@@ -25,6 +25,7 @@ import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSet
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
 import { setupControlLayer } from "./ui/control-layer";
+import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -2176,6 +2177,58 @@ export function createSheetEditor(
     },
   });
 
+  /** Add a control at the selection, linked to the cell below it by default. */
+  const insertControl = (kind: SheetControl["kind"]): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet) return;
+    const at = sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: 1 };
+    const created = createXlsxControl(wb, sheet, {
+      kind,
+      label: kind === "checkbox" ? t("ctrlAddCheckbox").replace(/^\S+\s/, "") : undefined,
+      // Default to the cell just right of the control, which is where a reader looks for its value.
+      linkedCell: defaultLink(at.r, at.c + 3),
+      sourceRange: kind === "dropdown" ? undefined : undefined,
+      at: placementFor(at.r, at.c),
+    });
+    if (!created) return;
+    mark();
+    renderGrid();
+    openControlDialog(created);
+  };
+
+  /** Edit a control's label, linked cell and item source, or delete it. */
+  const openControlDialog = (ctl: SheetControl): void => {
+    const fields: FormField[] = [
+      { key: "note", label: t("ctrlNote"), type: "note" },
+      { key: "label", label: t("ctrlLabel"), type: "text", value: ctl.label ?? "" },
+      { key: "link", label: t("ctrlLinkedCell"), type: "text", value: (ctl.linkedCell ?? "").replace(/\$/g, "") },
+    ];
+    if (ctl.kind === "dropdown" || ctl.kind === "list")
+      fields.push({ key: "range", label: t("ctrlSourceRange"), type: "text", value: (ctl.sourceRange ?? "").replace(/\$/g, "") });
+    fields.push({ key: "remove", label: t("ctrlDelete"), type: "checkbox", value: false });
+    formDialog(wrap, t("ctrlEdit"), fields, (vals) => {
+      const sheet = wb.sheets[active];
+      if (!sheet) return;
+      if (vals.remove) {
+        deleteXlsxControl(wb, sheet, ctl);
+        mark();
+        renderGrid();
+        return;
+      }
+      const link = String(vals.link).trim();
+      const range = vals.range == null ? "" : String(vals.range).trim();
+      // A reference that does not parse is rejected rather than written as nonsense.
+      if (link && !absoluteRef(link)) { showNotice(t("ctrlBadRef")); return; }
+      if (range && !absoluteRange(range)) { showNotice(t("ctrlBadRef")); return; }
+      ctl.label = String(vals.label).trim() || undefined;
+      ctl.linkedCell = link ? absoluteRef(link) : undefined;
+      if (vals.range != null) ctl.sourceRange = range ? absoluteRange(range) : undefined;
+      updateXlsxControlLinks(wb, ctl);
+      mark();
+      renderGrid();
+    });
+  };
+
   // The row-outline gutter, left of the row numbers.
   const outlineLayer = setupOutlineLayer({
     wrap,
@@ -2342,6 +2395,42 @@ export function createSheetEditor(
       setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
     });
     trailingIcons.push(freezeBtn);
+  }
+  if (caps.formControls) {
+    const CTRL_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="5" height="5" rx="1"/><path d="m3.2 5.5 1.1 1.1 1.6-2"/><rect x="9" y="3" width="5" height="5" rx="1"/><path d="m10.2 5 1.3 1.3L12.8 5"/><path d="M2 11.5h12"/></svg>`;
+    const ctrlBtn: HTMLButtonElement = tbIcon(CTRL_ICON, t("ctrlInsert"), () => {
+      closeLineMenu();
+      const pop = document.createElement("div");
+      pop.className = "sheetedit-pop";
+      const item = (text: string, run: () => void) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-pop-item";
+        b.textContent = text;
+        b.addEventListener("click", () => { closeLineMenu(); run(); });
+        pop.appendChild(b);
+      };
+      item(t("ctrlAddCheckbox"), () => insertControl("checkbox"));
+      item(t("ctrlAddDropdown"), () => insertControl("dropdown"));
+      item(t("ctrlAddSpinner"), () => insertControl("spin"));
+      const existing = wb.sheets[active]?.controls ?? [];
+      if (existing.length) {
+        const sep = document.createElement("div");
+        sep.className = "sheetedit-pop-sep";
+        pop.appendChild(sep);
+        for (const ctl of existing) item(`${t("ctrlEdit")}: ${ctl.label ?? ctl.name}`, () => openControlDialog(ctl));
+      }
+      document.body.appendChild(pop);
+      lineMenu = pop;
+      const r = ctrlBtn.getBoundingClientRect();
+      pop.style.left = `${Math.round(Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))}px`;
+      pop.style.top = `${Math.round(r.bottom + 4)}px`;
+      const onOutside = (ev: Event) => {
+        if (!pop.contains(ev.target as Node)) { closeLineMenu(); document.removeEventListener("pointerdown", onOutside, true); }
+      };
+      setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+    });
+    trailingIcons.push(ctrlBtn);
   }
   if (caps.themes) {
     const THEME_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12 3 3 0 0 0 0-6 3 3 0 0 1 0-6z"/></svg>`;

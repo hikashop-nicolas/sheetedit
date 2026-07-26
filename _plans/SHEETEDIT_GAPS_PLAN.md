@@ -280,6 +280,13 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     must be matched from the END; a lazy match from the start stops at the first underscore.
   - LibreOffice validates the structure but NOT the checkbox state: a file that was never checked
     still reads back as checked, so state fidelity is verified by our own round-trip.
+  - ctrlProps and the VML spell some object types differently ("CheckBox" vs "Checkbox") and the
+    label must be nested <div><font> in the VML textbox or LibreOffice does not find it. Both were
+    caught by round-tripping a CREATED control rather than only a hand-built one.
+  - VBA: sheetedit preserves vbaProject.bin but does not run it. Not a sandbox limitation (JS cannot
+    leave the tab anyway) - it needs a VBA interpreter plus the Excel object model. SheetJS only
+    preserves the blob too (its `vbaraw`), so it is no shortcut. Note XLSX cannot hold VBA at all;
+    macros require XLSM/XLSB/XLS.
 - **Undo covers the sheet-level settings** (protection, page setup, panes, outline grouping) and the
   workbook theme, not just cell edits. A cell edit records its own fields; these live on the sheet,
   so the step carries a before/after snapshot instead, via the history's existing undoExtra /

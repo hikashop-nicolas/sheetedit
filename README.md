@@ -208,13 +208,24 @@ A dropdown's items come from its source range, so it stays in step with the shee
 a macro, which a browser cannot and should not execute, so it is drawn disabled with a tooltip
 saying why rather than looking live and doing nothing. Labels and group boxes are drawn as-is.
 
+Controls can be **created and edited**, not only read. The toolbar's control button inserts a
+checkbox, dropdown or spinner at the selection and opens its settings; the same dialog edits an
+existing control's label, linked cell and item source, or deletes it. Creating one builds all three
+parts Excel expects (the `ctrlProps` part, a VML shape, the worksheet entry) plus the content types
+and relationships that make them findable, since missing any one of them makes Excel drop the
+control silently.
+
 State lives in two places in an `.xlsx` and both are read and written: the modern `ctrlProps` part
 and the legacy VML drawing that positions the control. Files predating `ctrlProps` carry everything
 in the VML, so it is the fallback rather than an afterthought, and a state change is mirrored into
 both so an older reader sees it too. Everything else in either part is left untouched.
 
-**ActiveX controls are preserved, not rendered.** They are Windows COM objects in a `.bin` part;
-there is no honest way to run one in a browser, so they are carried through a save unchanged.
+**Macros and ActiveX are preserved, not run.** A `.xlsm`'s `vbaProject.bin` and any ActiveX part
+survive a save byte-for-byte, because untouched parts are never rebuilt. Running them is a different
+proposition: it needs a VBA interpreter *and* the Excel object model, since macros exist to
+manipulate the workbook. That is a project in its own right, not a missing flag, and a partial
+implementation would be worse than none: a macro that half-runs can leave a workbook in a state its
+author never intended.
 
 `.ods` keeps controls in `office:forms` with a `draw:control` frame, a different model that is
 preserved rather than rendered. Verified against LibreOffice, which reads the kind, label, linked
