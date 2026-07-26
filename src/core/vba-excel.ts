@@ -1,16 +1,17 @@
 import {
-  colToLetters, ensureCell, getCell, lettersToCol, numToStr, parseA1Ref, type Cell, type CellStyle,
+  cellDisplay, colToLetters, ensureCell, getCell, lettersToCol, numToStr, parseA1Ref, type Cell, type CellStyle,
   type Sheet, type SheetControl, type StyleChange, type Workbook,
 } from "./model";
 import { clearXlsxCellStyle, setXlsxCellStyle } from "../adapters/xlsx/styles";
 import { setXlsxRowHidden } from "../adapters/xlsx/write";
 import { clearOdsCellStyle, setOdsCellStyle } from "../adapters/ods/styles";
 import { setCellInput } from "./workbook";
+import { createTable, listWorkbookTables, renameTable, tableStyle, type WorkbookTable } from "../adapters/xlsx/tables";
 import { makeFormulaEvaluator } from "./recalc";
 import { canEditCell } from "./protection";
 import { filterHiddenRows, sortedPositions, sortRange, sortText, type SortKey } from "./range-ops";
 import { addSheet, copySheet, deleteSheet, moveSheet, setSheetVisibility, sheetsEditable } from "./sheet-ops";
-import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "vbalang";
+import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type LazyGlobal, type VbaObject, type VbaValue } from "vbalang";
 
 // ---------------------------------------------------------------------------
 // The Excel object model for VBA (Stage 3 of _plans/done/VBA_PLAN.md)
@@ -338,6 +339,55 @@ export class RangeObject implements VbaObject {
         const c = a.c1 + toNumber(args[0]!) - 1;
         return new RangeObject(this.host, this.sheetIndex, [{ r1: a.r1, c1: c, r2: a.r2, c2: c }]);
       }
+      case "currentregion": {
+        // The block around the anchor, grown until a wholly empty row / column stops it. That is
+        // what Excel means by it, and it is how a macro finds a table it did not lay out itself.
+        const a = this.first;
+        const used = { r2: Math.max(1, this.sheet.maxRow), c2: Math.max(1, this.sheet.maxCol) };
+        const filled = (r: number, c: number): boolean => {
+          const v = getCell(this.sheet, r, c)?.value;
+          return v != null && v !== "";
+        };
+        const rowEmpty = (r: number, c1: number, c2: number): boolean => {
+          for (let c = c1; c <= c2; c++) if (filled(r, c)) return false;
+          return true;
+        };
+        const colEmpty = (c: number, r1: number, r2: number): boolean => {
+          for (let r = r1; r <= r2; r++) if (filled(r, c)) return false;
+          return true;
+        };
+        let r1 = a.r1, r2 = a.r2, c1 = a.c1, c2 = a.c2;
+        for (let grew = true; grew; ) {
+          grew = false;
+          while (r1 > 1 && !rowEmpty(r1 - 1, c1, c2)) { r1--; grew = true; }
+          while (r2 < used.r2 && !rowEmpty(r2 + 1, c1, c2)) { r2++; grew = true; }
+          while (c1 > 1 && !colEmpty(c1 - 1, r1, r2)) { c1--; grew = true; }
+          while (c2 < used.c2 && !colEmpty(c2 + 1, r1, r2)) { c2++; grew = true; }
+        }
+        return new RangeObject(this.host, this.sheetIndex, [{ r1, c1, r2, c2 }]);
+      }
+      case "autofit": {
+        // APPROXIMATION, and a stated one: real AutoFit measures the rendered text, which needs the
+        // font metrics of a page this may not have. The width is the longest displayed value in the
+        // column, in the workbook's own character units, which lands within a character or two.
+        const mdw = this.sheet.maxDigitWidth ?? 7;
+        for (const a of this.areas) {
+          const rows = a.c2 >= MAX_COL; // a full-row range autofits heights, which we leave alone
+          if (rows) continue;
+          for (let c = a.c1; c <= Math.min(a.c2, MAX_COL); c++) {
+            let widest = 0;
+            const last = Math.min(a.r2, Math.max(1, this.sheet.maxRow));
+            for (let r = a.r1; r <= last; r++) {
+              const cell = getCell(this.sheet, r, c);
+              const text = cell ? cellDisplay(cell) : "";
+              if (text.length > widest) widest = text.length;
+            }
+            (this.sheet.colWidths ??= new Map()).set(c, Math.max(mdw * 2, Math.round((widest + 1) * mdw) + 5));
+          }
+        }
+        this.host.onStructureChange?.();
+        return EMPTY;
+      }
       case "entirerow":
         return new RangeObject(this.host, this.sheetIndex,
           this.areas.map((a) => ({ r1: a.r1, c1: 1, r2: a.r2, c2: MAX_COL })));
@@ -478,13 +528,16 @@ export class RangeObject implements VbaObject {
       return;
     }
     // A two-dimensional array fills the range corner to corner, which is the fast way macros
-    // write a block back after computing it.
+    // write a block back after computing it. A ONE-dimensional array is a ROW, not a column:
+    // Array("a","b","c") into A1:C1 fills across, which is what Excel does and what every macro
+    // writing a header row expects.
     const a = this.first;
-    const rows = arr.upper[0]! - arr.lower[0]! + 1;
-    const cols = arr.lower.length > 1 ? arr.upper[1]! - arr.lower[1]! + 1 : 1;
+    const oneD = arr.lower.length === 1;
+    const rows = oneD ? 1 : arr.upper[0]! - arr.lower[0]! + 1;
+    const cols = oneD ? arr.upper[0]! - arr.lower[0]! + 1 : arr.upper[1]! - arr.lower[1]! + 1;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const idx = arr.lower.length > 1 ? [arr.lower[0]! + r, arr.lower[1]! + c] : [arr.lower[0]! + r];
+        const idx = oneD ? [arr.lower[0]! + c] : [arr.lower[0]! + r, arr.lower[1]! + c];
         this.write(a.r1 + r, a.c1 + c, arr.get(idx));
       }
     }
@@ -989,6 +1042,10 @@ export class WorksheetObject implements VbaObject {
     switch (lower) {
       case "name": return this.sheet.name;
       case "index": return this.index + 1;
+      case "listobjects": {
+        const coll = new ListObjectsCollection(this.host, this.index);
+        return args.length ? coll.get("item", args) : coll;
+      }
       case "oleobjects": {
         const coll = new OleObjectsCollection(this.host, this.index);
         // OLEObjects("Name") reads as a call on the property, so an argument indexes it directly.
@@ -1272,15 +1329,17 @@ export const XL_CONSTANTS: Record<string, number> = {
   XLTHIN: 2, XLMEDIUM: -4138, XLTHICK: 4, XLCONTINUOUS: 1,
   XLLEFT: -4131, XLRIGHT: -4152, XLCENTER: -4108, XLTOP: -4160, XLBOTTOM: -4107,
   XLSHEETVISIBLE: -1, XLSHEETHIDDEN: 0, XLSHEETVERYHIDDEN: 2,
+  // ListObjects.Add's source type and header flag.
+  XLSRCRANGE: 1, XLSRCEXTERNAL: 0, XLSRCXML: 2, XLSRCQUERY: 3, XLSRCMODEL: 4,
 };
 
 /**
  * The names a macro sees. Pass the result as the interpreter's `globals`; anything not here stops
  * the run by name rather than evaluating to Empty.
  */
-export function excelGlobals(host: ExcelHost, fileName = "workbook"): Map<string, VbaValue> {
-  const map = new Map<string, VbaValue>();
-  const self = (): Map<string, VbaValue> => map;
+export function excelGlobals(host: ExcelHost, fileName = "workbook"): Map<string, VbaValue | LazyGlobal> {
+  const map = new Map<string, VbaValue | LazyGlobal>();
+  const self = (): Map<string, VbaValue> => map as Map<string, VbaValue>;
   const activeSheetObj = (): WorksheetObject => new WorksheetObject(host, host.activeSheet);
 
   // Range / Cells with no sheet qualifier mean the active sheet, which can change mid-run, so
@@ -1299,7 +1358,9 @@ export function excelGlobals(host: ExcelHost, fileName = "workbook"): Map<string
   map.set("COLUMNS", bare("columns"));
   map.set("ACTIVEWORKBOOK", new WorkbookObject(host, fileName));
   map.set("THISWORKBOOK", new WorkbookObject(host, fileName));
-  map.set("ACTIVESHEET", { typeName: "Worksheet", get: (n, a) => activeSheetObj().get(n, a), set: (n, a, v) => activeSheetObj().set(n, a, v) });
+  // ActiveSheet is a PROPERTY: read fresh each time it is evaluated, so `Set ws = ActiveSheet`
+  // captures the sheet active at that moment instead of following whatever becomes active later.
+  map.set("ACTIVESHEET", { lazy: () => activeSheetObj() });
   map.set("SELECTION", {
     typeName: "Range",
     get: (n, a) => selectionRange(host).get(n, a),
@@ -1351,15 +1412,124 @@ function matchesCriterion(text: string, op: string, operand: string): boolean {
   }
 }
 
+// --- ListObjects: the tables on a sheet -------------------------------------------------------
+// A macro that lays data out and then makes it a table is a common shape, and the table is what
+// structured references in the rest of the workbook then name. Creating one writes the whole
+// package Excel looks for (see createTable), not just a model entry.
+
+/** One entry of Worksheet.ListObjects. */
+class ListObjectObject implements VbaObject {
+  readonly typeName = "ListObject";
+  constructor(private readonly host: ExcelHost, private tbl: WorkbookTable) {}
+
+  /** Re-read the table's own record, since a rename or a resize moves it. */
+  private current(): WorkbookTable {
+    const found = listWorkbookTables(this.host.wb).find((t) => t.path === this.tbl.path);
+    if (found) this.tbl = found;
+    return this.tbl;
+  }
+
+  get(name: string, _args: VbaValue[]): VbaValue {
+    const t = this.current();
+    switch (name.toLowerCase()) {
+      case "name": case "displayname": return t.displayName;
+      case "range": return new RangeObject(this.host, t.sheetIndex, [{ r1: t.r1, c1: t.c1, r2: t.r2, c2: t.c2 }]);
+      case "headerrowrange":
+        if (!t.headerRows) throw new VbaError("that table has no header row", 1004);
+        return new RangeObject(this.host, t.sheetIndex, [{ r1: t.r1, c1: t.c1, r2: t.r1, c2: t.c2 }]);
+      case "databodyrange": {
+        const r1 = t.r1 + t.headerRows;
+        if (t.r2 < r1) return NOTHING; // an empty table has no body, as in Excel
+        return new RangeObject(this.host, t.sheetIndex, [{ r1, c1: t.c1, r2: t.r2, c2: t.c2 }]);
+      }
+      case "tablestyle": return tableStyle(this.host.wb, t);
+      case "showheaders": return t.headerRows > 0;
+      case "parent": return new WorksheetObject(this.host, t.sheetIndex);
+    }
+    throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
+  }
+
+  set(name: string, _args: VbaValue[], value: VbaValue): void {
+    const t = this.current();
+    switch (name.toLowerCase()) {
+      case "name": case "displayname":
+        renameTable(this.host.wb, t, toStr(value));
+        this.host.onStructureChange?.();
+        return;
+      case "tablestyle":
+        tableStyle(this.host.wb, t, toStr(value));
+        this.host.onStructureChange?.();
+        return;
+    }
+    throw new VbaError(`${this.typeName}.${name} cannot be set by sheetedit`, 438);
+  }
+}
+
+/** Worksheet.ListObjects: the sheet's tables, indexable by name or 1-based position. */
+class ListObjectsCollection implements VbaObject {
+  readonly typeName = "ListObjects";
+  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number) {}
+
+  private list(): WorkbookTable[] {
+    return listWorkbookTables(this.host.wb).filter((t) => t.sheetIndex === this.sheetIndex);
+  }
+  enumerate(): VbaValue[] { return this.list().map((t) => new ListObjectObject(this.host, t)); }
+
+  get(name: string, args: VbaValue[]): VbaValue {
+    const lower = name.toLowerCase();
+    if (lower === "count") return this.list().length;
+    if (lower === "item" || lower === "") {
+      const key = args[0];
+      if (key === undefined) throw new VbaError("ListObjects needs a name or an index", 1004);
+      const list = this.list();
+      if (typeof key === "number") {
+        const t = list[Math.trunc(key) - 1];
+        if (!t) throw new VbaError("no such table", 9);
+        return new ListObjectObject(this.host, t);
+      }
+      const want = toStr(key).toLowerCase();
+      const t = list.find((x) => x.displayName.toLowerCase() === want || x.name.toLowerCase() === want);
+      if (!t) throw new VbaError(`no table named "${toStr(key)}"`, 9);
+      return new ListObjectObject(this.host, t);
+    }
+    if (lower === "add") {
+      // ListObjects.Add(SourceType, Source, LinkSource, XlListObjectHasHeaders, Destination)
+      const sourceType = args[0] !== undefined && args[0] !== EMPTY ? toNumber(args[0]) : XL_CONSTANTS.XLSRCRANGE!;
+      if (sourceType !== XL_CONSTANTS.XLSRCRANGE) throw new VbaError("ListObjects.Add can only build a table from a range", 1004);
+      const src = args[1];
+      if (!(src instanceof RangeObject)) throw new VbaError("ListObjects.Add needs a Range as its source", 1004);
+      const a = src.areas[0]!;
+      // xlYes = 1, xlNo = 2, xlGuess = 0. Excel's own default here is xlNo.
+      const flag = args[3] !== undefined && args[3] !== EMPTY ? toNumber(args[3]) : XL_CONSTANTS.XLNO!;
+      const hasHeaders = flag === XL_CONSTANTS.XLYES || (flag === XL_CONSTANTS.XLGUESS && a.r2 > a.r1);
+      const tbl = createTable(this.host.wb, src.sheetIndex, { r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }, { hasHeaders });
+      this.host.onStructureChange?.();
+      return new ListObjectObject(this.host, tbl);
+    }
+    throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
+  }
+}
+
 // --- OLEObjects: the ActiveX controls on a sheet ---------------------------------------------
 // A macro reaches an ActiveX control through Worksheet.OLEObjects("Name"), and its state through
 // that object's .Object. We read those controls and can write their persisted value, so the
 // members a real macro uses are modelled: everything else refuses, as ever.
 
+/** The Forms 2.0 class name a control reports, which is what `TypeName` on it returns. */
+const CONTROL_TYPE_NAME: Record<SheetControl["kind"], string> = {
+  dropdown: "ComboBox", list: "ListBox", checkbox: "CheckBox", radio: "OptionButton",
+  button: "CommandButton", label: "Label", spin: "SpinButton", scroll: "ScrollBar",
+  groupBox: "Frame",
+};
+
 /** The control behind an OLEObject: what `.Object` returns. */
 class OleControlObject implements VbaObject {
-  readonly typeName = "OLEControl";
-  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number, private readonly ctl: SheetControl) {}
+  readonly typeName: string;
+  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number, private readonly ctl: SheetControl) {
+    // TypeName(cmb.Object) = "ComboBox" is how a macro tells one control from another, so the
+    // reported name has to be the control's own class, not a wrapper's.
+    this.typeName = CONTROL_TYPE_NAME[ctl.kind] ?? "Control";
+  }
 
   private items(): string[] {
     return this.host.controlItems?.(this.ctl) ?? [];

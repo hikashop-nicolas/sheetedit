@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../index";
 import { getCell, type Workbook } from "./model";
+import { setCellInput } from "./workbook";
+import { listWorkbookTables } from "../adapters/xlsx/tables";
 import { parseModule } from "vbalang";
 import { VbaInterpreter, type RunResult } from "vbalang";
 import { EMPTY, VbaArray, type VbaValue } from "vbalang";
@@ -956,5 +958,72 @@ describe("OLEObjects", () => {
     const wb = withCombo();
     expect(() => evalIn(`ActiveSheet.OLEObjects("ComboDay").Object.BackStyle`, wb, { controlItems: items })).toThrow(/BackStyle/);
     expect(() => evalIn(`ActiveSheet.OLEObjects("Nope").Object.Value`, wb, { controlItems: items })).toThrow(/Nope/);
+  });
+});
+
+// ListObjects: a macro that lays data out and then makes it a table. The table is what structured
+// references elsewhere in the workbook name, so creating one has to write the real part.
+describe("ListObjects", () => {
+  const seeded = (): Workbook => {
+    const wb = readWorkbook(makeXlsx());
+    const rows = [["Name", "Qty"], ["a", 1], ["b", 2]];
+    rows.forEach((row, r) => row.forEach((v, c) => setCellInput(wb.sheets[0]!, r + 1, c + 1, String(v))));
+    return wb;
+  };
+
+  it("finds the block around a cell with CurrentRegion", () => {
+    const wb = seeded();
+    expect(evalIn(`ActiveSheet.Range("A1").CurrentRegion.Address`, wb)).toBe("$A$1:$B$3");
+  });
+
+  it("creates a table over a range, names it, and styles it", () => {
+    const wb = seeded();
+    run(
+      `Dim t\nSet t = ActiveSheet.ListObjects.Add(xlSrcRange, ActiveSheet.Range("A1").CurrentRegion, , xlYes)\n` +
+        `t.Name = "Stock"\nt.TableStyle = "TableStyleLight9"`,
+      wb,
+    );
+    const tables = listWorkbookTables(wb);
+    expect(tables.map((t) => t.displayName)).toEqual(["Stock"]);
+    expect([tables[0]!.r1, tables[0]!.c1, tables[0]!.r2, tables[0]!.c2]).toEqual([1, 1, 3, 2]);
+    // The part is real: it reads back through the ordinary table reader, style and all.
+    expect(evalIn(`ActiveSheet.ListObjects("Stock").TableStyle`, wb)).toBe("TableStyleLight9");
+    expect(evalIn(`ActiveSheet.ListObjects.Count`, wb)).toBe(1);
+    expect(evalIn(`ActiveSheet.ListObjects(1).DataBodyRange.Address`, wb)).toBe("$A$2:$B$3");
+    expect(evalIn(`ActiveSheet.ListObjects(1).HeaderRowRange.Address`, wb)).toBe("$A$1:$B$1");
+  });
+
+  it("refuses a source it cannot build a table from", () => {
+    const wb = seeded();
+    expect(() => run(`ActiveSheet.ListObjects.Add(xlSrcExternal, ActiveSheet.Range("A1"))`, wb)).toThrow(/only build a table from a range/);
+  });
+
+  it("widens columns to their content on AutoFit", () => {
+    const wb = seeded();
+    setCellInput(wb.sheets[0]!, 4, 1, "a much longer value than the header");
+    run(`ActiveSheet.Range("A1:B3").Columns.AutoFit`, wb);
+    const widths = wb.sheets[0]!.colWidths!;
+    expect(widths.get(1)).toBeGreaterThan(widths.get(2)!);
+  });
+});
+
+describe("array writes and ActiveSheet", () => {
+  it("fills a one-dimensional array ACROSS, as Excel does", () => {
+    const wb = bareWorkbook();
+    run(`ActiveSheet.Range("A1:C1").Value = Array("x", "y", "z")`, wb);
+    expect([at(wb, 1, 1), at(wb, 1, 2), at(wb, 1, 3)]).toEqual(["x", "y", "z"]);
+    expect(at(wb, 2, 1)).toBeUndefined(); // not down a column
+  });
+
+  it("captures the sheet Set names, rather than following the active one", () => {
+    // The bug this pins: a macro that stored ActiveSheet, added a sheet, then read from the stored
+    // one silently read the NEW sheet instead, and found nothing.
+    const wb = readWorkbook(makeXlsx());
+    setCellInput(wb.sheets[0]!, 1, 1, "first sheet");
+    const host: ExcelHost = { wb, activeSheet: 0 };
+    const m = parseModule(
+      `Function T()\nDim ws\nSet ws = ActiveSheet\nWorksheets.Add\nT = ws.Range("A1").Value\nEnd Function`,
+    );
+    expect(new VbaInterpreter(m, { globals: excelGlobals(host) }).run("T").value).toBe("first sheet");
   });
 });

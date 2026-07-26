@@ -67,6 +67,8 @@ export interface MacroRunOptions {
       host, which owns defined-name resolution and the parts a control persists into. */
   controlItems?: ExcelHost["controlItems"];
   onControlChange?: ExcelHost["onControlChange"];
+  /** Answer a MsgBox that asks a question. Without it, such a MsgBox stops the run. */
+  ask?: (prompt: string, buttons: number) => number;
 }
 
 export interface MacroRunResult {
@@ -135,6 +137,7 @@ export function runWorkbookMacro(
   const interp = new VbaInterpreter(module, {
     globals: excelGlobals(host, options.fileName ?? "workbook"),
     maxSteps: options.maxSteps,
+    ...(options.ask ? { ask: options.ask } : {}),
   });
 
   const args = options.eventTarget

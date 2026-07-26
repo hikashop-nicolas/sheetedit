@@ -1,4 +1,4 @@
-import { strFromU8 } from "fflate";
+import { strFromU8, strToU8 } from "fflate";
 import type { MValue } from "mlang";
 import { colToLetters, getCell, parseA1Ref, parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
 import { setCellInput } from "../../core/workbook";
@@ -232,4 +232,145 @@ export function loadResultToNewSheet(wb: Workbook, queryName: string, result: MT
     result.columns.forEach((_, c) => setCellInput(sheet, r + 2, c + 1, rawFor(row[c] ?? { kind: "null" })));
   });
   return { sheetIndex: wb.sheets.length - 1, rows: result.rows.length };
+}
+
+// --- creating a table ------------------------------------------------------------------------
+// ListObjects.Add from a macro. Everything Excel looks for has to be written: the table part, a
+// worksheet relationship, the <tableParts> entry on the sheet, and a content-type override. The
+// column names come from the header row, since a table's columns are named, not positional.
+
+const PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types";
+const SS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const CT_TABLE = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+const xmlEscape = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** A workbook-unique table name: Excel refuses duplicates and they break structured references. */
+export function uniqueTableName(wb: Workbook, base: string): string {
+  const taken = new Set(listWorkbookTables(wb).flatMap((t) => [t.name.toLowerCase(), t.displayName.toLowerCase()]));
+  const clean = (base || "Table").replace(/[^A-Za-z0-9_.]/g, "_").replace(/^[^A-Za-z_]/, "_") || "Table";
+  if (!taken.has(clean.toLowerCase())) return clean;
+  for (let i = 2; ; i++) if (!taken.has(`${clean}${i}`.toLowerCase())) return `${clean}${i}`;
+}
+
+/**
+ * Create a table (ListObject) over `rect` on `sheet`. With `hasHeaders`, the first row names the
+ * columns; without, a header row is INSERTED, because a table part must name its columns and
+ * Excel's own "my table has no headers" does exactly that.
+ */
+export function createTable(
+  wb: Workbook,
+  sheetIndex: number,
+  rect: { r1: number; c1: number; r2: number; c2: number },
+  opts: { name?: string; hasHeaders?: boolean; style?: string } = {},
+): WorkbookTable {
+  const sheet = wb.sheets[sheetIndex];
+  if (!sheet) throw new Error("no such sheet");
+  const hasHeaders = opts.hasHeaders !== false;
+  if (!hasHeaders) {
+    // Push the body down and write generated names, so the range the table covers still has one.
+    for (let r = rect.r2; r >= rect.r1; r--)
+      for (let c = rect.c1; c <= rect.c2; c++)
+        setCellInput(sheet, r + 1, c, getCell(sheet, r, c)?.value ?? "");
+    for (let c = rect.c1; c <= rect.c2; c++) setCellInput(sheet, rect.r1, c, `Column${c - rect.c1 + 1}`);
+    rect = { ...rect, r2: rect.r2 + 1 };
+  }
+  const name = uniqueTableName(wb, opts.name ?? "Table1");
+  let n = 1;
+  while (wb.files[`xl/tables/table${n}.xml`]) n++;
+  const path = `xl/tables/table${n}.xml`;
+
+  // Column names must be unique inside the table, which is what Excel enforces on creation.
+  const seen = new Set<string>();
+  const columns: string[] = [];
+  for (let c = rect.c1; c <= rect.c2; c++) {
+    let base = String(getCell(sheet, rect.r1, c)?.value ?? "").trim() || `Column${c - rect.c1 + 1}`;
+    let candidate = base, i = 2;
+    while (seen.has(candidate.toLowerCase())) candidate = `${base}${i++}`;
+    seen.add(candidate.toLowerCase());
+    columns.push(candidate);
+    if (candidate !== String(getCell(sheet, rect.r1, c)?.value ?? "")) setCellInput(sheet, rect.r1, c, candidate);
+  }
+
+  const ref = `${colToLetters(rect.c1)}${rect.r1}:${colToLetters(rect.c2)}${rect.r2}`;
+  const cols = columns.map((cname, i) => `<tableColumn id="${i + 1}" name="${xmlEscape(cname)}"/>`).join("");
+  const styleEl = opts.style
+    ? `<tableStyleInfo name="${xmlEscape(opts.style)}" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>`
+    : "";
+  wb.files[path] = strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<table xmlns="${SS_MAIN}" id="${n}" name="${xmlEscape(name)}" displayName="${xmlEscape(name)}" ref="${ref}" totalsRowShown="0">` +
+      `<autoFilter ref="${ref}"/><tableColumns count="${columns.length}">${cols}</tableColumns>${styleEl}</table>`,
+  );
+
+  // The worksheet relationship, and the <tableParts> entry that points at it.
+  const relsPath = (sheet.path ?? "").replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  const relsDoc =
+    parseXmlOpt(wb.files[relsPath]) ??
+    parseXmlOpt(strToU8(`<Relationships xmlns="${PKG_REL_NS}"/>`))!;
+  const rids = new Set(Array.from(relsDoc.getElementsByTagName("Relationship")).map((r) => r.getAttribute("Id")));
+  let rn = 1;
+  while (rids.has(`rId${rn}`)) rn++;
+  const rid = `rId${rn}`;
+  const relEl = relsDoc.createElementNS(PKG_REL_NS, "Relationship");
+  relEl.setAttribute("Id", rid);
+  relEl.setAttribute("Type", `${REL_NS}/table`);
+  relEl.setAttribute("Target", `../tables/table${n}.xml`);
+  relsDoc.documentElement.appendChild(relEl);
+  wb.files[relsPath] = serializeXml(relsDoc);
+
+  const doc = sheet.doc;
+  if (doc) {
+    let parts = doc.getElementsByTagName("tableParts")[0];
+    if (!parts) {
+      parts = doc.createElementNS(SS_MAIN, "tableParts");
+      doc.documentElement.appendChild(parts); // <tableParts> is last in the schema
+    }
+    const part = doc.createElementNS(SS_MAIN, "tablePart");
+    part.setAttribute("r:id", rid);
+    parts.appendChild(part);
+    parts.setAttribute("count", String(parts.children.length));
+    sheet.layoutDirty = true;
+  }
+
+  const ct = parseXmlOpt(wb.files["[Content_Types].xml"]);
+  if (ct && ct.documentElement.localName === "Types") {
+    const ov = ct.createElementNS(CT_NS, "Override");
+    ov.setAttribute("PartName", `/${path}`);
+    ov.setAttribute("ContentType", CT_TABLE);
+    ct.documentElement.appendChild(ov);
+    wb.files["[Content_Types].xml"] = serializeXml(ct);
+  }
+
+  return { path, name, displayName: name, sheetIndex, r1: rect.r1, c1: rect.c1, r2: rect.r2, c2: rect.c2, headerRows: 1 };
+}
+
+/** Rename a table in its part, keeping name and displayName in step. */
+export function renameTable(wb: Workbook, tbl: WorkbookTable, name: string): void {
+  const doc = parseXmlOpt(wb.files[tbl.path]);
+  if (!doc) return;
+  const unique = uniqueTableName(wb, name);
+  doc.documentElement.setAttribute("name", unique);
+  doc.documentElement.setAttribute("displayName", unique);
+  wb.files[tbl.path] = serializeXml(doc);
+  tbl.name = unique;
+  tbl.displayName = unique;
+}
+
+/** Read or set a table's style name (<tableStyleInfo name>). */
+export function tableStyle(wb: Workbook, tbl: WorkbookTable, name?: string): string {
+  const doc = parseXmlOpt(wb.files[tbl.path]);
+  if (!doc) return "";
+  let info = doc.getElementsByTagName("tableStyleInfo")[0];
+  if (name === undefined) return info?.getAttribute("name") ?? "";
+  if (!info) {
+    info = doc.createElementNS(SS_MAIN, "tableStyleInfo");
+    info.setAttribute("showRowStripes", "1");
+    doc.documentElement.appendChild(info);
+  }
+  info.setAttribute("name", name);
+  wb.files[tbl.path] = serializeXml(doc);
+  return name;
 }

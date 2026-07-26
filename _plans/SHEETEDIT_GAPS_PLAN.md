@@ -363,6 +363,32 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   `.ListCount` / `.ListIndex` / `.List(i)`, and Value and ListIndex are settable: the write goes to
   the persisted binary AND to the linked cell, since Excel keeps the two in step. Everything else
   refuses by name. The list comes from the host, because a listFillRange is usually a DEFINED NAME.
+- **Structured (table) references**: `Table1[Units]`, `Table1[[#Headers],[Units]]`, `Table1[@Units]`,
+  `Table1[[A]:[B]]`, and a bare `Table1`. The formula engine only knows A1, so these were invisible
+  and every total written against a table showed the file's stored number under a "could not be
+  evaluated" note - which is what Excel's own UI writes the moment a range becomes a table. They are
+  rewritten to plain ranges before parsing, like LET. A selector that cannot be honestly resolved (a
+  totals row, which the model does not track; a column that is not there) becomes a call to a
+  function that does not exist, so the parse STOPS: leaving the text alone was worse, since the
+  engine then read the bare table name and quietly produced a number from the wrong place.
+- **ListObjects**: `Add(xlSrcRange, range, , xlYes)` writes the whole package (table part, worksheet
+  rel, `<tableParts>` entry, content type), plus `.Name` / `.TableStyle` / `.Range` /
+  `.HeaderRowRange` / `.DataBodyRange` and lookup by name or index. Verified by a LibreOffice
+  round-trip of a workbook whose table a macro created. `Range.CurrentRegion` and `Range.AutoFit`
+  came with it; AutoFit is a STATED APPROXIMATION (the longest text in the column, in the workbook's
+  character units), since real AutoFit measures rendered glyphs.
+- **Three VBA semantics bugs the real macro found**, all of the "plausible wrong answer" kind:
+  - `Set ws = ActiveSheet` FOLLOWED the active sheet, because ActiveSheet was a live proxy. A macro
+    that stored it, added a sheet, then looped over the stored sheet's controls walked the new,
+    empty sheet instead. ActiveSheet is a property: vbalang grew lazy globals so evaluating the name
+    produces a concrete Worksheet, and ordinary assignment then captures it.
+  - A one-dimensional array written to a range filled DOWN a column. In Excel it is a row, which is
+    what every macro writing a header row with `Array(...)` expects.
+  - `MsgBox("delete it?", vbYesNo)` always answered vbOK, so the not-vbNo branch ran every time -
+    and that branch is usually the destructive one. vbalang now refuses a question without an `ask`
+    host hook; sheetedit supplies `confirm`, the only synchronous ask a page has.
+  - `TypeName(ctl.Object)` reported the wrapper, not the control. It names the Forms 2.0 class now
+    (ComboBox / CheckBox / CommandButton / ...), which is what a macro branches on.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

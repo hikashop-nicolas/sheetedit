@@ -1343,6 +1343,15 @@ export function createSheetEditor(
       print: (sheetIndex) => doPrint({ scope: "sheet" }, sheetIndex),
       controlItems: (ctl) => controlItemsFor(ctl),
       onControlChange: (sheetIndex, ctl) => persistControlState(sheetIndex, ctl),
+      // A MsgBox that asks a question is answered by the user, not by us: the branch it guards is
+      // usually the destructive one. confirm() is the only synchronous ask a page has, and the
+      // interpreter is synchronous, so that is what it gets.
+      ask: (prompt, buttons) => {
+        const yes = typeof confirm === "function" ? confirm(prompt) : false;
+        // vbYesNo / vbYesNoCancel answer vbYes(6) / vbNo(7); the rest answer vbOK(1) / vbCancel(2).
+        const set = buttons & 0x0f;
+        return set === 4 || set === 3 ? (yes ? 6 : 7) : yes ? 1 : 2;
+      },
     });
     if (!res.ok) {
       const where = res.error?.line != null ? ` (${res.error.module}, line ${res.error.line})` : ` (${res.error?.module})`;
