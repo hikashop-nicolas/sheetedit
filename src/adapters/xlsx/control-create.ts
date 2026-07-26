@@ -321,8 +321,41 @@ export function absoluteRange(ref: string): string | undefined {
   return to ? `${from}:${to}` : undefined;
 }
 
-/** Rewrite a control's linked cell / source range in its parts. */
-export function updateXlsxControlLinks(wb: Workbook, control: SheetControl): void {
+/**
+ * Rewrite the `<anchor>` inside a worksheet `<control>`, which is where a modern file keeps a
+ * control's placement. A file that has none (older Excel wrote the VML alone) simply has nothing
+ * here to update, and the VML anchor carries it.
+ */
+function updateWorksheetAnchor(sheet: Sheet, control: SheetControl): void {
+  const doc = sheet.doc;
+  const a = control.anchor;
+  if (!doc || !a || !control.shapeId) return;
+  for (const el of Array.from(doc.getElementsByTagName("*"))) {
+    if (el.localName !== "control" || el.getAttribute("shapeId") !== control.shapeId) continue;
+    const anchorEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "anchor");
+    if (!anchorEl) return;
+    const corner = (tag: "from" | "to", col: number, colOff: number, row: number, rowOff: number): void => {
+      const c = Array.from(anchorEl.children).find((e) => e.localName === tag);
+      if (!c) return;
+      const put = (local: string, v: number): void => {
+        const t = Array.from(c.children).find((e) => e.localName === local);
+        if (t) t.textContent = String(v);
+      };
+      put("col", col - 1);
+      put("colOff", colOff);
+      put("row", row - 1);
+      put("rowOff", rowOff);
+    };
+    corner("from", a.fromCol, a.fromColOff, a.fromRow, a.fromRowOff);
+    corner("to", a.toCol, a.toColOff, a.toRow, a.toRowOff);
+    sheet.layoutDirty = true;
+    return;
+  }
+}
+
+/** Rewrite a control's linked cell, source range, macro and placement in its parts. */
+export function updateXlsxControlLinks(wb: Workbook, control: SheetControl, sheet?: Sheet): void {
+  if (sheet) updateWorksheetAnchor(sheet, control);
   if (control.propsPath && wb.files[control.propsPath]) {
     const doc = parseXmlOpt(wb.files[control.propsPath]);
     const el = doc?.documentElement;
@@ -353,6 +386,9 @@ export function updateXlsxControlLinks(wb: Workbook, control: SheetControl): voi
     };
     set("FmlaLink", control.linkedCell);
     set("FmlaRange", control.sourceRange);
+    // The cell anchor, in the same from/to form createXlsxControl writes.
+    const a = control.anchor;
+    if (a) set("Anchor", `${a.fromCol - 1},0,${a.fromRow - 1},0,${a.toCol - 1},0,${a.toRow - 1},0`);
     // Excel qualifies the macro with its workbook; "[0]!" means this one, which is what it writes
     // for a macro living in the same file.
     set("FmlaMacro", control.macro ? `[0]!${control.macro}` : undefined);

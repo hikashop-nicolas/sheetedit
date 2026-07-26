@@ -17,8 +17,16 @@ export interface ControlLayerDeps {
   geom: () => ChartGeom;
   /** The items a list control offers, resolved from its source range. */
   itemsFor: (control: SheetControl) => string[];
-  /** The state changed: the model is already updated and dirty set. */
-  onChange: (control: SheetControl) => void;
+  /**
+   * The state changed: the models are already updated and dirty set. The first is the control the
+   * user touched; any others are the radios its group had to clear, which belong in the same undo
+   * step rather than one of their own.
+   */
+  onChange: (controls: SheetControl[]) => void;
+  /** After a drag: the control's anchor was updated and dirty set; the host persists it. */
+  onPlace?: (control: SheetControl) => void;
+  /** True when this sheet's controls can be written back, which gates the drag handles. */
+  editable?: () => boolean;
   /** Text for the tooltip on a button with no macro to run. */
   inertTitle: string;
   /** Run a control's assigned macro. Absent when the workbook carries no macros at all. */
@@ -27,7 +35,39 @@ export interface ControlLayerDeps {
   macroTitle: string;
 }
 
+/** The rectangle a control occupies, in cells. Absent for a control the file never placed. */
+const rectOf = (c: SheetControl): { r1: number; c1: number; r2: number; c2: number } | undefined => {
+  const a = c.anchor;
+  return a ? { r1: a.fromRow, c1: a.fromCol, r2: a.toRow, c2: a.toCol } : undefined;
+};
+
+/** Whether `inner`'s top-left sits inside `outer`, which is how Excel decides group membership. */
+function inside(outer: SheetControl, inner: SheetControl): boolean {
+  const o = rectOf(outer), i = rectOf(inner);
+  if (!o || !i) return false;
+  return i.r1 >= o.r1 && i.r1 <= o.r2 && i.c1 >= o.c1 && i.c1 <= o.c2;
+}
+
+/**
+ * The radios a newly checked one has to turn off: the other checked radios of its group. A group is
+ * the group box drawn around them, and every radio outside all of them shares one group, which is
+ * how Excel decides it too.
+ */
+export function radioPeersToClear(controls: SheetControl[], ctl: SheetControl): SheetControl[] {
+  const groupOf = (c: SheetControl): SheetControl | undefined =>
+    controls.find((g) => g.kind === "groupBox" && inside(g, c));
+  const box = groupOf(ctl);
+  return controls.filter((other) => other !== ctl && other.kind === "radio" && other.checked && groupOf(other) === box);
+}
+
 export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; teardown(): void } {
+  /** Turn off every other radio in the control's group, and report which ones changed. */
+  const clearGroup = (ctl: SheetControl): SheetControl[] => {
+    const cleared = radioPeersToClear(deps.getSheet()?.controls ?? [], ctl);
+    for (const other of cleared) other.checked = false;
+    return cleared;
+  };
+
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,
@@ -41,7 +81,12 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
     // cell sees the new state. Same order here.
     const fire = (): void => { if (ctl.macro && deps.runMacro) deps.runMacro(ctl.macro); };
-    const commit = (): void => { ctl.dirty = true; deps.onChange(ctl); fire(); };
+    const commit = (also: SheetControl[] = []): void => {
+      ctl.dirty = true;
+      for (const o of also) o.dirty = true;
+      deps.onChange([ctl, ...also]);
+      fire();
+    };
     switch (ctl.kind) {
       case "checkbox":
       case "radio": {
@@ -50,7 +95,13 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         const input = document.createElement("input");
         input.type = ctl.kind === "radio" ? "radio" : "checkbox";
         input.checked = !!ctl.checked;
-        input.addEventListener("change", () => { ctl.checked = input.checked; commit(); });
+        input.addEventListener("change", () => {
+          ctl.checked = input.checked;
+          // One radio on means the rest of its group off, which is the only thing that makes a
+          // radio a radio. Its group is the group box drawn around it, or the sheet when none is.
+          const cleared = ctl.kind === "radio" && input.checked ? clearGroup(ctl) : [];
+          commit(cleared);
+        });
         const span = document.createElement("span");
         span.textContent = ctl.label ?? ctl.name;
         label.append(input, span);
@@ -115,6 +166,48 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
     }
   };
 
+  /**
+   * Move / resize a control by dragging. The body keeps its own clicks, so the grip strip down the
+   * left edge is what moves it and the corner handle is what resizes it; a control whose whole
+   * face were draggable could not be ticked.
+   */
+  const attachDrag = (box: HTMLElement, grip: HTMLElement, handle: HTMLElement, ctl: SheetControl): void => {
+    const start = (e: PointerEvent, mode: "move" | "resize"): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sx = e.clientX, sy = e.clientY;
+      const x0 = parseFloat(box.style.left) || 0, y0 = parseFloat(box.style.top) || 0;
+      const w0 = box.offsetWidth, h0 = box.offsetHeight;
+      const onMove = (ev: PointerEvent): void => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (mode === "move") { box.style.left = `${Math.max(0, x0 + dx)}px`; box.style.top = `${Math.max(0, y0 + dy)}px`; }
+        else { box.style.width = `${Math.max(24, w0 + dx)}px`; box.style.height = `${Math.max(16, h0 + dy)}px`; }
+      };
+      const onUp = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        const x = parseFloat(box.style.left) || 0, y = parseFloat(box.style.top) || 0;
+        if (x === x0 && y === y0 && box.offsetWidth === w0 && box.offsetHeight === h0) return; // a click, not a drag
+        const g = deps.geom();
+        const at = (px: number, cell: (p: number) => number, of: (i: number) => number): [number, number] => {
+          const i = Math.max(1, cell(px));
+          return [i, Math.max(0, Math.round(px - of(i)))];
+        };
+        const [fc, fco] = at(x, g.colAt, g.xOfCol);
+        const [fr, fro] = at(y, g.rowAt, g.yOfRow);
+        const [tc, tco] = at(x + box.offsetWidth, g.colAt, g.xOfCol);
+        const [tr, tro] = at(y + box.offsetHeight, g.rowAt, g.yOfRow);
+        ctl.anchor = { fromCol: fc, fromRow: fr, fromColOff: fco, fromRowOff: fro, toCol: tc, toRow: tr, toColOff: tco, toRowOff: tro };
+        ctl.dirty = true;
+        deps.onPlace?.(ctl);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    };
+    grip.addEventListener("pointerdown", (e) => start(e, "move"));
+    handle.addEventListener("pointerdown", (e) => start(e, "resize"));
+  };
+
   const refresh = (): void => {
     hosts.clear();
     const sheet = deps.getSheet();
@@ -134,6 +227,15 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       Object.assign(box.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
       if (ctl.linkedCell) box.title = `${ctl.label ?? ctl.name} -> ${ctl.linkedCell.replace(/\$/g, "")}`;
       box.appendChild(build(ctl));
+      if (deps.editable?.()) {
+        box.classList.add("editable");
+        const grip = document.createElement("div");
+        grip.className = "sheetedit-ctrl-grip";
+        const handle = document.createElement("div");
+        handle.className = "sheetedit-ctrl-resize";
+        box.append(grip, handle);
+        attachDrag(box, grip, handle, ctl);
+      }
       hosts.hostFor(a?.fromRow ?? 1, a?.fromCol).appendChild(box);
     }
     hosts.layout();

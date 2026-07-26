@@ -323,3 +323,38 @@ describe("the macro a control runs", () => {
     expect(readWorkbook(zipSync(files)).sheets[0]!.controls!.length).toBe(2);
   });
 });
+
+describe("moving and resizing a control", () => {
+  it("writes a new anchor into the worksheet and the VML", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![0]!;
+    ctl.anchor = { fromCol: 5, fromRow: 7, fromColOff: 0, fromRowOff: 0, toCol: 7, toRow: 9, toColOff: 0, toRowOff: 0 };
+    updateXlsxControlLinks(wb, ctl, wb.sheets[0]!);
+    const out = writeWorkbook(wb);
+    // The VML anchor is 0-based and lists from-col, from-row, to-col, to-row with offsets between.
+    expect(part(out, "xl/drawings/vmlDrawing1.vml")).toContain("<x:Anchor>4,0,6,0,6,0,8,0</x:Anchor>");
+    // The worksheet's own <anchor> has to agree, or the two placements contradict each other.
+    const ws = part(out, "xl/worksheets/sheet1.xml");
+    expect(ws).toMatch(/<from>[\s\S]*?<xdr:col[^>]*>4<\/xdr:col>[\s\S]*?<xdr:row[^>]*>6<\/xdr:row>[\s\S]*?<\/from>/);
+  });
+
+  it("round-trips the new placement through the reader", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![0]!;
+    ctl.anchor = { fromCol: 3, fromRow: 4, fromColOff: 0, fromRowOff: 0, toCol: 5, toRow: 6, toColOff: 0, toRowOff: 0 };
+    updateXlsxControlLinks(wb, ctl, wb.sheets[0]!);
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!.controls![0]!;
+    expect([back.anchor?.fromCol, back.anchor?.fromRow, back.anchor?.toCol, back.anchor?.toRow]).toEqual([3, 4, 5, 6]);
+  });
+
+  it("still writes the VML anchor for a control the worksheet never listed", () => {
+    // The older form: a VML shape with no <control> entry, which is what the real fixture has.
+    const files = unzipSync(book({ vmlOnly: true }));
+    files["xl/worksheets/sheet1.xml"] = strToU8(strFromU8(files["xl/worksheets/sheet1.xml"]!).replace(/<controls>[\s\S]*<\/controls>/, ""));
+    const wb = readWorkbook(zipSync(files));
+    const ctl = wb.sheets[0]!.controls![0]!;
+    ctl.anchor = { fromCol: 2, fromRow: 3, fromColOff: 0, fromRowOff: 0, toCol: 4, toRow: 5, toColOff: 0, toRowOff: 0 };
+    updateXlsxControlLinks(wb, ctl, wb.sheets[0]!);
+    expect(part(writeWorkbook(wb), "xl/drawings/vmlDrawing1.vml")).toContain("<x:Anchor>1,0,2,0,3,0,4,0</x:Anchor>");
+  });
+});

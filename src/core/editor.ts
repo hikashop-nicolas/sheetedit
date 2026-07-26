@@ -2313,6 +2313,15 @@ export function createSheetEditor(
     inertTitle: t("ctrlMacroInert"),
     macroTitle: t("ctrlMacroRun"),
     runMacro: (name) => runControlMacro(name),
+    // Only xlsx writes controls back, so only there is dragging one offered.
+    editable: () => wb.kind === "xlsx",
+    onPlace: (ctl) => {
+      const sheet = wb.sheets[active];
+      if (!sheet) return;
+      updateXlsxControlLinks(wb, ctl, sheet);
+      mark();
+      renderGrid();
+    },
     itemsFor: (ctl) => {
       const sheet = wb.sheets[active];
       const rng = ctl.sourceRange ? parseRangeRefLocal(ctl.sourceRange) : null;
@@ -2322,17 +2331,24 @@ export function createSheetEditor(
         for (let c = rng.c1; c <= rng.c2; c++) out.push(displayValue(sheet, r, c));
       return out;
     },
-    onChange: (ctl) => {
+    onChange: (changed) => {
       const sheet = wb.sheets[active];
-      const at = ctl.linkedCell ? parseA1Ref(ctl.linkedCell.replace(/\$/g, "").split("!").pop() ?? "") : null;
-      // A control with no linked cell still remembers its own state; there is just nowhere to put it.
-      if (sheet && at) {
+      // A control with no linked cell still remembers its own state; there is just nowhere to put
+      // it. A radio that cleared its group brings the rest along, in one undo step.
+      const writes = changed.flatMap((ctl) => {
+        const at = ctl.linkedCell ? parseA1Ref(ctl.linkedCell.replace(/\$/g, "").split("!").pop() ?? "") : null;
+        if (!at) return [];
         const value = ctl.kind === "checkbox" || ctl.kind === "radio"
           ? (ctl.checked ? "TRUE" : "FALSE")
           : ctl.kind === "dropdown" || ctl.kind === "list"
             ? String(ctl.selected ?? 0)
             : String(ctl.value ?? 0);
-        recordCells([{ r: at.row, c: at.col }], () => setCellInput(sheet, at.row, at.col, value));
+        return [{ r: at.row, c: at.col, value }];
+      });
+      if (sheet && writes.length) {
+        recordCells(writes.map((w) => ({ r: w.r, c: w.c })), () => {
+          for (const w of writes) setCellInput(sheet, w.r, w.c, w.value);
+        });
         recalc(wb);
       }
       mark();
@@ -2449,7 +2465,7 @@ export function createSheetEditor(
       ctl.linkedCell = link ? absoluteRef(link) : undefined;
       if (vals.range != null) ctl.sourceRange = range ? absoluteRange(range) : undefined;
       if (vals.macro != null) ctl.macro = String(vals.macro) || undefined;
-      updateXlsxControlLinks(wb, ctl);
+      updateXlsxControlLinks(wb, ctl, sheet);
       mark();
       renderGrid();
     });

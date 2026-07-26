@@ -772,6 +772,18 @@ position:absolute; pointer-events:auto; display:flex; align-items:center; overfl
 font:12px system-ui, sans-serif; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-ctrlbox > * { max-width:100%; }
+.sheetedit-ctrlbox.editable { padding-left:7px; }
+.sheetedit-ctrl-grip {
+position:absolute; left:0; top:0; bottom:0; width:7px; cursor:move; pointer-events:auto;
+opacity:0; background:var(--sheetedit-accent); border-radius:3px 0 0 3px;
+}
+.sheetedit-ctrl-resize {
+position:absolute; right:0; bottom:0; width:10px; height:10px; border-radius:3px;
+background:var(--sheetedit-accent); border:1.5px solid var(--sheetedit-handle-border);
+cursor:nwse-resize; pointer-events:auto; opacity:0;
+}
+.sheetedit-ctrlbox.editable:hover .sheetedit-ctrl-grip,
+.sheetedit-ctrlbox.editable:hover .sheetedit-ctrl-resize { opacity:0.85; }
 .sheetedit-ctrl-check { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
 .sheetedit-ctrl-check input { margin:0; cursor:pointer; }
 .sheetedit-ctrl-select, .sheetedit-ctrl-num {
