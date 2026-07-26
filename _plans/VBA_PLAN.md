@@ -64,9 +64,13 @@ silently. Expect more of these; validate against real files, never only against 
 
 MS-VBAL's ABNF, restricted to the constructs that appear in real macros.
 
-Decision to make when we get there: hand-written recursive descent (matches how the rest of this
-codebase parses, no dependency) versus an ANTLR grammar (correct by construction, ~200KB runtime).
-Lean hand-written for the subset, since sheetedit ships no parser generators today.
+Decided: hand-written recursive descent, no dependency, matching how the rest of this codebase
+parses. Two traps worth remembering, both of which bit:
+
+- `=` is assignment at statement level and comparison inside an expression. Parsing an assignment
+  target with the expression parser silently turns every `x = 1` into a discarded comparison.
+- A single-line `If` ends at the line break, so the statements inside it must not consume their own
+  line ending, or the body runs on and swallows whatever follows.
 
 - Declarations (`Dim`, `Const`, `Sub`, `Function`, `Property`), types, arrays.
 - Expressions with VBA's precedence, `&` concatenation, `Like`, `Is`.
@@ -141,5 +145,7 @@ inside sheetedit and move later.
 - [x] **Stage 0** - CFB reader, MS-OVBA decompression, dir walk, macro viewer. Verified end to end
   on real `vbaProject.bin` files (Apache POI test data, see `src/fixtures/README.md`): a module's
   source comes out whole, in two different code pages.
-- [ ] Stages 1-4
+- [x] **Stage 1** - lexer + recursive-descent parser, hand-written. Parses every module of both
+  real fixtures, Attribute preamble and all.
+- [ ] Stages 2-4
 - [ ] Stage 5 (write back), after 4
