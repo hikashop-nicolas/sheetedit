@@ -297,3 +297,18 @@ describe("parsing the real macros in the fixtures", () => {
     expect(parseModule(mod.source, mod.name).procedures.map((p) => p.name)).toEqual(["Plus1_Klicken", "Minus2_Klicken"]);
   });
 });
+
+describe("string literals are not operators", () => {
+  // The lexer upper-cases every token for matching, so without care the string "-" reads as the
+  // minus operator and "End" as the keyword, and a perfectly ordinary call stops parsing.
+  it("accepts a string literal that spells an operator or a keyword", () => {
+    for (const src of ['Join(a, "-")', 'Split(s, ",")', 'F("End")', 'F("Then", "Not")', 'a & "*" & b']) {
+      expect(() => parseExpression(src), src).not.toThrow();
+    }
+  });
+
+  it("keeps the literal's own text", () => {
+    const e = parseExpression('"-"');
+    expect(e).toMatchObject({ type: "lit", value: "-" });
+  });
+});

@@ -53,7 +53,10 @@ export function lex(source: string): Token[] {
   let line = 1;
   const src = source.replace(/\r\n?/g, "\n");
   const push = (kind: TokenKind, text: string, value?: number | string): void => {
-    out.push({ kind, text, upper: text.toUpperCase(), value, line });
+    // `upper` exists only for matching names and symbols, so a literal gets none: otherwise the
+    // string "-" would look to the parser like the minus operator, and "End" like the keyword.
+    const matchable = kind === "ident" || kind === "keyword" || kind === "op";
+    out.push({ kind, text, upper: matchable ? text.toUpperCase() : "", value, line });
   };
 
   while (i < src.length) {

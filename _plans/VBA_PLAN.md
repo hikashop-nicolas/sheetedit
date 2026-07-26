@@ -147,5 +147,13 @@ inside sheetedit and move later.
   source comes out whole, in two different code pages.
 - [x] **Stage 1** - lexer + recursive-descent parser, hand-written. Parses every module of both
   real fixtures, Attribute preamble and all.
-- [ ] Stages 2-4
+- [x] **Stage 2** - tree-walking interpreter, VBA's coercion rules, scoping, ByRef calling
+  convention, `On Error`, named arguments, `Debug`/`Err`, ~70 built-ins, and a step budget that
+  ticks per loop iteration so an empty body cannot spin. The host object model is reached only
+  through the `VbaObject` interface, so the language half tests with no spreadsheet at all: one of
+  the real fixture macros runs end to end against a stub `Worksheets`.
+- [ ] Stages 3-4
 - [ ] Stage 5 (write back), after 4
+
+Excel's `xl*` constants (`xlCellTypeBlanks` and friends) belong to Stage 3: until it lands they hit
+the refusal path by name, which is what the real fixture macro does today.
