@@ -41,7 +41,7 @@ function book(opts: { withProps?: boolean; vmlOnly?: boolean } = {}): Uint8Array
     "xl/drawings/vmlDrawing1.vml": strToU8(
       `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel">` +
       `<v:shape id="_x0000_s1025"><v:textbox><div>Enabled</div></v:textbox>` +
-      `<x:ClientData ObjectType="Checkbox"><x:Anchor>2,0,0,0,4,0,1,0</x:Anchor><x:Checked>1</x:Checked><x:FmlaLink>$B$1</x:FmlaLink></x:ClientData></v:shape>` +
+      `<x:ClientData ObjectType="Checkbox"><x:Anchor>2,0,0,0,4,0,1,0</x:Anchor><x:Checked>1</x:Checked><x:FmlaLink>$B$1</x:FmlaLink><x:FmlaMacro>[0]!Toggle_Click</x:FmlaMacro></x:ClientData></v:shape>` +
       `<v:shape id="_x0000_s1026">` +
       `<x:ClientData ObjectType="Drop"><x:Anchor>2,0,2,0,4,0,3,0</x:Anchor><x:Sel>2</x:Sel><x:FmlaLink>$B$2</x:FmlaLink><x:FmlaRange>$D$1:$D$3</x:FmlaRange></x:ClientData></v:shape></xml>`),
   };
@@ -263,5 +263,63 @@ describe("creating form controls", () => {
     expect(strFromU8(unzipSync(out)["xl/ctrlProps/ctrlProp1.xml"]!)).toMatch(/fmlaLink="\$Z\$9"/);
     expect(strFromU8(unzipSync(out)[ctl.vmlPath!]!)).toMatch(/<x:FmlaLink>\$Z\$9<\/x:FmlaLink>/);
     expect(readWorkbook(out).sheets[0]!.controls![0]!.linkedCell).toBe("$Z$9");
+  });
+});
+
+describe("the macro a control runs", () => {
+  it("reads FmlaMacro and strips the workbook prefix Excel writes", () => {
+    const [check, drop] = readWorkbook(book()).sheets[0]!.controls!;
+    expect(check!.macro).toBe("Toggle_Click");
+    expect(drop!.macro).toBeUndefined();
+  });
+
+  it("reads it from a file that has no ctrlProps either", () => {
+    expect(readWorkbook(book({ vmlOnly: true })).sheets[0]!.controls![0]!.macro).toBe("Toggle_Click");
+  });
+
+  it("writes an assignment back into the VML, qualified the way Excel writes it", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![1]!; // the dropdown, which had none
+    ctl.macro = "Refresh";
+    updateXlsxControlLinks(wb, ctl);
+    const vml = part(writeWorkbook(wb), "xl/drawings/vmlDrawing1.vml");
+    expect(vml).toContain("<x:FmlaMacro>[0]!Refresh</x:FmlaMacro>");
+  });
+
+  it("removes the assignment when it is cleared", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![0]!;
+    ctl.macro = undefined;
+    updateXlsxControlLinks(wb, ctl);
+    expect(part(writeWorkbook(wb), "xl/drawings/vmlDrawing1.vml")).not.toContain("FmlaMacro");
+  });
+
+  it("survives a round trip through the reader", () => {
+    const wb = readWorkbook(book());
+    const ctl = wb.sheets[0]!.controls![1]!;
+    ctl.macro = "Refresh";
+    updateXlsxControlLinks(wb, ctl);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0]!.controls![1]!.macro).toBe("Refresh");
+  });
+
+  it("reads the assignment out of the real macro fixture", async () => {
+    const { readFileSync } = await import("node:fs");
+    const wb = readWorkbook(new Uint8Array(readFileSync("src/fixtures/macros-cp950.xlsm")));
+    // That file has no <controls> element at all: the button exists only in the VML, which is how
+    // older Excel wrote them, and the whole control would otherwise be invisible.
+    const [button] = wb.sheets.flatMap((s) => s.controls ?? []);
+    expect(button?.kind).toBe("button");
+    expect(button?.macro).toBe("Button1_Click");
+    expect(button?.anchor).toBeTruthy();
+  });
+
+  it("does not mistake a cell comment's VML shape for a control", () => {
+    const files = unzipSync(book());
+    files["xl/drawings/vmlDrawing1.vml"] = strToU8(
+      `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel">` +
+      `<v:shape id="_x0000_s2000"><x:ClientData ObjectType="Note"><x:Anchor>1,0,1,0,2,0,2,0</x:Anchor></x:ClientData></v:shape></xml>`);
+    // Both worksheet <control> entries lose their VML, and the only shape left is a comment.
+    expect(readWorkbook(zipSync(files)).sheets[0]!.controls!.every((c) => c.kind !== "label" || c.name.startsWith("Check") || c.name.startsWith("Drop"))).toBe(true);
+    expect(readWorkbook(zipSync(files)).sheets[0]!.controls!.length).toBe(2);
   });
 });

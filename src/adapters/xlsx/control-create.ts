@@ -353,6 +353,9 @@ export function updateXlsxControlLinks(wb: Workbook, control: SheetControl): voi
     };
     set("FmlaLink", control.linkedCell);
     set("FmlaRange", control.sourceRange);
+    // Excel qualifies the macro with its workbook; "[0]!" means this one, which is what it writes
+    // for a macro living in the same file.
+    set("FmlaMacro", control.macro ? `[0]!${control.macro}` : undefined);
     break;
   }
   wb.files[control.vmlPath] = serializeXml(doc);

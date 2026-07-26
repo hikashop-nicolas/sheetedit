@@ -1336,10 +1336,12 @@ export function createSheetEditor(
       const where = res.error?.line != null ? ` (${res.error.module}, line ${res.error.line})` : ` (${res.error?.module})`;
       return { ok: false, text: `${t("vbaRunFailed")} ${res.error?.message ?? ""}${where}` };
     }
-    if (res.undo && res.redo) history.push({ sheet: active, cells: [], undoExtra: res.undo, redoExtra: res.redo });
+    if (res.undo && res.redo) {
+      history.push({ sheet: active, cells: [], undoExtra: res.undo, redoExtra: res.redo });
+      recalc(wb);
+      mark(); // only when the macro actually changed something: a MsgBox does not dirty a workbook
+    }
     if (res.activeSheet != null && res.activeSheet !== active && wb.sheets[res.activeSheet]) switchSheet(res.activeSheet);
-    recalc(wb);
-    mark();
     renderTabs();
     renderGrid();
     const out = res.messages.length ? `\n${t("vbaRunOutput")}: ${res.messages.join(" | ")}` : "";
@@ -2279,6 +2281,8 @@ export function createSheetEditor(
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     inertTitle: t("ctrlMacroInert"),
+    macroTitle: t("ctrlMacroRun"),
+    runMacro: (name) => runControlMacro(name),
     itemsFor: (ctl) => {
       const sheet = wb.sheets[active];
       const rng = ctl.sourceRange ? parseRangeRefLocal(ctl.sourceRange) : null;
@@ -2305,6 +2309,18 @@ export function createSheetEditor(
       renderGrid();
     },
   });
+
+  /**
+   * Run the macro a control names. Excel qualifies the name with its module when it needs to; the
+   * VML usually carries the bare Sub name, so the module that declares it is looked up here.
+   */
+  const runControlMacro = (name: string): void => {
+    const bare = name.replace(/^.*\./, "");
+    const mod = wb.vba?.modules.find((m) => runnableSubs(m.source).some((s) => s.toLowerCase() === bare.toLowerCase()));
+    if (!mod) { showNotice(`${t("ctrlMacroMissing")} ${name}`); return; }
+    const proc = runnableSubs(mod.source).find((s) => s.toLowerCase() === bare.toLowerCase())!;
+    showNotice(runMacro(mod.source, mod.name, proc).text);
+  };
 
   /** Add a control at the selection, linked to the cell below it by default. */
   const insertControl = (kind: SheetControl["kind"]): void => {
@@ -2337,6 +2353,14 @@ export function createSheetEditor(
     ];
     if (ctl.kind === "dropdown" || ctl.kind === "list")
       fields.push({ key: "range", label: t("ctrlSourceRange"), type: "text", value: (ctl.sourceRange ?? "").replace(/\$/g, "") });
+    // Only offered when the workbook has macros to offer, and only the Subs that can run alone.
+    const macros = (wb.vba?.modules ?? []).flatMap((m) => runnableSubs(m.source));
+    if (macros.length || ctl.macro) {
+      const options = [{ value: "", label: t("ctrlMacroNone") }, ...macros.map((m) => ({ value: m, label: m }))];
+      // A macro the workbook no longer has still shows, so assigning it away is possible.
+      if (ctl.macro && !macros.includes(ctl.macro)) options.push({ value: ctl.macro, label: ctl.macro });
+      fields.push({ key: "macro", label: t("ctrlMacro"), type: "select", options, value: ctl.macro ?? "" });
+    }
     fields.push({ key: "remove", label: t("ctrlDelete"), type: "checkbox", value: false });
     formDialog(wrap, t("ctrlEdit"), fields, (vals) => {
       const sheet = wb.sheets[active];
@@ -2355,6 +2379,7 @@ export function createSheetEditor(
       ctl.label = String(vals.label).trim() || undefined;
       ctl.linkedCell = link ? absoluteRef(link) : undefined;
       if (vals.range != null) ctl.sourceRange = range ? absoluteRange(range) : undefined;
+      if (vals.macro != null) ctl.macro = String(vals.macro) || undefined;
       updateXlsxControlLinks(wb, ctl);
       mark();
       renderGrid();

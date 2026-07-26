@@ -461,6 +461,8 @@ export interface SheetControl {
   label?: string;
   /** A1 reference of the cell this control drives ("$B$1"), when it is linked to one. */
   linkedCell?: string;
+  /** The macro assigned to the control (VML `<x:FmlaMacro>`), without its workbook prefix. */
+  macro?: string;
   /** List controls: the range the items come from, and the 1-based selection (0 = nothing). */
   sourceRange?: string;
   selected?: number;

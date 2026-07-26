@@ -6,8 +6,9 @@ import type { ChartGeom } from "./chart-overlay";
 // a checkbox writes TRUE/FALSE there, a dropdown the 1-based index of the chosen item, a spinner
 // its number. Formulas read that cell, so these are inputs to the sheet, not decoration.
 //
-// A button runs a macro, which a browser cannot and should not execute, so it is drawn and left
-// inert with a tooltip saying why. Same for labels and group boxes, which never did anything.
+// A control can also have a macro assigned, which is what a button is for. That runs through the
+// same path the macro viewer uses, after the linked cell is written, as it does in Excel. A button
+// with no macro assigned stays inert with a tooltip saying so, as do labels and group boxes.
 
 export interface ControlLayerDeps {
   wrap: HTMLElement;
@@ -18,8 +19,12 @@ export interface ControlLayerDeps {
   itemsFor: (control: SheetControl) => string[];
   /** The state changed: the model is already updated and dirty set. */
   onChange: (control: SheetControl) => void;
-  /** Text for the inert-control tooltip (macros cannot run in a browser). */
+  /** Text for the tooltip on a button with no macro to run. */
   inertTitle: string;
+  /** Run a control's assigned macro. Absent when the workbook carries no macros at all. */
+  runMacro?: (name: string) => void;
+  /** Tooltip prefix for a control that does have a macro. */
+  macroTitle: string;
 }
 
 export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; teardown(): void } {
@@ -33,7 +38,10 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
 
   /** The control's body, by kind. Returns null for a kind with nothing to draw. */
   const build = (ctl: SheetControl): HTMLElement => {
-    const commit = (): void => { ctl.dirty = true; deps.onChange(ctl); };
+    // Excel runs a control's macro after its linked cell is written, so a macro that reads that
+    // cell sees the new state. Same order here.
+    const fire = (): void => { if (ctl.macro && deps.runMacro) deps.runMacro(ctl.macro); };
+    const commit = (): void => { ctl.dirty = true; deps.onChange(ctl); fire(); };
     switch (ctl.kind) {
       case "checkbox":
       case "radio": {
@@ -87,10 +95,15 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         b.type = "button";
         b.className = "sheetedit-ctrl-button";
         b.textContent = ctl.label ?? ctl.name;
-        // A button's only job is running a macro, which this cannot do. Say so rather than
-        // presenting a control that looks live and silently does nothing.
-        b.disabled = true;
-        b.title = deps.inertTitle;
+        // A button's only job is running its macro. With none assigned there is nothing to do, so
+        // say so rather than presenting a control that looks live and silently does nothing.
+        if (ctl.macro && deps.runMacro) {
+          b.title = `${deps.macroTitle} ${ctl.macro}`;
+          b.addEventListener("click", fire);
+        } else {
+          b.disabled = true;
+          b.title = deps.inertTitle;
+        }
         return b;
       }
       default: {

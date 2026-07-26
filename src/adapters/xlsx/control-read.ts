@@ -25,6 +25,8 @@ const KINDS: Record<string, SheetControl["kind"]> = {
   groupbox: "groupBox",
 };
 const kindOf = (raw: string | null | undefined): SheetControl["kind"] => KINDS[(raw ?? "").toLowerCase()] ?? "label";
+/** Whether a VML ClientData describes a form control at all: the same part also holds comments. */
+const isControlType = (raw: string | null | undefined): boolean => (raw ?? "").toLowerCase() in KINDS;
 
 const num = (v: string | null | undefined): number | undefined => {
   if (v == null || v === "") return undefined;
@@ -79,8 +81,20 @@ function applyProps(ctl: SheetControl, el: Element): void {
   }
 }
 
+/**
+ * The macro a control runs, from `<x:FmlaMacro>`. Excel writes it qualified ("[0]!Button1_Click"
+ * names the workbook), and a name with spaces arrives quoted; the model keeps the bare name.
+ */
+function macroName(client: Element): string | undefined {
+  const raw = clientVal(client, "FmlaMacro");
+  if (!raw) return undefined;
+  const name = raw.replace(/^\[\d+\]!/, "").replace(/^'(.*)'$/, "$1").replace(/^.*!/, "").trim();
+  return name || undefined;
+}
+
 /** Apply what the VML says, for a file whose control has no ctrlProps part. */
 function applyClientData(ctl: SheetControl, client: Element): void {
+  ctl.macro ??= macroName(client);
   const checked = clientVal(client, "Checked");
   if (checked != null && ctl.checked === undefined) ctl.checked = checked !== "0";
   const link = clientVal(client, "FmlaLink");
@@ -115,6 +129,7 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
     const vml = vmlPath ? readVml(files, vmlPath) : new Map();
 
     const controls: SheetControl[] = [];
+    const claimed = new Set<string>();
     for (const el of Array.from(sheet.doc.getElementsByTagName("*"))) {
       if (el.localName !== "control") continue;
       const shapeId = el.getAttribute("shapeId") ?? undefined;
@@ -139,6 +154,21 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
         applyClientData(ctl, shape.client);
         ctl.anchor ??= vmlAnchor(shape.client);
       }
+      controls.push(ctl);
+      if (shapeId) claimed.add(shapeId);
+    }
+
+    // Older Excel wrote no <controls> element at all: the button exists only as a VML shape, with
+    // its macro, its label and its anchor. Those are picked up here, or such a file would show no
+    // control at all. Only the known form-control ObjectTypes qualify, because the same VML part
+    // also carries cell comments.
+    for (const [id, shape] of vml) {
+      if (claimed.has(id)) continue;
+      if (!isControlType(shape.client.getAttribute("ObjectType"))) continue;
+      const ctl: SheetControl = { kind: shape.kind, name: shape.label ?? `Control ${controls.length + 1}`, shapeId: id, vmlPath };
+      ctl.label = shape.label;
+      applyClientData(ctl, shape.client);
+      ctl.anchor = vmlAnchor(shape.client);
       controls.push(ctl);
     }
     if (controls.length) sheet.controls = controls;
