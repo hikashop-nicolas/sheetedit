@@ -46,6 +46,10 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-notice-border: #e6cf9a;
 --sheetedit-pagebreak: #4f7bd6;
 --sheetedit-printarea: #2f6f3f;
+--sheetedit-paper: #ffffff;
+--sheetedit-ink: #000000;
+--sheetedit-print-rule: #b0b0b0;
+--sheetedit-print-head-bg: #efefef;
 --sheetedit-overlay-bg: #ffffff;
 --sheetedit-overlay-border: #d0d0d6;
 --sheetedit-handle-border: #ffffff;
@@ -737,4 +741,27 @@ border:1px solid var(--sheetedit-btn-border);
 .sheetedit-theme-name { flex:1 1 auto; }
 .sheetedit-theme-tag { font-size:11px; color:var(--sheetedit-muted); }
 .sheetedit-theme-swatches { display:flex; gap:2px; flex:none; }
-.sheetedit-theme-chip { width:13px; height:16px; border-radius:2px; border:1px solid var(--sheetedit-border); }`;
+.sheetedit-theme-chip { width:13px; height:16px; border-radius:2px; border:1px solid var(--sheetedit-border); }
+.sheetedit-print { position:absolute; left:-100000px; top:0; }
+.sheetedit-print-page { position:relative; overflow:hidden; background:var(--sheetedit-paper); color:var(--sheetedit-ink); box-sizing:border-box; break-after:page; }
+.sheetedit-print-page:last-child { break-after:auto; }
+.sheetedit-print-body { position:absolute; overflow:hidden; display:flex; }
+.sheetedit-print-band {
+position:absolute; display:flex; align-items:center; font:11px system-ui, sans-serif; color:var(--sheetedit-ink);
+}
+.sheetedit-print-band > span { flex:1 1 0; min-width:0; }
+.sheetedit-print-left { text-align:left; }
+.sheetedit-print-center { text-align:center; }
+.sheetedit-print-right { text-align:right; }
+.sheetedit-print-table { border-collapse:collapse; table-layout:fixed; font:13px system-ui, sans-serif; color:var(--sheetedit-ink); }
+.sheetedit-print-table td { padding:1px 4px; overflow:hidden; vertical-align:bottom; word-break:break-word; }
+.sheetedit-print-table td.num { text-align:right; }
+.sheetedit-print-table.has-grid td, .sheetedit-print-table.has-grid th { border:1px solid var(--sheetedit-print-rule); }
+.sheetedit-print-head {
+border:1px solid var(--sheetedit-print-rule); background:var(--sheetedit-print-head-bg); font-weight:600; font-size:11px; text-align:center; padding:1px 4px;
+}
+@media print {
+body > *:not(.sheetedit-print) { display:none !important; }
+.sheetedit-print { position:static !important; left:auto !important; }
+.sheetedit-print-page { break-after:page; }
+}`;

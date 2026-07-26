@@ -295,6 +295,13 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     states it (block height less one nominal text line, 0.1389in), verified at exactly 0.75in.
   - Header/footer text keeps the file's raw &-codes, so formatting codes round-trip; only the ODF
     write path drops font/size codes, since ODF states those as span styles.
+  - **Printing** (core/print-render.ts) paginates the print area itself and hands the pages to
+    window.print(): paper size, margins, scale or fit-to, manual breaks, repeated title lines and
+    page order all decide where the breaks land, and none of that survives simply printing the grid.
+    Pages are exact paper boxes with @page margin 0 so the margins and the header/footer bands are
+    ours to place. The browser's own URL/date strip is a print-dialog setting we cannot control.
+    Do NOT wait on requestAnimationFrame before print(): it is throttled in a background tab, which
+    left the pages built and the dialog never opening. Force layout with an offsetHeight read.
 - **Protection** is read, enforced and authored in both formats. The flags are stated the way OOXML
   states them (each one names a BLOCKED action, each with its own default), and the ods adapter
   inverts them, because ODF's loext flags are permissions. Two layers decide editability: the sheet

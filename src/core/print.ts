@@ -3,13 +3,13 @@ import type { Sheet } from "./model";
 // ---------------------------------------------------------------------------
 // Print settings
 // ---------------------------------------------------------------------------
-// sheetedit does not print, so these are carried, shown and authored for the benefit of whatever
-// does: Excel, Calc, or a PDF export. The model is stated in xlsx's terms (inches, a paper-size id,
-// scale as a percentage) because that is the more explicit of the two formats; the ods adapter
-// converts to ODF's page-layout / master-page pair.
+// The model is stated in xlsx's terms (inches, a paper-size id, scale as a percentage) because that
+// is the more explicit of the two formats; the ods adapter converts to ODF's page-layout /
+// master-page pair.
 //
-// Two things the grid can show without printing anything: the print area, and where the pages
-// break. Both are drawn as an overlay, which is what makes these settings checkable at all.
+// These settings drive three things: what Excel or Calc do with the file, the print area and page
+// breaks drawn on the grid, and sheetedit's own printing (see print-render.ts, which lays the print
+// area out as pages and hands them to the browser).
 
 /** A page-break line: the 1-based row / column that starts a new page. */
 export type Breaks = number[];
@@ -126,9 +126,12 @@ export function formatHeaderFooter(hf: HeaderFooter | undefined): string | undef
 export const hasPrintSetup = (p: PrintSetup | undefined): boolean =>
   !!p && Object.values(p).some((v) => (Array.isArray(v) ? v.length > 0 : v !== undefined));
 
-/** The effective print area: what the file says, else the whole used range. */
-export function effectivePrintArea(sheet: Sheet): { r1: number; c1: number; r2: number; c2: number }[] {
-  const areas = sheet.printSetup?.printArea;
+/**
+ * The effective print area: what the setup says, else the whole used range. The setup is passed in
+ * rather than read off the sheet so a caller can lay out a setup it has not committed yet.
+ */
+export function effectivePrintArea(sheet: Sheet, setup: PrintSetup | undefined = sheet.printSetup): { r1: number; c1: number; r2: number; c2: number }[] {
+  const areas = setup?.printArea;
   if (areas?.length) return areas;
   if (!sheet.maxRow || !sheet.maxCol) return [];
   return [{ r1: 1, c1: 1, r2: sheet.maxRow, c2: sheet.maxCol }];

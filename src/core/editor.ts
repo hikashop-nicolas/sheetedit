@@ -23,6 +23,7 @@ import { SHEETEDIT_CSS } from "./ui/styles.generated";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
+import { buildPrintDocument } from "./print-render";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -1359,6 +1360,31 @@ export function createSheetEditor(
       if (m && preset && (["left", "right", "top", "bottom", "header", "footer"] as const).every((k) => Math.abs(m[k] - preset[k]) < 0.001)) return name;
     return "normal";
   };
+  /**
+   * Lay the print area out as pages and hand them to the browser. The pages live in the document
+   * (off-screen) rather than in an iframe, so they inherit the fonts already loaded, and a print
+   * stylesheet hides everything else.
+   */
+  let printRoot: HTMLElement | null = null;
+  const doPrint = (): void => {
+    printRoot?.remove();
+    printRoot = buildPrintDocument(wb, active, options.fileName ?? "");
+    if (!printRoot) {
+      showNotice(t("printNothing"));
+      return;
+    }
+    document.body.appendChild(printRoot);
+    const cleanup = (): void => { printRoot?.remove(); printRoot = null; };
+    // afterprint is the reliable signal in every current browser; the timeout is the belt and
+    // braces for one that fires nothing, so the pages can never be left behind in the document.
+    window.addEventListener("afterprint", cleanup, { once: true });
+    setTimeout(() => { if (printRoot) cleanup(); }, 60000);
+    // Force layout before printing rather than waiting for a frame: requestAnimationFrame is
+    // throttled in a background tab, which left the pages built and the dialog never opened.
+    void printRoot.offsetHeight;
+    window.print();
+  };
+
   const openPrintDialog = (): void => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
@@ -2194,6 +2220,7 @@ export function createSheetEditor(
         b.addEventListener("click", () => { closeLineMenu(); run(); });
         pop.appendChild(b);
       };
+      item(t("printNow"), () => doPrint());
       item(t("printSetup"), () => openPrintDialog());
       const sep = document.createElement("div");
       sep.className = "sheetedit-pop-sep";

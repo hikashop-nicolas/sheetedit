@@ -219,15 +219,29 @@ actually looks broken.
 
 ## Print settings
 
-sheetedit does not print, so page setup is carried, shown and authored for whatever does: Excel,
-LibreOffice, or a PDF export. Two parts of it are visible on the grid, which is what makes the rest
-checkable: the **print area** is outlined in green, and **page breaks** are drawn as blue dashed
-lines that continue into the row and column headers.
+sheetedit prints, and stores the settings for whatever else opens the file: Excel, LibreOffice, or a
+PDF export. Two parts of the setup are visible on the grid, which is what makes the rest checkable:
+the **print area** is outlined in green, and **page breaks** are drawn as blue dashed lines that
+continue into the row and column headers.
 
-The toolbar's printer button holds **Page setup** (orientation, paper size, scaling or fit-to-width,
-margins, print gridlines and headings, centring, and the header/footer regions), plus **Set** /
-**Clear print area** from the selection and **Reset page breaks**. The row and column header menus
-carry **Insert** / **Remove page break** and **Repeat these rows (or columns) on every page**.
+The toolbar's printer button holds **Print**, **Page setup** (orientation, paper size, scaling or
+fit-to-width, margins, print gridlines and headings, centring, and the header/footer regions), plus
+**Set** / **Clear print area** from the selection and **Reset page breaks**. The row and column
+header menus carry **Insert** / **Remove page break** and **Repeat these rows (or columns) on every
+page**.
+
+**Print** lays the active sheet's print area out as pages and hands them to the browser. The
+pagination is real, not a screenshot of the grid: columns and rows are split by the paper size and
+margins, manual breaks are honoured, fit-to-width shrinks (never enlarges), title rows and columns
+repeat on every page, and the pages come out in the order the setup asks for. Each page carries its
+own header and footer with the field codes resolved, so `&P of &N` numbers correctly and
+`firstPageNumber` is respected. Merged cells span, hidden rows and columns are skipped, and each
+cell keeps its own formatting.
+
+Pages are emitted at exactly the paper size with `@page { margin: 0 }`, so the margins, header and
+footer are placed from the file's own values rather than the browser's. The one thing outside our
+control is the browser's own header and footer strip (the URL and date); turn that off in the print
+dialog for an exact page. Printing always uses light colours, whatever mode the editor is in.
 
 Header and footer text keeps the file's own field codes (`&P` page, `&N` total pages, `&D` date,
 `&T` time, `&A` sheet, `&F` file), so a header sheetedit did not author round-trips exactly,
