@@ -152,8 +152,10 @@ inside sheetedit and move later.
   ticks per loop iteration so an empty body cannot spin. The host object model is reached only
   through the `VbaObject` interface, so the language half tests with no spreadsheet at all: one of
   the real fixture macros runs end to end against a stub `Worksheets`.
-- [ ] Stages 3-4
+- [x] **Stage 3** - the Excel object model: `Range` (multi-area, so `SpecialCells` and `Union`
+  work), `Worksheet`/`Worksheets`, `Workbook`, `Application` with `WorksheetFunction` delegating to
+  sheetedit's own formula engine, `Font`/`Interior` through the format's own style writer, and the
+  `xl*` constants. Sheet protection is honoured: a write to a locked cell raises, as in Excel. One
+  of the real fixture macros now runs end to end, unhiding blank rows and protecting the sheet.
+- [ ] Stage 4 (run it from the UI)
 - [ ] Stage 5 (write back), after 4
-
-Excel's `xl*` constants (`xlCellTypeBlanks` and friends) belong to Stage 3: until it lands they hit
-the refusal path by name, which is what the real fixture macro does today.
