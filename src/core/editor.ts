@@ -25,6 +25,7 @@ import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSet
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
 import { subNames } from "./vba";
+import { runWorkbookMacro, runnableSubs } from "./vba-macro";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { formDialog, type FormField } from "./ui/form-dialog";
@@ -1319,7 +1320,33 @@ export function createSheetEditor(
     });
   };
 
-  /** Show the workbook's macro source. Read-only: nothing here runs, and nothing is written. */
+  /**
+   * Run one macro against the workbook. The whole run is a single undo step, and a run that stops
+   * part-way is rolled back by runWorkbookMacro before it returns, so a half-run macro can never
+   * be saved.
+   */
+  const runMacro = (source: string, moduleName: string, procName: string): { ok: boolean; text: string } => {
+    const res = runWorkbookMacro(wb, source, moduleName, procName, {
+      activeSheet: active,
+      selection: sel ? { r1: sel.r1, c1: sel.c1, r2: sel.r2, c2: sel.c2 } : undefined,
+      activeCell: activeCell ?? undefined,
+      fileName: options.fileName,
+    });
+    if (!res.ok) {
+      const where = res.error?.line != null ? ` (${res.error.module}, line ${res.error.line})` : ` (${res.error?.module})`;
+      return { ok: false, text: `${t("vbaRunFailed")} ${res.error?.message ?? ""}${where}` };
+    }
+    if (res.undo && res.redo) history.push({ sheet: active, cells: [], undoExtra: res.undo, redoExtra: res.redo });
+    if (res.activeSheet != null && res.activeSheet !== active && wb.sheets[res.activeSheet]) switchSheet(res.activeSheet);
+    recalc(wb);
+    mark();
+    renderTabs();
+    renderGrid();
+    const out = res.messages.length ? `\n${t("vbaRunOutput")}: ${res.messages.join(" | ")}` : "";
+    return { ok: true, text: `${t("vbaRunOk")}${out}` };
+  };
+
+  /** Show the workbook's macro source, and run a procedure from it. */
   const openMacroViewer = (): void => {
     const project = wb.vba;
     const modal = document.createElement("div");
@@ -1339,6 +1366,10 @@ export function createSheetEditor(
       list.className = "sheetedit-vba-list";
       const pre = document.createElement("pre");
       pre.className = "sheetedit-vba-src";
+      const runs = document.createElement("div");
+      runs.className = "sheetedit-vba-runs";
+      const status = document.createElement("p");
+      status.className = "sheetedit-note sheetedit-vba-status";
       const show = (i: number): void => {
         const mod = project.modules[i]!;
         pre.textContent = mod.source;
@@ -1346,6 +1377,30 @@ export function createSheetEditor(
         // Naming the procedures is what makes a long module readable at a glance.
         const subs = subNames(mod.source);
         note.textContent = subs.length ? `${t("vbaNote")}  ${t("vbaSubs")}: ${subs.join(", ")}` : t("vbaNote");
+        // Only the procedures that can run on their own get a button: a Sub needing arguments has
+        // nothing to supply them, and a Function is not something a user "runs".
+        status.textContent = "";
+        runs.textContent = "";
+        const runnable = runnableSubs(mod.source);
+        if (!runnable.length) {
+          const none = document.createElement("span");
+          none.className = "sheetedit-note";
+          none.textContent = t("vbaRunNone");
+          runs.appendChild(none);
+          return;
+        }
+        for (const name of runnable) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "sheetedit-dlg-btn";
+          b.textContent = `${t("vbaRun")}: ${name}`;
+          b.addEventListener("click", () => {
+            const res = runMacro(mod.source, mod.name, name);
+            status.textContent = res.text;
+            status.classList.toggle("is-error", !res.ok);
+          });
+          runs.appendChild(b);
+        }
       };
       project.modules.forEach((mod, i) => {
         const b = document.createElement("button");
@@ -1355,7 +1410,7 @@ export function createSheetEditor(
         b.addEventListener("click", () => show(i));
         list.appendChild(b);
       });
-      card.append(list, pre);
+      card.append(list, pre, runs, status);
       show(0);
     }
     const actions = document.createElement("div");

@@ -934,3 +934,9 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
   font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size:4;
   background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); border:1px solid var(--sheetedit-btn);
 }
+
+.sheetedit-vba-runs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; }
+
+.sheetedit-vba-status { margin:8px 0 0; white-space:pre-wrap; }
+
+.sheetedit-vba-status.is-error { color:var(--sheetedit-error-text); }

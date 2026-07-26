@@ -157,5 +157,8 @@ inside sheetedit and move later.
   sheetedit's own formula engine, `Font`/`Interior` through the format's own style writer, and the
   `xl*` constants. Sheet protection is honoured: a write to a locked cell raises, as in Excel. One
   of the real fixture macros now runs end to end, unhiding blank rows and protecting the sheet.
-- [ ] Stage 4 (run it from the UI)
+- [x] **Stage 4** - a Run button per runnable `Sub` in the macro viewer. The whole run is one undo
+  step, including the parts that touch no cell (hidden rows, a rename, protection), and a run that
+  stops is rolled back before the caller sees the error, so a half-run macro can never be saved.
+  Errors name the module and line. `MsgBox` output is shown after the run rather than blocking.
 - [ ] Stage 5 (write back), after 4

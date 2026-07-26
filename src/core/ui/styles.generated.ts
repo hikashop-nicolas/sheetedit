@@ -797,4 +797,7 @@ background:var(--sheetedit-btn); color:var(--sheetedit-text); border:1px solid v
 margin:0; max-height:52vh; overflow:auto; padding:9px 11px; border-radius:7px; white-space:pre;
 font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size:4;
 background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); border:1px solid var(--sheetedit-btn);
-}`;
+}
+.sheetedit-vba-runs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; }
+.sheetedit-vba-status { margin:8px 0 0; white-space:pre-wrap; }
+.sheetedit-vba-status.is-error { color:var(--sheetedit-error-text); }`;
