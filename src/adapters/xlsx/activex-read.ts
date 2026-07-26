@@ -1,3 +1,5 @@
+import { metafileKind } from "../../core/metafile";
+
 // ---------------------------------------------------------------------------
 // ActiveX controls: the persisted binary, per [MS-OFORMS]
 // ---------------------------------------------------------------------------
@@ -563,8 +565,10 @@ function pictureMime(b: Uint8Array): string | undefined {
   if (b.length > 3 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
   if (b.length > 2 && b[0] === 0x42 && b[1] === 0x4d) return "image/bmp";
   if (b.length > 4 && b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && b[3] === 0x00) return "image/x-icon";
-  // A Windows or Enhanced Metafile is a drawing program, not an image a browser can decode. It is
-  // left alone rather than mislabelled: the control renders without its picture and says nothing false.
+  // A Windows or Enhanced Metafile is a recorded list of drawing calls rather than an image. It is
+  // named as one here and replayed onto a canvas at render time; see core/metafile.ts.
+  const meta = metafileKind(b);
+  if (meta) return meta === "wmf" ? "image/wmf" : "image/emf";
   return undefined;
 }
 

@@ -1,4 +1,5 @@
 import { setupOverlayHosts } from "./overlay-hosts";
+import { metafileFromDataUri, metafileToPng } from "../metafile";
 import type { Sheet, SheetControl } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
@@ -252,8 +253,11 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         }
         const img = document.createElement("img");
         img.className = "sheetedit-ctrl-image";
-        img.src = src;
         img.alt = ctl.label ?? ctl.name;
+        // A metafile picture is replayed onto a canvas first, the same as a sheet image.
+        const meta = metafileFromDataUri(src);
+        if (!meta) img.src = src;
+        else void metafileToPng(meta.bytes, meta.kind).then((png) => { if (png) img.src = png; });
         return img;
       }
       case "button": {

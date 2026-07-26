@@ -351,12 +351,29 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     land 4-aligned and inserting one shifts everything after it) and reads its own output back
     before returning it. Same-length changes still patch in place, byte for byte.
   - Still open, and each for a stated reason: **third-party ActiveX** (the format belongs to whoever
-    wrote the control - irreducible); **metafile pictures** (no browser decodes WMF/EMF);
-    **rgColumnInfo**, a multi-column list's per-column widths, which is walked past and preserved
-    but not rendered (the first column is what shows); **Frame / MultiPage / TabStrip**, which are
-    UserForm containers rather than worksheet controls; and **adding a Caption to a CommandButton or
-    Label that has none**, since the rebuild path is written for the MorphData family only (Excel
-    always writes a caption for those two, so this has not come up).
+    wrote the control - irreducible); **rgColumnInfo**, a multi-column list's per-column widths,
+    whose record layout is not in the published index and which is not worth guessing at;
+    **Frame / MultiPage / TabStrip**, whose stream holds a whole embedded form (ClassTable, the
+    sites array) and which belong to a UserForm rather than a worksheet; and **adding a Caption to a
+    CommandButton or Label that has none**, since the rebuild path is written for the MorphData
+    family (which covers the checkbox, option button, toggle and text box; Excel always writes a
+    caption for the other two).
+- **Windows metafiles (WMF / EMF)** render now, which they never did: an `xl/media/*.emf` came
+  through as a `data:image/emf` URI and a browser drew nothing at all. A metafile is not an image -
+  it is a recorded list of GDI drawing calls - so showing one means replaying them onto a canvas.
+  That is emf-converter (Apache-2.0, no dependencies), lazy-loaded so a workbook without one never
+  pays for the code, and failing soft: no picture rather than a broken one. It covers sheet images,
+  an ActiveX control's Picture, and anything else that arrives as a data URI.
+  - GOTCHA, and it is ours to handle: the converter ignores a placeable WMF's own frame and renders
+    into a square canvas at its 8192px cap - a 1.7MB PNG of mostly white for a picture two inches
+    across. `metafileSize` reads the frame first (a WMF's placeable bounding box and units-per-inch,
+    an EMF's rclFrame in hundredths of a millimetre) and passes it as an explicit cap, which puts
+    both formats on the same sane size.
+  - KNOWN DEFECT, upstream: on an EMF whose text comes through EMR_EXTTEXTOUTW, the converter fills
+    the text's background rectangle but does not draw the glyphs, leaving a white notch where the
+    label should be. Checked against LibreOffice's own rasterisation of the same file, which draws
+    it correctly. The drawing is otherwise faithful, so this ships as a visible improvement on
+    nothing at all rather than being held back.
 - **Grid metrics** come from the workbook, not from constants, and getting this wrong showed up as
   an ActiveX bug rather than a layout one. A column's `width` is in character units of the NORMAL
   STYLE's font, so the conversion needs THAT font's maximum digit width (7px for Calibri 11, 9px for

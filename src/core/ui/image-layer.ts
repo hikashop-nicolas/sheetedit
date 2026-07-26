@@ -1,4 +1,5 @@
 import { setupOverlayHosts } from "./overlay-hosts";
+import { metafileFromDataUri, metafileToPng } from "../metafile";
 import type { Sheet, SheetImage } from "../model";
 import type { ChartGeom } from "./chart-overlay";
 
@@ -107,8 +108,13 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
       box.style.width = `${Math.max(1, x2 - x)}px`;
       box.style.height = `${Math.max(1, y2 - y)}px`;
       const img = document.createElement("img");
-      img.src = im.dataUri;
       img.alt = "";
+      // A metafile is a list of drawing calls rather than an image, so it is replayed onto a canvas
+      // first; everything else is set straight away. The replay is async and lazy-loaded, so the
+      // element goes in now and gains its source when the picture is ready.
+      const meta = metafileFromDataUri(im.dataUri);
+      if (!meta) img.src = im.dataUri;
+      else void metafileToPng(meta.bytes, meta.kind).then((png) => { if (png) img.src = png; });
       box.appendChild(img);
       if (editable) {
         const handle = document.createElement("div");

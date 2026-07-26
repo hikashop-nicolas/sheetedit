@@ -31,6 +31,7 @@
   "dependencies": {
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
+    "emf-converter": "^2.0.0",
     "fast-formula-parser": "^1.0.19",
     "fflate": "^0.8.2",
     "localml": "github:hikashop-nicolas/localml",
