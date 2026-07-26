@@ -1,7 +1,10 @@
 # sheetedit: closing the remaining xlsx/ods gaps
 
-Status (2026-07-24): Phases 1-9 below are DONE. Charts and pivot tables are feature-complete for
-the common cases (see CHARTS_SPEC_GAPS.md, PIVOT_AUTHORING.md); the "Remaining / not yet done"
+This is the living record: what shipped, what it cost, and what is still missing. Finished plans
+for individual features live in `done/`; see `README.md`.
+
+Status (2026-07-26): Phases 1-9 below are DONE. Charts and pivot tables are feature-complete for
+the common cases (see done/CHARTS_SPEC_GAPS.md, done/PIVOT_AUTHORING.md); the "Remaining / not yet done"
 section at the end is the current, honest backlog. Each phase was a shippable increment: implement,
 unit-test, browser-verify the visible behaviour, LibreOffice/round-trip check where a file format is
 touched, commit, then bump omnitext. House rules: dependency-light, framework-agnostic, in-place
@@ -79,7 +82,7 @@ Columns / Values(+function) / Report Filter with a subtotals toggle and a live p
 nested row/column fields, multiple value fields (sum/count/average/min/max), page filters and
 subtotals. Emits the native structure with refreshOnLoad; edit rewrites in place and refresh
 recomputes from source, for authored and file-read pivots alike (the authoring spec is reconstructed
-on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See PIVOT_AUTHORING.md.
+on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See done/PIVOT_AUTHORING.md.
 
 ### Also shipped (toolbar / UX, 2026-07-24)
 - The toolbar folds its authoring controls into a "⋯" overflow menu (icon + label rows) when width
@@ -89,7 +92,7 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
 
 ## Remaining / not yet done (the honest backlog)
 - **Pivots**: feature-complete. "Show values as", calculated fields, calculated items and a pivot
-  chart are all DONE (see PIVOT_AUTHORING.md). Not attempted: byte-identical layout to Excel (both
+  chart are all DONE (see done/PIVOT_AUTHORING.md). Not attempted: byte-identical layout to Excel (both
   apps re-flow the body on open anyway). Caveat: show-values-as / calculated fields / calculated
   items are honoured by Excel and sheetedit's display but ignored by LibreOffice's xlsx pivot
   rebuild; the calculated-item OOXML is emitted per spec but unverified in Excel (only that the file
@@ -274,8 +277,11 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
 - **Form controls** are read, rendered and interactive: the linked cell is the point, so a checkbox
   writes TRUE/FALSE there, a dropdown the 1-based index, a spinner its value, each triggering a
   recalc. State is read from ctrlProps with the VML as fallback (files predating ctrlProps have only
-  the VML) and written back to BOTH, since an older reader looks only at the VML. Buttons are drawn
-  disabled: they run macros. Creating new controls is not implemented.
+  the VML) and written back to BOTH, since an older reader looks only at the VML. Controls can be
+  created, edited, deleted, dragged and resized. A button runs the macro its `<x:FmlaMacro>` names,
+  through the same path the macro viewer uses; one with nothing assigned is drawn disabled. A file
+  written by older Excel has no `<controls>` element at all, only VML shapes, and those are read as
+  controls too. Radios clear the rest of their group box.
   - The VML shape id is "_x0000_s1025" and the worksheet's @shapeId is the trailing number, so it
     must be matched from the END; a lazy match from the start stops at the first underscore.
   - LibreOffice validates the structure but NOT the checkbox state: a file that was never checked
@@ -283,9 +289,8 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   - ctrlProps and the VML spell some object types differently ("CheckBox" vs "Checkbox") and the
     label must be nested <div><font> in the VML textbox or LibreOffice does not find it. Both were
     caught by round-tripping a CREATED control rather than only a hand-built one.
-  - VBA: sheetedit preserves vbaProject.bin but does not run it. Not a sandbox limitation (JS cannot
-    leave the tab anyway) - it needs a VBA interpreter plus the Excel object model. SheetJS only
-    preserves the blob too (its `vbaraw`), so it is no shortcut. Note XLSX cannot hold VBA at all;
+  - VBA: sheetedit reads, runs and writes macros now, through the vbalang library plus the Excel
+    object model in `vba-excel.ts`. See `_plans/done/VBA_PLAN.md`. Note XLSX cannot hold VBA at all;
     macros require XLSM/XLSB/XLS.
 - **Undo covers the sheet-level settings** (protection, page setup, panes, outline grouping) and the
   workbook theme, not just cell edits. A cell edit records its own fields; these live on the sheet,

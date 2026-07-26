@@ -7,7 +7,7 @@ import { VbaInterpreter, type RunResult } from "vbalang";
 import { EMPTY, VbaArray, type VbaValue } from "vbalang";
 import { excelGlobals, type ExcelHost } from "./vba-excel";
 
-// Stage 3 of _plans/VBA_PLAN.md. The object model a macro talks to, mapped onto sheetedit's own
+// Stage 3 of _plans/done/VBA_PLAN.md. The object model a macro talks to, mapped onto sheetedit's own
 // model so a macro edit is an ordinary edit. What is NOT modelled must refuse by name, which is
 // half of what these tests check: a plausible wrong answer is worse than a stop.
 

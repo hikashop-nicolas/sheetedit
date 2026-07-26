@@ -9,7 +9,7 @@ import { setModuleSource, VbaWriteError } from "vbalang";
 import { vbaPartOf } from "./vba";
 
 // ---------------------------------------------------------------------------
-// Running a macro against the workbook (Stage 4 of _plans/VBA_PLAN.md)
+// Running a macro against the workbook (Stage 4 of _plans/done/VBA_PLAN.md)
 // ---------------------------------------------------------------------------
 // A whole run is one undo step, and a run that stops part-way is rolled back before the caller
 // sees the error. That is the plan's central rule: a macro that half-runs leaves a workbook in a

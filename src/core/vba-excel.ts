@@ -13,7 +13,7 @@ import { addSheet, deleteSheet, sheetsEditable } from "./sheet-ops";
 import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "vbalang";
 
 // ---------------------------------------------------------------------------
-// The Excel object model for VBA (Stage 3 of _plans/VBA_PLAN.md)
+// The Excel object model for VBA (Stage 3 of _plans/done/VBA_PLAN.md)
 // ---------------------------------------------------------------------------
 // Everything here maps onto sheetedit's own model, so a macro edit is an ordinary edit: it
 // recalculates, renders and undoes like any other. Nothing reaches outside the tab, and the

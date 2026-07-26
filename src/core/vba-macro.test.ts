@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getCell, type Workbook } from "./model";
 import { runnableSubs, runWorkbookMacro } from "./vba-macro";
 
-// Stage 4 of _plans/VBA_PLAN.md. The run itself is one undo step, and a run that stops part-way is
+// Stage 4 of _plans/done/VBA_PLAN.md. The run itself is one undo step, and a run that stops part-way is
 // rolled back before the caller ever sees it: a half-run macro that the user then saves is the one
 // failure mode this whole feature has to rule out.
 
