@@ -1,6 +1,6 @@
 import {
-  colToLetters, ensureCell, getCell, lettersToCol, numToStr, type Cell, type CellStyle,
-  type Sheet, type StyleChange, type Workbook,
+  colToLetters, ensureCell, getCell, lettersToCol, numToStr, parseA1Ref, type Cell, type CellStyle,
+  type Sheet, type SheetControl, type StyleChange, type Workbook,
 } from "./model";
 import { clearXlsxCellStyle, setXlsxCellStyle } from "../adapters/xlsx/styles";
 import { setXlsxRowHidden } from "../adapters/xlsx/write";
@@ -43,6 +43,11 @@ export interface ExcelHost {
    * Range so a macro can copy from one sheet and paste into another, as Excel does.
    */
   clipboard?: { values: string[][]; cut?: { sheetIndex: number; rect: Rect } };
+  /** The items a list control draws from, which needs the host's defined-name resolution. */
+  controlItems?: (ctl: SheetControl) => string[];
+  /** A control's own state changed, so the host writes it back (the persisted binary, the linked
+      cell) and redraws. Absent = OLEObjects is readable but not settable. */
+  onControlChange?: (sheetIndex: number, ctl: SheetControl) => void;
 }
 
 const MAX_ROW = 1048576;
@@ -984,6 +989,11 @@ export class WorksheetObject implements VbaObject {
     switch (lower) {
       case "name": return this.sheet.name;
       case "index": return this.index + 1;
+      case "oleobjects": {
+        const coll = new OleObjectsCollection(this.host, this.index);
+        // OLEObjects("Name") reads as a call on the property, so an argument indexes it directly.
+        return args.length ? coll.get("item", args) : coll;
+      }
       case "range": {
         if (!args.length) throw new VbaError("Range needs a reference", 1004);
         if (args[0] instanceof RangeObject) {
@@ -1338,6 +1348,133 @@ function matchesCriterion(text: string, op: string, operand: string): boolean {
     case "<": return numeric ? n < m : text < operand;
     case "<=": return numeric ? n <= m : text <= operand;
     default: throw new VbaError(`AutoFilter criterion "${op}${operand}" is not supported by sheetedit`, 1004);
+  }
+}
+
+// --- OLEObjects: the ActiveX controls on a sheet ---------------------------------------------
+// A macro reaches an ActiveX control through Worksheet.OLEObjects("Name"), and its state through
+// that object's .Object. We read those controls and can write their persisted value, so the
+// members a real macro uses are modelled: everything else refuses, as ever.
+
+/** The control behind an OLEObject: what `.Object` returns. */
+class OleControlObject implements VbaObject {
+  readonly typeName = "OLEControl";
+  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number, private readonly ctl: SheetControl) {}
+
+  private items(): string[] {
+    return this.host.controlItems?.(this.ctl) ?? [];
+  }
+  private changed(): void {
+    this.ctl.dirty = true;
+    // Excel keeps a control's linked cell in step with its value, so a macro that only sets the
+    // control still moves the cell. The write goes through a Range so it lands in the undo step.
+    const ref = this.ctl.linkedCell?.replace(/\$/g, "").split("!").pop();
+    const at = ref ? parseA1Ref(ref) : null;
+    if (at) new RangeObject(this.host, this.sheetIndex, [{ r1: at.row, c1: at.col, r2: at.row, c2: at.col }]).set("value", [], this.ctl.activeXValue ?? "");
+    this.host.onControlChange?.(this.sheetIndex, this.ctl);
+  }
+  /** The 0-based selected index, or -1. A list control's value IS its text, so the two agree. */
+  private listIndex(): number {
+    const items = this.items();
+    const v = this.ctl.activeXValue ?? "";
+    const i = items.indexOf(v);
+    return i;
+  }
+
+  defaultValue(): VbaValue { return this.get("value", []); }
+
+  get(name: string, args: VbaValue[]): VbaValue {
+    switch (name.toLowerCase()) {
+      case "value": case "text": return this.ctl.activeXValue ?? "";
+      case "caption": return this.ctl.label ?? "";
+      case "listcount": return this.items().length;
+      case "listindex": return this.listIndex();
+      case "list": {
+        const items = this.items();
+        if (!args.length) throw new VbaError("List needs an index", 1004);
+        const i = toNumber(args[0]!);
+        if (i < 0 || i >= items.length) throw new VbaError("List index out of range", 9);
+        return items[i]!;
+      }
+      case "enabled": case "visible": return true;
+      case "name": return this.ctl.name;
+    }
+    throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
+  }
+
+  set(name: string, _args: VbaValue[], value: VbaValue): void {
+    switch (name.toLowerCase()) {
+      case "value": case "text": this.ctl.activeXValue = toStr(value); this.changed(); return;
+      case "listindex": {
+        const items = this.items();
+        const i = toNumber(value);
+        if (i < 0 || i >= items.length) throw new VbaError("ListIndex out of range", 380);
+        this.ctl.activeXValue = items[i]!;
+        this.changed();
+        return;
+      }
+    }
+    throw new VbaError(`${this.typeName}.${name} cannot be set by sheetedit`, 438);
+  }
+}
+
+/** One entry of Worksheet.OLEObjects. */
+class OleObjectObject implements VbaObject {
+  readonly typeName = "OLEObject";
+  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number, private readonly ctl: SheetControl, private readonly index: number) {}
+
+  get(name: string, _args: VbaValue[]): VbaValue {
+    switch (name.toLowerCase()) {
+      case "object": return new OleControlObject(this.host, this.sheetIndex, this.ctl);
+      case "name": return this.ctl.name;
+      case "index": return this.index;
+      case "linkedcell": return this.ctl.linkedCell ?? "";
+      case "listfillrange": return this.ctl.sourceRange ?? "";
+      case "topleftcell": {
+        const a = this.ctl.anchor;
+        if (!a) throw new VbaError("that control has no anchor", 1004);
+        return new RangeObject(this.host, this.sheetIndex, [{ r1: a.fromRow, c1: a.fromCol, r2: a.fromRow, c2: a.fromCol }]);
+      }
+      case "value": return this.ctl.activeXValue ?? "";
+    }
+    throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
+  }
+
+  set(name: string, _args: VbaValue[], value: VbaValue): void {
+    if (name.toLowerCase() === "value") { new OleControlObject(this.host, this.sheetIndex, this.ctl).set("value", [], value); return; }
+    throw new VbaError(`${this.typeName}.${name} cannot be set by sheetedit`, 438);
+  }
+}
+
+/** Worksheet.OLEObjects: indexable by name or by 1-based position, and enumerable. */
+class OleObjectsCollection implements VbaObject {
+  readonly typeName = "OLEObjects";
+  constructor(private readonly host: ExcelHost, private readonly sheetIndex: number) {}
+
+  private list(): SheetControl[] {
+    return (this.host.wb.sheets[this.sheetIndex]?.controls ?? []).filter((c) => c.activeX);
+  }
+  enumerate(): VbaValue[] {
+    return this.list().map((c, i) => new OleObjectObject(this.host, this.sheetIndex, c, i + 1));
+  }
+  get(name: string, args: VbaValue[]): VbaValue {
+    const lower = name.toLowerCase();
+    if (lower === "count") return this.list().length;
+    if (lower === "item" || lower === "") {
+      const list = this.list();
+      const key = args[0];
+      if (key === undefined) throw new VbaError("OLEObjects needs a name or an index", 1004);
+      if (typeof key === "number") {
+        const c = list[Math.trunc(key) - 1];
+        if (!c) throw new VbaError("no such OLE object", 9);
+        return new OleObjectObject(this.host, this.sheetIndex, c, Math.trunc(key));
+      }
+      const want = toStr(key).toLowerCase();
+      const i = list.findIndex((c) => c.name.toLowerCase() === want);
+      if (i < 0) throw new VbaError(`no OLE object named "${toStr(key)}"`, 9);
+      return new OleObjectObject(this.host, this.sheetIndex, list[i]!, i + 1);
+    }
+    throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
   }
 }
 

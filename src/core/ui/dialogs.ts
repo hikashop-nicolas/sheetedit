@@ -265,7 +265,9 @@ export function setupDialogs(ctx: DialogCtx): {
       if (existing) {
         existing.fill = fill; existing.stroke = stroke; existing.strokeWidth = strokeWidth; existing.text = text;
         existing.preset = undefined; // our geometry is authoritative once edited
+        existing.fillGradient = undefined; // a colour was picked, so the file's gradient is gone
         existing.dirty = true;
+        existing.styleDirty = true;
       } else {
         // Default location: the selection rect, or a ~3x4-cell box at the active cell.
         const twoD = s.r2 > s.r1 || s.c2 > s.c1;

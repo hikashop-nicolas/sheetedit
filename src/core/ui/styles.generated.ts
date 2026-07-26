@@ -521,6 +521,8 @@ background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-h
 .sheetedit-shapebox { position:absolute; }
 .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
 .sheetedit-shapebox.editable { pointer-events:auto; cursor:move; }
+.sheetedit-shapebox.macro { pointer-events:auto; cursor:pointer; }
+.sheetedit-shapebox.macro.editable { cursor:move; }
 .sheetedit-shapebox.selected { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
 .sheetedit-shape-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
 background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border); cursor:nwse-resize; pointer-events:auto; display:none; }

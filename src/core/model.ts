@@ -531,6 +531,12 @@ export interface SheetShape {
   strokeWidth?: number; // px (default 1)
   text?: string;
   textColor?: string;
+  /** The macro assigned to the shape (xlsx <xdr:sp macro>). A shape with one is a button: clicking
+      it runs the macro, exactly as a form control's button does. */
+  macro?: string;
+  /** The shape's PAINT changed (the property dialog), as opposed to only its position. A move must
+      not rewrite the fill, or a shape that takes its look from the theme loses it on save. */
+  styleDirty?: boolean;
   /** xlsx: the drawing part path + the anchor's index, to rewrite the exact anchor on save. */
   drawingPath?: string;
   anchorIndex?: number;

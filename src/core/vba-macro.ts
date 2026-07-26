@@ -63,6 +63,10 @@ export interface MacroRunOptions {
   eventTarget?: { sheetIndex: number; rect: Rect };
   /** What Worksheet.PrintOut does. Absent means a macro cannot print, and says so. */
   print?: (sheetIndex: number) => void;
+  /** The items a list control draws from, and where a control's changed state goes: both need the
+      host, which owns defined-name resolution and the parts a control persists into. */
+  controlItems?: ExcelHost["controlItems"];
+  onControlChange?: ExcelHost["onControlChange"];
 }
 
 export interface MacroRunResult {
@@ -115,6 +119,8 @@ export function runWorkbookMacro(
     wb,
     activeSheet: options.activeSheet ?? 0,
     ...(options.print ? { print: options.print } : {}),
+    ...(options.controlItems ? { controlItems: options.controlItems } : {}),
+    ...(options.onControlChange ? { onControlChange: options.onControlChange } : {}),
     selection: options.selection,
     activeCell: options.activeCell,
     onBeforeWrite: (sheet, r, c) => {

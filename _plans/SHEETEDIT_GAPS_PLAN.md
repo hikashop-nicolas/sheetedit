@@ -350,6 +350,19 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   writer keep a single colour to work with. A shape's OWN `<a:gradFill>` is read the same way.
   GOTCHA: an SVG gradient id is document-global, so the ids are sequenced; a fixed one would make
   every shape on the page take the first shape's gradient.
+- **A shape with a macro is a button**: `<xdr:sp macro>` is read, and clicking the shape runs it
+  through the same path a form control's button uses. Three bugs found doing this. A drag started
+  on ANY button, so a right-click left the shape following a pointer with nothing held down. A MOVE
+  rewrote the shape's paint from the model's single colour, so dragging a gallery shape silently
+  repainted it and a theme-styled one lost its look outright: only a restyle touches spPr now
+  (`styleDirty`), a move rewrites the anchor and nothing else. And the macro name a shape carries is
+  qualified with `!` (`[0]!Sub`), not `.`, which the control path stripped.
+- **Worksheet.OLEObjects**: the ActiveX controls, reachable from a macro. `.Count`, by name or by
+  1-based index, `For Each`, and per object `.Object`, `.Name`, `.Index`, `.LinkedCell`,
+  `.ListFillRange`, `.TopLeftCell`. The control itself gives `.Value` / `.Text` / `.Caption` /
+  `.ListCount` / `.ListIndex` / `.List(i)`, and Value and ListIndex are settable: the write goes to
+  the persisted binary AND to the linked cell, since Excel keeps the two in step. Everything else
+  refuses by name. The list comes from the host, because a listFillRange is usually a DEFINED NAME.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

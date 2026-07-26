@@ -1341,6 +1341,8 @@ export function createSheetEditor(
       fileName: options.fileName,
       // Worksheet.PrintOut opens the browser's print dialog, which is the only printing a page has.
       print: (sheetIndex) => doPrint({ scope: "sheet" }, sheetIndex),
+      controlItems: (ctl) => controlItemsFor(ctl),
+      onControlChange: (sheetIndex, ctl) => persistControlState(sheetIndex, ctl),
     });
     if (!res.ok) {
       const where = res.error?.line != null ? ` (${res.error.module}, line ${res.error.line})` : ` (${res.error?.module})`;
@@ -2377,6 +2379,8 @@ export function createSheetEditor(
     onEdit: () => { mark(); shapeLayer.refresh(); },
     onActivate: (sh) => openShapeDialog(sh),
     onDelete: (sh) => deleteShape(sh),
+    runMacro: wb.vba ? (name) => runControlMacro(name) : undefined,
+    macroTitle: t("ctrlMacroRun"),
   });
   // Remove a shape: drop it from the model, and (for a saved shape) stage the drawing edit.
   const deleteShape = (sh: import("./model").SheetShape): void => {
@@ -2408,6 +2412,34 @@ export function createSheetEditor(
     return { r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
   };
 
+  /** The values a list control draws from. Shared by the control layer and by VBA's OLEObjects.
+      An ActiveX listFillRange is usually a DEFINED NAME rather than a reference, which is what the
+      real files use, so the name is resolved before the reference is parsed. */
+  const controlItemsFor = (ctl: SheetControl): string[] => {
+    const raw = ctl.sourceRange
+      ? wb.definedNames?.get(ctl.sourceRange) ?? wb.definedNames?.get(ctl.sourceRange.toUpperCase()) ?? ctl.sourceRange
+      : undefined;
+    // A named range may name another sheet; its own sheet is where the items live.
+    const named = raw?.includes("!") ? raw.split("!") : undefined;
+    const sheet = named ? wb.sheets.find((s) => s.name === named[0]!.replace(/^'|'$/g, "")) ?? wb.sheets[active] : wb.sheets[active];
+    const rng = raw ? parseRangeRefLocal(named ? named[1]! : raw) : null;
+    if (!sheet || !rng) return [];
+    const out: string[] = [];
+    for (let r = rng.r1; r <= rng.r2; r++)
+      for (let c = rng.c1; c <= rng.c2; c++) out.push(displayValue(sheet, r, c));
+    return out;
+  };
+
+  /** A macro changed an ActiveX control's own state: persist it into the control's binary. The
+      linked cell is written by the object model, so it is already in the run's undo step. */
+  const persistControlState = (sheetIndex: number, ctl: SheetControl): void => {
+    if (!ctl.activeX || !ctl.activeXBinPath || ctl.activeXValue === undefined) return;
+    const bin = wb.files[ctl.activeXBinPath];
+    const next = bin ? setActiveXValue(bin, ctl.activeXValue) : undefined;
+    if (next) wb.files[ctl.activeXBinPath] = next;
+    if (sheetIndex === active) controlLayer.refresh();
+  };
+
   // Form controls. A control exists to drive its linked cell, so a change writes there and
   // recalculates, exactly as it would in Excel.
   // Only xlsx models controls this way; ODF keeps them in office:forms, which is preserved rather
@@ -2430,22 +2462,7 @@ export function createSheetEditor(
       mark();
       renderGrid();
     },
-    itemsFor: (ctl) => {
-      // An ActiveX listFillRange is usually a DEFINED NAME rather than a reference, which is what
-      // the real files use, so the name is resolved before the reference is parsed.
-      const raw = ctl.sourceRange
-        ? wb.definedNames?.get(ctl.sourceRange) ?? wb.definedNames?.get(ctl.sourceRange.toUpperCase()) ?? ctl.sourceRange
-        : undefined;
-      // A named range may name another sheet; its own sheet is where the items live.
-      const named = raw?.includes("!") ? raw.split("!") : undefined;
-      const sheet = named ? wb.sheets.find((s) => s.name === named[0]!.replace(/^'|'$/g, "")) ?? wb.sheets[active] : wb.sheets[active];
-      const rng = raw ? parseRangeRefLocal(named ? named[1]! : raw) : null;
-      if (!sheet || !rng) return [];
-      const out: string[] = [];
-      for (let r = rng.r1; r <= rng.r2; r++)
-        for (let c = rng.c1; c <= rng.c2; c++) out.push(displayValue(sheet, r, c));
-      return out;
-    },
+    itemsFor: (ctl) => controlItemsFor(ctl),
     onChange: (changed) => {
       const sheet = wb.sheets[active];
       // An ActiveX control keeps its own state in a persisted binary, so the change goes there as
@@ -2525,7 +2542,7 @@ export function createSheetEditor(
    * VML usually carries the bare Sub name, so the module that declares it is looked up here.
    */
   const runControlMacro = (name: string): void => {
-    const bare = name.replace(/^.*\./, "");
+    const bare = name.replace(/^.*[!.]/, "");
     const mod = wb.vba?.modules.find((m) => runnableSubs(m.source).some((s) => s.toLowerCase() === bare.toLowerCase()));
     if (!mod) { showNotice(`${t("ctrlMacroMissing")} ${name}`); return; }
     const proc = runnableSubs(mod.source).find((s) => s.toLowerCase() === bare.toLowerCase())!;

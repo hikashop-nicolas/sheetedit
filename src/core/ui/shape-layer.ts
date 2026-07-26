@@ -18,6 +18,10 @@ export interface ShapeLayerDeps {
   onActivate?: (sh: SheetShape) => void;  // double-click -> edit properties
   onDelete?: (sh: SheetShape) => void;    // the selected shape's delete handle
   editable?: () => boolean;
+  /** Run the macro a shape names. Absent when the workbook carries no macros at all. */
+  runMacro?: (name: string) => void;
+  /** Tooltip prefix for a shape that has a macro assigned. */
+  macroTitle?: string;
 }
 
 
@@ -113,6 +117,9 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
 
   const attachDrag = (box: HTMLElement, handle: HTMLElement, sh: SheetShape): void => {
     const start = (e: PointerEvent, mode: "move" | "resize"): void => {
+      // Only the primary button drags. A right-click has its own job (the context menu), and
+      // starting a move on it leaves the shape following the pointer with no button held down.
+      if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       select(sh);
@@ -135,7 +142,11 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
         const x = parseFloat(box.style.left) || 0, y = parseFloat(box.style.top) || 0;
         // A plain click (no drag) must not commit or refresh, or a double-click's box is replaced
         // between its two clicks and never fires.
-        if (x === x0 && y === y0 && box.offsetWidth === w0 && box.offsetHeight === h0) return;
+        if (x === x0 && y === y0 && box.offsetWidth === w0 && box.offsetHeight === h0) {
+          // Not a drag but a click: a shape with a macro is a button, so run it.
+          if (sh.macro && deps.runMacro) deps.runMacro(sh.macro);
+          return;
+        }
         rectToAnchor(sh, x, y, box.offsetWidth, box.offsetHeight);
         deps.onEdit?.(sh);
       };
@@ -168,12 +179,16 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
       box.style.width = `${w}px`;
       box.style.height = `${h}px`;
       box.innerHTML = shapeSvg(sh, w, h);
+      if (sh.macro && deps.runMacro) {
+        box.classList.add("macro");
+        box.title = `${deps.macroTitle ?? ""} ${sh.macro}`.trim();
+      }
       if (editable) {
         const handle = document.createElement("div");
         handle.className = "sheetedit-shape-resize";
         box.appendChild(handle);
         attachDrag(box, handle, sh);
-        box.title = deps.onActivate ? "Double-click to edit" : "";
+        if (!sh.macro || !deps.runMacro) box.title = deps.onActivate ? "Double-click to edit" : "";
         box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); select(sh); deps.onActivate?.(sh); });
         if (deps.onDelete) {
           const del = document.createElement("button");
@@ -185,6 +200,9 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
           del.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); deps.onDelete!(sh); });
           box.appendChild(del);
         }
+      }
+      if (!editable && sh.macro && deps.runMacro) {
+        box.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); deps.runMacro!(sh.macro!); });
       }
       hosts.hostFor(sh.anchor.fromRow).appendChild(box);
       boxes.set(sh, box);

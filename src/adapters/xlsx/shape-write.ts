@@ -74,7 +74,11 @@ function patchShape(wb: Workbook, sh: SheetShape): void {
   setPt("to", a.toCol, a.toColOff, a.toRow, a.toRowOff);
   const sp = kid(anchorEl, "sp") ?? kid(anchorEl, "cxnSp");
   const spPr = sp && kid(sp, "spPr");
-  if (spPr) {
+  // A move or a resize changes the anchor and NOTHING else. Rewriting the paint here would flatten
+  // whatever the file states (a gradient, or a shape that takes its look from the theme's format
+  // scheme through <xdr:style>) into the one colour the model carries, so dragging a shape would
+  // silently repaint it. Only an actual restyle touches spPr.
+  if (spPr && (sh.styleDirty || sh.created)) {
     // Replace the fill child (after prstGeom) and the ln, then rebuild txBody, from a parsed fragment.
     const frag = parseXmlOpt(new TextEncoder().encode(`<r xmlns:a="${A}" xmlns:xdr="${XDR}"><a:spPr>${spPrXml(sh)}</a:spPr>${txBodyXml(sh)}</r>`));
     const newSpPr = frag && kid(frag.documentElement, "spPr");
@@ -115,6 +119,7 @@ export function writeXlsxShapes(wb: Workbook): void {
       if (sh.created || sh.drawingPath == null) createShape(wb, sheet, sh, nextId++);
       else patchShape(wb, sh);
       sh.dirty = false;
+      sh.styleDirty = false;
     }
   }
 }

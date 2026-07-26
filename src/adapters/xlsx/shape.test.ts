@@ -120,6 +120,7 @@ describe("drawing shapes", () => {
     sh.anchor = { ...sh.anchor, fromCol: 3, fromRow: 4 };
     sh.fill = "#00ff00";
     sh.dirty = true;
+    sh.styleDirty = true; // the property dialog changed the paint, not just the position
     writeXlsx(wb);
     const draw = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);
     expect(draw).toMatch(/<xdr:from><xdr:col>2<\/xdr:col><xdr:colOff>\d+<\/xdr:colOff><xdr:row>3<\/xdr:row>/);
@@ -128,6 +129,24 @@ describe("drawing shapes", () => {
     const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0];
     expect(re.anchor.fromCol).toBe(3);
     expect(re.fill?.toLowerCase()).toBe("#00ff00");
+  });
+
+  it("moving a shape rewrites its anchor and nothing else", () => {
+    // Dragging a shape must not repaint it. The model carries one colour, so rewriting the paint
+    // on a move flattens whatever the file states, and a shape whose look comes from the theme
+    // (an <xdr:style> ref, with no fill of its own) loses it outright.
+    const wb = readWorkbook(base(spAnchor("rect")));
+    const sh = wb.sheets[0].shapes![0];
+    const before = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);
+    sh.anchor = { ...sh.anchor, fromCol: 3, fromRow: 4 };
+    sh.dirty = true;
+    writeXlsx(wb);
+    const draw = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);
+    expect(draw).toMatch(/<xdr:from><xdr:col>2<\/xdr:col><xdr:colOff>\d+<\/xdr:colOff><xdr:row>3<\/xdr:row>/);
+    expect(draw).toContain('<a:srgbClr val="4472C4"/>'); // the file's own fill, untouched
+    // Everything outside the anchor is byte-identical (the writer adds the XML declaration).
+    const body = (x: string) => x.replace(/^<\?xml[^?]*\?>\s*/, "").replace(/<xdr:from>[\s\S]*?<\/xdr:to>/, "");
+    expect(body(draw)).toBe(body(before));
   });
 
   it("deletes a shape and re-indexes the remaining ones", () => {

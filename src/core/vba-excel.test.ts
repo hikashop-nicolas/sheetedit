@@ -909,3 +909,52 @@ describe("Worksheet.Copy", () => {
     expect(() => run("Worksheets(1).Copy", book())).toThrow(/cannot open a new workbook/);
   });
 });
+
+// OLEObjects: an ActiveX control is reachable from a macro, which is how the button on a real
+// worksheet drives its combo box. Anything not modelled refuses by name, as everywhere else.
+describe("OLEObjects", () => {
+  const withCombo = (): Workbook => {
+    const wb = bareWorkbook([["Mon"], ["Tue"], ["Wed"]]);
+    wb.sheets[0]!.controls = [
+      { kind: "dropdown", name: "ComboDay", activeX: true, activeXValue: "Tue", sourceRange: "A1:A3", linkedCell: "$C$1" },
+      { kind: "button", name: "PlainButton" }, // a form control: not an OLE object
+    ];
+    return wb;
+  };
+  const items = (): string[] => ["Mon", "Tue", "Wed"];
+
+  it("reaches a control by name and reads its list state", () => {
+    const wb = withCombo();
+    expect(evalIn(`ActiveSheet.OLEObjects("ComboDay").Object.ListCount`, wb, { controlItems: items })).toBe(3);
+    expect(evalIn(`ActiveSheet.OLEObjects("ComboDay").Object.ListIndex`, wb, { controlItems: items })).toBe(1);
+    expect(evalIn(`ActiveSheet.OLEObjects("ComboDay").Object.List(2)`, wb, { controlItems: items })).toBe("Wed");
+    expect(evalIn(`ActiveSheet.OLEObjects.Count`, wb, { controlItems: items })).toBe(1); // the form control is not one
+  });
+
+  it("sets a control's value, which moves its linked cell too", () => {
+    const wb = withCombo();
+    let notified = 0;
+    run(`ActiveSheet.OLEObjects("ComboDay").Object.Value = "Wed"`, wb, { controlItems: items, onControlChange: () => { notified++; } });
+    expect(wb.sheets[0]!.controls![0]!.activeXValue).toBe("Wed");
+    expect(at(wb, 1, 3)).toBe("Wed"); // the linked cell follows, as it does in Excel
+    expect(notified).toBe(1);
+  });
+
+  it("runs the advance-the-combo pattern a real button uses", () => {
+    const wb = withCombo();
+    run(
+      `With ActiveSheet.OLEObjects("ComboDay").Object\n` +
+        `  If .ListIndex = .ListCount - 1 Then\n    .Value = .List(0)\n  Else\n    .Value = .List(.ListIndex + 1)\n  End If\n` +
+        `End With`,
+      wb,
+      { controlItems: items },
+    );
+    expect(wb.sheets[0]!.controls![0]!.activeXValue).toBe("Wed");
+  });
+
+  it("refuses a member it does not model, and a name that is not there", () => {
+    const wb = withCombo();
+    expect(() => evalIn(`ActiveSheet.OLEObjects("ComboDay").Object.BackStyle`, wb, { controlItems: items })).toThrow(/BackStyle/);
+    expect(() => evalIn(`ActiveSheet.OLEObjects("Nope").Object.Value`, wb, { controlItems: items })).toThrow(/Nope/);
+  });
+});

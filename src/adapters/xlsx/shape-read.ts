@@ -195,6 +195,7 @@ export function readShapes(
         stroke,
         strokeWidth: lw ? Math.max(1, Math.round(Number(lw) / 9525)) : undefined,
         text: txt || undefined,
+        ...(sp.getAttribute("macro") ? { macro: sp.getAttribute("macro")! } : {}),
         textColor: colorFrom(rPr ? kid(rPr, "solidFill") : undefined, theme) ?? styleText,
         drawingPath: drawPath,
         anchorIndex,
