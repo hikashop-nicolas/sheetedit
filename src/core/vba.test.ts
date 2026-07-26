@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { isCfb, readCfb } from "./cfb";
 import { decompressOvba, readVbaProject, subNames } from "./vba";
+import { unzipSync } from "fflate";
 
 // Stage 0 of _plans/VBA_PLAN.md: reading a VBA project, no execution.
 //
@@ -96,6 +97,10 @@ describe("MS-OVBA decompression", () => {
 });
 
 describe("reading a VBA project", () => {
+  /** The vbaProject.bin out of one of the .xlsm fixtures (see src/fixtures/README.md). */
+  const projectOf = (file: string) =>
+    readVbaProject(unzipSync(new Uint8Array(readFileSync(`src/fixtures/${file}`)))["xl/vbaProject.bin"]!);
+
   it("returns nothing for bytes that are not a compound file", () => {
     expect(readVbaProject(new Uint8Array([1, 2, 3]))).toBeUndefined();
   });
@@ -103,6 +108,42 @@ describe("reading a VBA project", () => {
   it("returns nothing for a compound file with no VBA storage", () => {
     // A plain .xls is a compound file, but it carries no /VBA.
     expect(readVbaProject(new Uint8Array(readFileSync("src/fixtures/compound.xls")))).toBeUndefined();
+  });
+
+  it("extracts the source of a real macro, whole", () => {
+    const proj = projectOf("macros-cp950.xlsm")!;
+    const mod = proj.modules.find((m) => m.name === "Module1")!;
+    expect(mod.kind).toBe("standard");
+    expect(mod.source).toContain('Sub Button1_Click()');
+    expect(mod.source).toContain('MsgBox "bingo"');
+    expect(mod.source).toContain("End Sub");
+    expect(subNames(mod.source)).toEqual(["Button1_Click"]);
+  });
+
+  it("finds every module, including the ones bound to a sheet", () => {
+    const proj = projectOf("macros-cp950.xlsm")!;
+    expect(proj.modules.map((m) => m.name).sort()).toEqual(["Module1", "Sheet1", "Sheet2", "Sheet3", "ThisWorkbook"]);
+    // A sheet's module is a class module; only Module1 is procedural.
+    expect(proj.modules.filter((m) => m.kind === "standard").map((m) => m.name)).toEqual(["Module1"]);
+  });
+
+  it("reads the project's code page and decodes with it", () => {
+    expect(projectOf("macros-cp950.xlsm")!.codePage).toBe(950);
+    expect(projectOf("macros-cp1252.xlsm")!.codePage).toBe(1252);
+  });
+
+  it("handles a project whose names are not English", () => {
+    const proj = projectOf("macros-cp1252.xlsm")!;
+    expect(proj.modules.map((m) => m.name).sort()).toEqual(["DieseArbeitsmappe", "Modul1"]);
+    expect(subNames(proj.modules.find((m) => m.name === "Modul1")!.source)).toEqual(["Plus1_Klicken", "Minus2_Klicken"]);
+  });
+
+  it("survives the PROJECTVERSION record, whose 4-byte field is not a size", () => {
+    // Reading it as a size desynchronises the walk by two bytes and every later record is garbage,
+    // which showed up as a project with no modules at all.
+    for (const f of ["macros-cp950.xlsm", "macros-cp1252.xlsm"]) {
+      expect(projectOf(f)!.modules.length).toBeGreaterThan(0);
+    }
   });
 });
 

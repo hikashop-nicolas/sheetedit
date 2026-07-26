@@ -14,8 +14,9 @@ export interface VbaModule {
   name: string;
   /** The stream under /VBA that held it. */
   stream: string;
-  /** "standard" (a code module), "class", or "document" (a sheet's or the workbook's own module). */
-  kind: "standard" | "class" | "document";
+  /** MODULETYPE says procedural or class, and no more: a sheet's or the workbook's own module is a
+      class module bound to a document, which the dir stream gives no way to tell apart. */
+  kind: "standard" | "class";
   source: string;
 }
 
@@ -108,8 +109,12 @@ function parseDir(dir: Uint8Array): { codePage: number; modules: { name: string;
 
   while (pos + 6 <= dir.length) {
     const id = dv.getUint16(pos, true);
-    const size = dv.getUint32(pos + 2, true);
+    let size = dv.getUint32(pos + 2, true);
     const body = pos + 6;
+    // PROJECTVERSION's 4-byte field is Reserved, not a size: its body is VersionMajor (4) plus
+    // VersionMinor (2). Treating it as a size desynchronises the walk by two bytes and every
+    // record after it is then read as garbage.
+    if (id === 0x0009) size = 6;
     if (size > dir.length) break; // a size that cannot be right means we have lost the framing
     switch (id) {
       case 0x0003: // PROJECTCODEPAGE
@@ -157,8 +162,6 @@ export function readVbaProject(bin: Uint8Array): VbaProject | undefined {
   if (!dir.length) return undefined;
   const { codePage, modules } = parseDir(dir);
 
-  // The document modules are the ones named after a sheet or the workbook; the dir record only
-  // distinguishes procedural from class, so the host object name is what separates them.
   const out: VbaModule[] = [];
   for (const m of modules) {
     const streamName = m.stream || m.name;

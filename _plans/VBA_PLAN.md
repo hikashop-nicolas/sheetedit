@@ -56,6 +56,12 @@ Value on its own: auditing. Today a `.xlsm` is opaque.
 
 ### Stage 1 — Parse to an AST
 
+What stage 0 taught, worth carrying forward: the `dir` stream is NOT uniformly (id, size, body).
+`PROJECTVERSION` (0x0009) has a 4-byte *Reserved* field where a size would be, and its body is 6
+bytes. Reading it as a size desynchronises the whole walk and yields a project with no modules,
+silently. Expect more of these; validate against real files, never only against hand-built ones.
+
+
 MS-VBAL's ABNF, restricted to the constructs that appear in real macros.
 
 Decision to make when we get there: hand-written recursive descent (matches how the rest of this
@@ -132,6 +138,8 @@ inside sheetedit and move later.
 ## Status
 
 - [x] Research, spec sourcing, this plan
-- [ ] Stage 0 (in progress)
+- [x] **Stage 0** - CFB reader, MS-OVBA decompression, dir walk, macro viewer. Verified end to end
+  on real `vbaProject.bin` files (Apache POI test data, see `src/fixtures/README.md`): a module's
+  source comes out whole, in two different code pages.
 - [ ] Stages 1-4
 - [ ] Stage 5 (write back), after 4
