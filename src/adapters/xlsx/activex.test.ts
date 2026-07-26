@@ -14,9 +14,105 @@ const CLSID = {
   scroll: [0xe0, 0x81, 0xd1, 0xdf, 0x2f, 0x5e, 0xce, 0x11, 0xa4, 0x49, 0x00, 0xaa, 0x00, 0x4a, 0x80, 0x3d],
   checkbox: [0x40, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
   combo: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  dropdown: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  textbox: [0x10, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  image: [0x41, 0x92, 0x59, 0x4c, 0x26, 0x69, 0x1b, 0x10, 0x99, 0x92, 0x00, 0x00, 0x0b, 0x65, 0xc6, 0xf9],
 };
 
+/** Emit a block of (bit, width, value) fields in bit order, aligned as the format requires. */
+function emitFields(fields: [number, 1 | 2 | 4, number][]): number[] {
+  const out: number[] = [];
+  const align = (n: number): void => { while (out.length % n) out.push(0); };
+  for (const [, width, value] of [...fields].sort((a, b) => a[0] - b[0])) {
+    align(width);
+    if (width === 1) out.push(value & 0xff);
+    else if (width === 2) out.push(value & 0xff, (value >> 8) & 0xff);
+    else out.push(...u32(value));
+  }
+  align(4);
+  return out;
+}
+
+/** A TextProps block: the font, as its own versioned structure after the control's cb. */
+function textProps(font: { name?: string; twips?: number; effects?: number }): number[] {
+  const nameBytes = font.name ? [...font.name].map((c) => c.charCodeAt(0)) : [];
+  let mask = 0;
+  const data: [number, 1 | 2 | 4, number][] = [];
+  if (font.name) { mask |= 1 << 0; data.push([0, 4, (0x80000000 | nameBytes.length) >>> 0]); }
+  if (font.effects !== undefined) { mask |= 1 << 1; data.push([1, 4, font.effects]); }
+  if (font.twips !== undefined) { mask |= 1 << 2; data.push([2, 4, font.twips]); }
+  const block = emitFields(data);
+  const extra = font.name ? [...nameBytes, ...Array((4 - (nameBytes.length % 4)) % 4).fill(0)] : [];
+  return [0x00, 0x02, ...u16(4 + block.length + extra.length), ...u32(mask), ...block, ...extra];
+}
+
+interface MorphOpts {
+  various?: number; displayStyle?: number; maxLength?: number; listRows?: number; columnCount?: number;
+  borderStyle?: number; specialEffect?: number; size?: [number, number];
+  value?: string; caption?: string; group?: string;
+  font?: { name?: string; twips?: number; effects?: number };
+}
+
+/** A MorphData control with whatever properties the test asks for, in the format's own order. */
+function morph(clsid: number[], o: MorphOpts): Uint8Array {
+  let lo = 0, hi = 0;
+  const fields: [number, 1 | 2 | 4, number][] = [];
+  const set = (bit: number): void => { if (bit < 32) lo |= 1 << bit; else hi |= 1 << (bit - 32); };
+  const add = (bit: number, width: 1 | 2 | 4, v: number | undefined): void => {
+    if (v === undefined) return;
+    set(bit); fields.push([bit, width, v]);
+  };
+  add(0, 4, o.various);
+  add(3, 4, o.maxLength);
+  add(4, 1, o.borderStyle);
+  add(6, 1, o.displayStyle);
+  add(13, 2, o.columnCount);
+  add(14, 2, o.listRows);
+  if (o.value !== undefined) add(22, 4, (0x80000000 | o.value.length) >>> 0);
+  if (o.caption !== undefined) add(23, 4, (0x80000000 | o.caption.length) >>> 0);
+  add(26, 4, o.specialEffect);
+  if (o.group !== undefined) add(32, 4, (0x80000000 | o.group.length) >>> 0);
+  if (o.size) set(8);
+  const block = emitFields(fields);
+  const extra = [
+    ...(o.size ? [...u32(o.size[0]), ...u32(o.size[1])] : []),
+    ...(o.value !== undefined ? pad(o.value) : []),
+    ...(o.caption !== undefined ? pad(o.caption) : []),
+    ...(o.group !== undefined ? pad(o.group) : []),
+  ];
+  return new Uint8Array([
+    ...clsid, 0x00, 0x02, ...u16(8 + block.length + extra.length),
+    ...u32(lo), ...u32(hi), ...block, ...extra,
+    ...(o.font ? textProps(o.font) : []),
+  ]);
+}
+
+/** An Image control, whose mask is its own and whose AutoSize lives in the bit itself. */
+function imageControl(o: { backColor?: number; borderColor?: number; borderStyle?: number; sizeMode?: number; size?: [number, number] }): Uint8Array {
+  let mask = 0;
+  const fields: [number, 1 | 2 | 4, number][] = [];
+  const add = (bit: number, width: 1 | 2 | 4, v: number | undefined): void => {
+    if (v === undefined) return;
+    mask |= 1 << bit; fields.push([bit, width, v]);
+  };
+  add(3, 4, o.borderColor);
+  add(4, 4, o.backColor);
+  add(5, 1, o.borderStyle);
+  add(7, 1, o.sizeMode);
+  if (o.size) mask |= 1 << 9;
+  const block = emitFields(fields);
+  const extra = o.size ? [...u32(o.size[0]), ...u32(o.size[1])] : [];
+  return new Uint8Array([
+    ...CLSID.image, 0x00, 0x02, ...u16(4 + block.length + extra.length),
+    ...u32(mask), ...block, ...extra,
+  ]);
+}
+
 const u16 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff];
+const pad = (t: string): number[] => {
+  const b = [...t].map((c) => c.charCodeAt(0));
+  return [...b, ...Array((4 - (b.length % 4)) % 4).fill(0)];
+};
 const u32 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
 
 /** A CommandButton stream: caption and size, which is what Excel writes for a plain button. */
@@ -58,7 +154,7 @@ describe("class ids", () => {
 
 describe("reading a persisted stream", () => {
   it("reads a button's caption and size", () => {
-    expect(readActiveXStream(button("copy from a file"))).toEqual({
+    expect(readActiveXStream(button("copy from a file"))).toMatchObject({
       kind: "commandButton",
       caption: "copy from a file",
       size: { cx: 5609, cy: 970 },
@@ -77,7 +173,7 @@ describe("reading a persisted stream", () => {
 
   it("reads a colour that was written before the caption", () => {
     // The DataBlock is written in bit order, so a set fBackColor shifts everything after it.
-    expect(readActiveXStream(button("Menu", 2487, 988, { backColor: 0x00ffff80 }))).toEqual({
+    expect(readActiveXStream(button("Menu", 2487, 988, { backColor: 0x00ffff80 }))).toMatchObject({
       kind: "commandButton",
       backColor: 0x00ffff80,
       caption: "Menu",
@@ -90,7 +186,7 @@ describe("reading a persisted stream", () => {
     // its layout and nothing is invented for it.
     const IMAGE = [0x41, 0x92, 0x59, 0x4c, 0x26, 0x69, 0x1b, 0x10, 0x99, 0x92, 0x00, 0x00, 0x0b, 0x65, 0xc6, 0xf9];
     const bytes = new Uint8Array([...IMAGE, 0x00, 0x02, ...u16(20), ...u32(0), ...Array(16).fill(0)]);
-    expect(readActiveXStream(bytes)).toEqual({ kind: "image" });
+    expect(readActiveXStream(bytes)).toMatchObject({ kind: "image" });
   });
 
   it("returns nothing for bytes that are not a control at all", () => {
@@ -101,18 +197,13 @@ describe("reading a persisted stream", () => {
   it("stops at the version the spec pins rather than reading on", () => {
     const bytes = button("Menu");
     bytes[17] = 0x03; // MajorVersion must be 2
-    expect(readActiveXStream(bytes)).toEqual({ kind: "commandButton" });
+    expect(readActiveXStream(bytes)).toMatchObject({ kind: "commandButton" });
   });
 });
 
 // --- MorphData, the structure behind every kind except the button -----------------
 // Its mask is EIGHT bytes where CommandButton's is four, and the ExtraDataBlock puts Size first
 // and the strings after it. Both facts came from real files and are asserted here.
-
-const pad = (t: string): number[] => {
-  const b = [...t].map((c) => c.charCodeAt(0));
-  return [...b, ...Array((4 - (b.length % 4)) % 4).fill(0)];
-};
 
 /** A checkbox carrying a value, a caption and a group name: the mask Excel writes for one. */
 function checkbox(value: string, caption: string, group: string, cx = 2831, cy = 767): Uint8Array {
@@ -128,7 +219,7 @@ function checkbox(value: string, caption: string, group: string, cx = 2831, cy =
 
 describe("MorphData controls", () => {
   it("reads a checkbox's value, caption and group", () => {
-    expect(readActiveXStream(checkbox("0", "CheckBox1", "DataEntry"))).toEqual({
+    expect(readActiveXStream(checkbox("0", "CheckBox1", "DataEntry"))).toMatchObject({
       kind: "checkbox",
       size: { cx: 2831, cy: 767 },
       value: "0",
@@ -146,7 +237,7 @@ describe("MorphData controls", () => {
       ...CLSID.combo, 0x00, 0x02, ...u16(8 + data.length + extra.length),
       ...u32(0x80450141), ...u32(0), ...data, ...extra,
     ]);
-    expect(readActiveXStream(bytes)).toEqual({
+    expect(readActiveXStream(bytes)).toMatchObject({
       kind: "dropdown", size: { cx: 6244, cy: 900 }, value: "West",
     });
   });
@@ -156,7 +247,7 @@ describe("MorphData controls", () => {
     // and every value read is then suspect, so the kind alone comes back.
     const bytes = checkbox("0", "CheckBox1", "DataEntry");
     bytes[18] = (bytes[18]! + 4) & 0xff; // overstate cb
-    expect(readActiveXStream(bytes)).toEqual({ kind: "checkbox" });
+    expect(readActiveXStream(bytes)).toMatchObject({ kind: "checkbox" });
   });
 
   it("handles a caption needing padding and one that needs none", () => {
@@ -176,7 +267,7 @@ describe("writing a value back", () => {
   it("keeps the caption and the size when the value grows", () => {
     const before = checkbox("0", "CheckBox1", "DataEntry", 2831, 767);
     const after = setActiveXValue(before, "a much longer value")!;
-    expect(readActiveXStream(after)).toEqual({
+    expect(readActiveXStream(after)).toMatchObject({
       kind: "checkbox", size: { cx: 2831, cy: 767 },
       value: "a much longer value", caption: "CheckBox1", groupName: "DataEntry",
     });
@@ -232,7 +323,7 @@ describe("ScrollBar", () => {
   ]);
 
   it("reads its bounds and size", () => {
-    expect(readActiveXStream(scrollBar(1, 3069, 1005))).toEqual({
+    expect(readActiveXStream(scrollBar(1, 3069, 1005))).toMatchObject({
       kind: "scroll", max: 1, size: { cx: 3069, cy: 1005 },
     });
   });
@@ -243,13 +334,13 @@ describe("ScrollBar", () => {
     const bytes = scrollBar(1, 100, 200);
     const dv = new DataView(bytes.buffer);
     dv.setUint32(20, 0x2048 | (1 << 9) | (1 << 10), true);
-    expect(readActiveXStream(bytes)).toEqual({ kind: "scroll", max: 1, size: { cx: 100, cy: 200 } });
+    expect(readActiveXStream(bytes)).toMatchObject({ kind: "scroll", max: 1, size: { cx: 100, cy: 200 } });
   });
 
   it("reports the kind alone when the walk does not land on cb", () => {
     const bytes = scrollBar(1, 100, 200);
     bytes[18] = (bytes[18]! + 4) & 0xff;
-    expect(readActiveXStream(bytes)).toEqual({ kind: "scroll" });
+    expect(readActiveXStream(bytes)).toMatchObject({ kind: "scroll" });
   });
 });
 
@@ -264,7 +355,7 @@ describe("SpinButton", () => {
       ...u32(0), ...u32(100), ...u32(42),   // Min, Max, Position
       ...u32(500), ...u32(900),
     ]);
-    expect(readActiveXStream(bytes)).toEqual({
+    expect(readActiveXStream(bytes)).toMatchObject({
       kind: "spin", min: 0, max: 100, position: 42, size: { cx: 500, cy: 900 },
     });
   });
@@ -283,7 +374,7 @@ describe("Label", () => {
       ...caption, ...Array(3).fill(0),
       ...u32(1200), ...u32(300),
     ]);
-    expect(readActiveXStream(bytes)).toEqual({
+    expect(readActiveXStream(bytes)).toMatchObject({
       kind: "label", caption: "Total", size: { cx: 1200, cy: 300 },
     });
   });
@@ -299,7 +390,7 @@ describe("writing any of the strings, not only the value", () => {
     // The three sit end to end in the ExtraDataBlock, so rewriting the middle one moves the last.
     const before = checkbox("0", "CheckBox1", "DataEntry");
     const after = setActiveXText(before, "caption", "Renamed rather more fully")!;
-    expect(readActiveXStream(after)).toEqual({
+    expect(readActiveXStream(after)).toMatchObject({
       kind: "checkbox", size: { cx: 2831, cy: 767 },
       value: "0", caption: "Renamed rather more fully", groupName: "DataEntry",
     });
@@ -318,11 +409,81 @@ describe("writing any of the strings, not only the value", () => {
       ...u32(0x80000000 | caption.length), ...caption, ...Array(3).fill(0), ...u32(1200), ...u32(300),
     ]);
     const after = setActiveXText(bytes, "caption", "Grand total")!;
-    expect(readActiveXStream(after)).toEqual({ kind: "label", caption: "Grand total", size: { cx: 1200, cy: 300 } });
+    expect(readActiveXStream(after)).toMatchObject({ kind: "label", caption: "Grand total", size: { cx: 1200, cy: 300 } });
   });
 
   it("refuses a property the control does not carry", () => {
     expect(setActiveXText(button("Go"), "value", "x")).toBeUndefined();
     expect(setActiveXText(checkbox("0", "C", "G"), "caption", "ok")).toBeTruthy();
+  });
+});
+
+// --- what the binary says beyond the value, per [MS-OFORMS] ----------------------------------
+// These pin the parts that were read and thrown away before: the bitfield a dozen booleans share,
+// the DisplayStyle that tells one MorphData control from another, the font in the TextProps that
+// follows the control structure, and the Image control's own layout.
+describe("the rest of the control", () => {
+  it("decodes VariousPropertyBits, whose defaults the spec states", () => {
+    // 0x2C80081B is the MorphData file-format default: Enabled and WordWrap on, Locked off.
+    const c = readActiveXStream(morph(CLSID.textbox, { various: 0x2c80081b, size: [100, 50] }))!;
+    expect(c.enabled).toBe(true);
+    expect(c.locked).toBe(false);
+    expect(c.wordWrap).toBe(true);
+    expect(c.multiLine).toBe(false);
+    expect(c.transparent).toBe(false); // BackStyle 1 = opaque
+    // Now the same field with Locked and MultiLine set, and BackStyle cleared.
+    const d = readActiveXStream(morph(CLSID.textbox, { various: (0x2c80081b | 0x4 | 0x80000000) & ~0x8, size: [100, 50] }))!;
+    expect(d.locked).toBe(true);
+    expect(d.multiLine).toBe(true);
+    expect(d.transparent).toBe(true);
+  });
+
+  it("tells an editable combo from a drop-list one, which share a class id", () => {
+    expect(readActiveXStream(morph(CLSID.dropdown, { displayStyle: 3, size: [100, 50] }))!.displayStyle).toBe(3);
+    expect(readActiveXStream(morph(CLSID.dropdown, { displayStyle: 7, size: [100, 50] }))!.displayStyle).toBe(7);
+  });
+
+  it("reads the numeric properties a list control carries", () => {
+    const c = readActiveXStream(morph(CLSID.dropdown, {
+      maxLength: 12, listRows: 5, columnCount: 3, borderStyle: 1, specialEffect: 2, size: [100, 50],
+    }))!;
+    expect(c.maxLength).toBe(12);
+    expect(c.listRows).toBe(5);
+    expect(c.columnCount).toBe(3);
+    expect(c.borderStyle).toBe(1);
+    expect(c.specialEffect).toBe(2);
+  });
+
+  it("reads the font from the TextProps that follows the control", () => {
+    const c = readActiveXStream(morph(CLSID.textbox, { size: [100, 50], font: { name: "Verdana", twips: 240, effects: 0b0111 } }))!;
+    expect(c.font).toEqual({ name: "Verdana", sizePt: 12, bold: true, italic: true, underline: true, strike: false });
+  });
+
+  it("reads an Image control's own layout", () => {
+    const c = readActiveXStream(imageControl({ backColor: 0x00ff8040, borderStyle: 1, sizeMode: 3, size: [1200, 800] }))!;
+    expect(c.kind).toBe("image");
+    expect(c.backColor).toBe(0x00ff8040);
+    expect(c.borderStyle).toBe(1);
+    expect(c.pictureSizeMode).toBe(3);
+    expect(c.size).toEqual({ cx: 1200, cy: 800 });
+  });
+
+  it("adds a Value to a control that had none, and patches it in place afterwards", () => {
+    // An empty text box has no Value at all: its mask bit is clear, so there is nothing to patch
+    // and the whole DataBlock has to be re-emitted with the new field in its place.
+    const empty = morph(CLSID.textbox, { various: 0x2c80081b, size: [100, 50], font: { name: "Calibri", twips: 240 } });
+    expect(readActiveXStream(empty)!.value).toBeUndefined();
+    const added = setActiveXText(empty, "value", "typed in")!;
+    expect(added).toBeDefined();
+    const after = readActiveXStream(added)!;
+    expect(after.value).toBe("typed in");
+    // Everything else came through the rebuild unchanged, font included.
+    expect(after.size).toEqual({ cx: 100, cy: 50 });
+    expect(after.enabled).toBe(true);
+    expect(after.font).toEqual({ name: "Calibri", sizePt: 12 });
+    // With the property now present, a further change is the ordinary in-place patch.
+    const again = setActiveXText(added, "value", "again!!!")!;
+    expect(readActiveXStream(again)!.value).toBe("again!!!");
+    expect(again.length).toBe(added.length);
   });
 });

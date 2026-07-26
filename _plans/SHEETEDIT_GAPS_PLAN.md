@@ -321,7 +321,42 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   - Writing covers every string a control carries (Value, Caption, GroupName), not just Value. The
     layout records each string's own place, so rewriting the middle of three moves the last
     correctly. Identity holds on all nine real streams for every property they carry.
-  - Still open: the Image control, and any third-party ActiveX, which is irreducible.
+  - SPEC AUDIT (2026-07-27), against [MS-OFORMS] section 2 property by property. What used to be
+    read and thrown away is now kept and used:
+    - **VariousPropertyBits**, the 32-bit field a dozen booleans share. Enabled, Locked, BackStyle,
+      ColumnHeads, MatchRequired, Alignment, Editable, WordWrap, AutoSize, MultiLine. The bit
+      positions are pinned by the spec's own file-format defaults (0x2C80081B for the MorphData
+      family, 0x0080001B for a label), which is a real check on having read the table straight.
+    - **DisplayStyle**, which is the ONLY thing separating an editable combo (3) from a drop-list
+      one (7): they share a class id. Also the numeric properties around it - MaxLength,
+      PasswordChar, BorderStyle, BorderColor, SpecialEffect, ScrollBars, ListRows, ListWidth,
+      ColumnCount, BoundColumn, TextColumn, MultiSelect, MatchEntry, ListStyle, ShowDropButtonWhen,
+      DropButtonStyle, MousePointer, Accelerator, PicturePosition - and SmallChange / LargeChange /
+      Orientation / Delay / ProportionalThumb on the range controls.
+    - **TextProps**, the font, which is its own versioned structure sitting after the control's cb.
+      Name, size (twips), bold / italic / underline / strikeout, weight, paragraph alignment.
+    - **The Image control**, which had no layout at all. Its mask puts fAutoSize and fPictureTiling
+      in the BIT rather than in a field, like the scroll bar's fPrevEnabled.
+    - **StreamData pictures**, sniffed to a MIME type and rendered from a data: URI. A metafile
+      (WMF/EMF) is a drawing program rather than an image, so it is skipped rather than mislabelled.
+  - What that buys on the page: a TextBox is an editor (a textarea when MultiLine, a password box
+    when it names a PasswordChar, with its MaxLength), a ToggleButton is a button that stays down,
+    an Image shows its picture, a list honours ListRows and MultiSelect, every control wears the
+    file's own font and colours, a disabled control looks and behaves disabled, MousePointer is a
+    CSS cursor and Accelerator is an access key. An OLE_COLOR naming a Windows SYSTEM palette entry
+    is left unset on purpose: its colour is the desktop theme's, not the document's.
+  - The writer can now ADD a property the control does not yet carry, which is what an empty text
+    box needs: its Value bit is clear, so there is nothing to patch. That path re-emits the whole
+    DataBlock from the fields the read recorded (splicing would not do, since a length word has to
+    land 4-aligned and inserting one shifts everything after it) and reads its own output back
+    before returning it. Same-length changes still patch in place, byte for byte.
+  - Still open, and each for a stated reason: **third-party ActiveX** (the format belongs to whoever
+    wrote the control - irreducible); **metafile pictures** (no browser decodes WMF/EMF);
+    **rgColumnInfo**, a multi-column list's per-column widths, which is walked past and preserved
+    but not rendered (the first column is what shows); **Frame / MultiPage / TabStrip**, which are
+    UserForm containers rather than worksheet controls; and **adding a Caption to a CommandButton or
+    Label that has none**, since the rebuild path is written for the MorphData family only (Excel
+    always writes a caption for those two, so this has not come up).
 - **Grid metrics** come from the workbook, not from constants, and getting this wrong showed up as
   an ActiveX bug rather than a layout one. A column's `width` is in character units of the NORMAL
   STYLE's font, so the conversion needs THAT font's maximum digit width (7px for Calibri 11, 9px for

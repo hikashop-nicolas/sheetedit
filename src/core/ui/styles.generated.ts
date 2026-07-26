@@ -810,6 +810,15 @@ font:inherit; width:100%; height:100%; border-radius:4px; cursor:not-allowed;
 background:var(--sheetedit-flat-bg); color:var(--sheetedit-flat-fg); border:1px solid var(--sheetedit-head-border);
 }
 .sheetedit-ctrl-label { white-space:nowrap; }
+.sheetedit-ctrl-text {
+font:inherit; width:100%; height:100%; box-sizing:border-box; padding:1px 4px; border-radius:3px;
+background:var(--sheetedit-cell-bg); color:var(--sheetedit-cell-fg); border:1px solid var(--sheetedit-head-border);
+resize:none;
+}
+.sheetedit-ctrl-toggle { cursor:pointer; }
+.sheetedit-ctrl-toggle.pressed { background:var(--sheetedit-accent); color:var(--sheetedit-accent-fg); border-color:var(--sheetedit-accent); }
+.sheetedit-ctrl-image { width:100%; height:100%; object-fit:contain; display:block; }
+.sheetedit-ctrlbox .disabled, .sheetedit-ctrlbox.disabled { opacity:0.55; cursor:not-allowed; }
 .sheetedit-ctrl-group {
 width:100%; height:100%; box-sizing:border-box; padding:1px 4px;
 border:1px solid var(--sheetedit-head-border); border-radius:3px; color:var(--sheetedit-head-fg);

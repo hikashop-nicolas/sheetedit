@@ -89,6 +89,34 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
     // Writable once its persisted value was understood well enough to put back.
     && !(ctl.activeXBinPath && ctl.activeXValue !== undefined);
 
+  /** Put the file's own look on a control: its colours, its font, and whether it is live. */
+  const paintVisuals = (el: HTMLElement, ctl: SheetControl): void => {
+    const v = ctl.visuals;
+    if (!v) return;
+    if (v.color) el.style.color = v.color;
+    if (v.background) el.style.background = v.background;
+    if (v.borderColor) { el.style.borderColor = v.borderColor; el.style.borderStyle = "solid"; }
+    const f = v.font;
+    // Quote the family and keep a generic behind it: a font the file names may not be installed,
+    // and the browser's default serif is a worse answer than the page's own sans.
+    if (f?.name) el.style.fontFamily = `"${f.name.replace(/"/g, "")}", sans-serif`;
+    if (f?.sizePt) el.style.fontSize = `${f.sizePt}pt`;
+    if (f?.bold) el.style.fontWeight = "700";
+    if (f?.italic) el.style.fontStyle = "italic";
+    const deco = `${f?.underline ? "underline " : ""}${f?.strike ? "line-through" : ""}`.trim();
+    if (deco) el.style.textDecoration = deco;
+    if (f?.align) el.style.textAlign = f.align;
+    if (v.cursor) el.style.cursor = v.cursor;
+    // The Accelerator is the key that reaches the control, which is what accesskey is for.
+    if (v.accelerator) el.accessKey = v.accelerator;
+    // Enabled is the control's own; a disabled one must look and behave disabled.
+    if (v.enabled === false) {
+      el.classList.add("disabled");
+      for (const input of [el, ...Array.from(el.querySelectorAll("input,select,button,textarea"))])
+        if ("disabled" in input) (input as HTMLInputElement).disabled = true;
+    }
+  };
+
   const build = (ctl: SheetControl): HTMLElement => {
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
     // cell sees the new state. Same order here.
@@ -150,7 +178,10 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
           opt.textContent = text;
           select.appendChild(opt);
         });
-        if (ctl.kind === "list") select.size = Math.max(2, Math.min(8, select.options.length));
+        // ListRows is how many the file asks to show; a list box always shows more than one.
+        const rows = ctl.visuals?.listRows;
+        if (ctl.kind === "list") select.size = Math.max(2, Math.min(rows ?? 8, select.options.length));
+        if (ctl.visuals?.multiSelect) select.multiple = true;
         if (ctl.activeX) {
           // Its options are values, not positions: the file records which TEXT is chosen.
           select.value = ctl.activeXValue ?? "";
@@ -173,6 +204,57 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         if (readOnlyActiveX(ctl)) { input.disabled = true; input.title = deps.activeXTitle; }
         input.addEventListener("change", () => { ctl.value = Number(input.value) || 0; commit(); });
         return input;
+      }
+      case "textbox": {
+        // A text box is an editor, so it gets one: a textarea when the file says MultiLine, and a
+        // password box when it names a PasswordChar. Its text is the control's persisted value.
+        const v = ctl.visuals;
+        const el = v?.multiLine ? document.createElement("textarea") : document.createElement("input");
+        el.className = "sheetedit-ctrl-text";
+        el.value = ctl.activeXValue ?? "";
+        if (el instanceof HTMLInputElement) el.type = v?.passwordChar ? "password" : "text";
+        if (v?.maxLength) el.maxLength = v.maxLength;
+        if (v?.enabled === false) el.disabled = true;
+        else if (v?.locked) el.readOnly = true;
+        if (readOnlyActiveX(ctl)) { el.readOnly = true; el.title = deps.activeXTitle; }
+        el.addEventListener("change", () => { ctl.activeXValue = el.value; commit(); });
+        return el;
+      }
+      case "toggle": {
+        // A toggle button is a checkbox that looks like a button, which is what aria-pressed says.
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-ctrl-button sheetedit-ctrl-toggle";
+        b.textContent = ctl.label ?? ctl.name;
+        const paint = (): void => {
+          b.setAttribute("aria-pressed", ctl.checked ? "true" : "false");
+          b.classList.toggle("pressed", !!ctl.checked);
+        };
+        paint();
+        if (ctl.visuals?.enabled === false) b.disabled = true;
+        b.addEventListener("click", () => {
+          ctl.checked = !ctl.checked;
+          ctl.activeXValue = ctl.checked ? "1" : "0";
+          paint();
+          commit();
+        });
+        return b;
+      }
+      case "image": {
+        // The picture is embedded in the control's own binary; a format a page cannot decode (a
+        // metafile) leaves the frame empty rather than showing something invented.
+        const src = ctl.visuals?.picture;
+        if (!src) {
+          const empty = document.createElement("span");
+          empty.className = "sheetedit-ctrl-label";
+          empty.textContent = ctl.label ?? ctl.name;
+          return empty;
+        }
+        const img = document.createElement("img");
+        img.className = "sheetedit-ctrl-image";
+        img.src = src;
+        img.alt = ctl.label ?? ctl.name;
+        return img;
       }
       case "button": {
         const b = document.createElement("button");
@@ -259,7 +341,9 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       box.dataset.control = ctl.name;
       Object.assign(box.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
       if (ctl.linkedCell) box.title = `${ctl.label ?? ctl.name} -> ${ctl.linkedCell.replace(/\$/g, "")}`;
-      box.appendChild(build(ctl));
+      const el = build(ctl);
+      paintVisuals(el, ctl);
+      box.appendChild(el);
       if (deps.editable?.()) {
         box.classList.add("editable");
         const grip = document.createElement("div");

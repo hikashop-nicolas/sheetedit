@@ -468,9 +468,59 @@ export interface SheetImage {
  * xlsx keeps the state in a ctrlProps part and mirrors it in the legacy VML drawing that positions
  * the control; the VML is the only source for older files, so both are read and both written back.
  */
+/**
+ * What an ActiveX control's persisted binary says about how it looks and behaves, beyond its value.
+ * Read per [MS-OFORMS]; only what a browser can honour is kept, and a colour the file states as a
+ * Windows system-palette entry is left out rather than guessed at, since its meaning is the desktop
+ * theme's, not the document's.
+ */
+export interface ControlVisuals {
+  enabled?: boolean;
+  locked?: boolean;
+  /** TextBox: more than one line, and the scroll bars it asks for. */
+  multiLine?: boolean;
+  scrollBars?: number;
+  maxLength?: number;
+  /** The character a password box echoes, when it has one. */
+  passwordChar?: string;
+  /** ComboBox / ListBox: how many rows drop down, whether more than one may be picked, and
+      whether the text part can be typed into (DisplayStyle 3) or only chosen from (7). */
+  listRows?: number;
+  multiSelect?: boolean;
+  editable?: boolean;
+  wordWrap?: boolean;
+  /** The caption sits to the left of a checkbox / option button. */
+  captionLeft?: boolean;
+  /** CSS colours, when the file states a real RGB. */
+  color?: string;
+  background?: string;
+  borderColor?: string;
+  borderStyle?: number;
+  specialEffect?: number;
+  /** Range controls: 0 vertical, 1 horizontal, and how far a click moves the thumb. */
+  orientation?: number;
+  smallChange?: number;
+  largeChange?: number;
+  font?: {
+    name?: string;
+    sizePt?: number;
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    strike?: boolean;
+    align?: "left" | "right" | "center";
+  };
+  /** The control's own picture as a data: URI, when the embedded format is one a page can show. */
+  picture?: string;
+  /** The CSS cursor the file's MousePointer names. */
+  cursor?: string;
+  /** The Accelerator character, which is an access key on the page. */
+  accelerator?: string;
+}
+
 export interface SheetControl {
   /** What the control is. Anything unrecognised is rendered as a label so it is never invisible. */
-  kind: "checkbox" | "radio" | "dropdown" | "list" | "spin" | "scroll" | "button" | "label" | "groupBox";
+  kind: "checkbox" | "radio" | "dropdown" | "list" | "spin" | "scroll" | "button" | "label" | "groupBox" | "textbox" | "toggle" | "image";
   name: string;
   /** The text drawn on the control (from the VML textbox). */
   label?: string;
@@ -485,6 +535,8 @@ export interface SheetControl {
   activeXValue?: string;
   /** ActiveX: the part holding that value, so a change can be written back into it. */
   activeXBinPath?: string;
+  /** ActiveX: how the control looks and behaves, from the same binary. */
+  visuals?: ControlVisuals;
   /** List controls: the range the items come from, and the 1-based selection (0 = nothing). */
   sourceRange?: string;
   selected?: number;

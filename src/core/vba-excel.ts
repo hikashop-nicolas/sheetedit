@@ -1519,7 +1519,7 @@ class ListObjectsCollection implements VbaObject {
 const CONTROL_TYPE_NAME: Record<SheetControl["kind"], string> = {
   dropdown: "ComboBox", list: "ListBox", checkbox: "CheckBox", radio: "OptionButton",
   button: "CommandButton", label: "Label", spin: "SpinButton", scroll: "ScrollBar",
-  groupBox: "Frame",
+  groupBox: "Frame", textbox: "TextBox", toggle: "ToggleButton", image: "Image",
 };
 
 /** The control behind an OLEObject: what `.Object` returns. */
@@ -1566,8 +1566,30 @@ class OleControlObject implements VbaObject {
         if (i < 0 || i >= items.length) throw new VbaError("List index out of range", 9);
         return items[i]!;
       }
-      case "enabled": case "visible": return true;
+      case "enabled": return this.ctl.visuals?.enabled ?? true;
+      case "locked": return this.ctl.visuals?.locked ?? false;
+      case "visible": return true;
+      case "multiline": return this.ctl.visuals?.multiLine ?? false;
+      case "maxlength": return this.ctl.visuals?.maxLength ?? 0;
+      case "columncount": return 1;
       case "name": return this.ctl.name;
+      case "font": {
+        const f = this.ctl.visuals?.font ?? {};
+        return {
+          typeName: "Font",
+          get: (n: string): VbaValue => {
+            switch (n.toLowerCase()) {
+              case "name": return f.name ?? "";
+              case "size": return f.sizePt ?? 0;
+              case "bold": return !!f.bold;
+              case "italic": return !!f.italic;
+              case "underline": return !!f.underline;
+              case "strikethrough": return !!f.strike;
+            }
+            throw new VbaError(`Font.${n} is not supported by sheetedit`, 438);
+          },
+        };
+      }
     }
     throw new VbaError(`${this.typeName}.${name} is not supported by sheetedit`, 438);
   }

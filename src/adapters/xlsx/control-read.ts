@@ -1,6 +1,6 @@
-import { parseXmlOpt, type SheetControl, type Workbook } from "../../core/model";
+import { parseXmlOpt, type ControlVisuals, type SheetControl, type Workbook } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
-import { kindOfClsid, readActiveXStream, type ActiveXKind } from "./activex-read";
+import { kindOfClsid, readActiveXStream, type ActiveXControl, type ActiveXKind } from "./activex-read";
 
 // A form control is spread across three parts:
 //   the worksheet   <controls><control shapeId r:id name>  (often inside mc:AlternateContent)
@@ -202,10 +202,87 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
 
 /** How an ActiveX control's kind maps onto the model's own vocabulary. */
 const ACTIVEX_KINDS: Partial<Record<ActiveXKind, SheetControl["kind"]>> = {
-  commandButton: "button", checkbox: "checkbox", radio: "radio", textbox: "label",
-  dropdown: "dropdown", list: "list", toggle: "checkbox", label: "label",
-  scroll: "scroll", spin: "spin",
+  commandButton: "button", checkbox: "checkbox", radio: "radio", textbox: "textbox",
+  dropdown: "dropdown", list: "list", toggle: "toggle", label: "label",
+  scroll: "scroll", spin: "spin", image: "image",
 };
+
+/**
+ * An OLE_COLOR to CSS. Only a literal RGB converts: 0x80xxxxxx names a Windows system-palette
+ * entry, whose colour is the desktop theme's rather than the document's, so it is left unset and
+ * the grid's own colours apply instead of a guess at someone else's.
+ */
+function oleColorToCss(v: number | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  if ((v & 0xff000000) !== 0) return undefined;  // system colour, or a palette index
+  const hex = (n: number): string => (n & 0xff).toString(16).padStart(2, "0");
+  return `#${hex(v)}${hex(v >> 8)}${hex(v >> 16)}`;  // OLE_COLOR is 0x00BBGGRR
+}
+
+/**
+ * fmMousePointer to a CSS cursor. The two vocabularies line up almost exactly; 99 (custom) points
+ * at a MouseIcon picture, which is a cursor image a page cannot install, so it keeps the default.
+ */
+const CURSORS: Record<number, string> = {
+  1: "default", 2: "crosshair", 3: "text", 6: "nesw-resize", 7: "ns-resize", 8: "nwse-resize",
+  9: "ew-resize", 10: "n-resize", 11: "wait", 12: "no-drop", 13: "progress", 14: "help", 15: "move",
+};
+
+/** PARAFORMAT_Alignment: 1 left, 2 right, 3 centre. */
+const ALIGNS: Record<number, "left" | "right" | "center"> = { 1: "left", 2: "right", 3: "center" };
+
+const dataUri = (mime: string, bytes: Uint8Array): string => {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return `data:${mime};base64,${btoa(binary)}`;
+};
+
+/** Everything the binary says about how the control looks, in the model's own vocabulary. */
+function visualsOf(parsed: ActiveXControl): ControlVisuals | undefined {
+  const v: ControlVisuals = {};
+  if (parsed.enabled !== undefined) v.enabled = parsed.enabled;
+  if (parsed.locked !== undefined) v.locked = parsed.locked;
+  if (parsed.multiLine !== undefined) v.multiLine = parsed.multiLine;
+  if (parsed.scrollBars !== undefined) v.scrollBars = parsed.scrollBars;
+  if (parsed.maxLength) v.maxLength = parsed.maxLength;
+  // PasswordChar is a character code; 0 means the box shows its text.
+  if (parsed.passwordChar) v.passwordChar = String.fromCharCode(parsed.passwordChar);
+  if (parsed.listRows) v.listRows = parsed.listRows;
+  if (parsed.multiSelect) v.multiSelect = parsed.multiSelect !== 0;
+  // DisplayStyle tells an editable combo (3) from a drop-list one (7); they share a class id.
+  if (parsed.displayStyle !== undefined) v.editable = parsed.displayStyle !== 7;
+  if (parsed.wordWrap !== undefined) v.wordWrap = parsed.wordWrap;
+  if (parsed.captionLeft !== undefined) v.captionLeft = parsed.captionLeft;
+  const fore = oleColorToCss(parsed.foreColor);
+  const back = oleColorToCss(parsed.backColor);
+  const border = oleColorToCss(parsed.borderColor);
+  if (fore) v.color = fore;
+  if (back) v.background = back;
+  if (border) v.borderColor = border;
+  if (parsed.borderStyle) v.borderStyle = parsed.borderStyle;
+  if (parsed.specialEffect) v.specialEffect = parsed.specialEffect;
+  if (parsed.orientation !== undefined) v.orientation = parsed.orientation;
+  if (parsed.smallChange !== undefined) v.smallChange = parsed.smallChange;
+  if (parsed.largeChange !== undefined) v.largeChange = parsed.largeChange;
+  if (parsed.font) {
+    const f = parsed.font;
+    const font: NonNullable<ControlVisuals["font"]> = {};
+    if (f.name) font.name = f.name;
+    if (f.sizePt) font.sizePt = f.sizePt;
+    if (f.bold || (f.weight ?? 0) >= 700) font.bold = true;
+    if (f.italic) font.italic = true;
+    if (f.underline) font.underline = true;
+    if (f.strike) font.strike = true;
+    const align = f.align !== undefined ? ALIGNS[f.align] : undefined;
+    if (align) font.align = align;
+    if (Object.keys(font).length) v.font = font;
+  }
+  if (parsed.picture) v.picture = dataUri(parsed.picture.mime, parsed.picture.bytes);
+  const cursor = parsed.mousePointer !== undefined ? CURSORS[parsed.mousePointer] : undefined;
+  if (cursor) v.cursor = cursor;
+  if (parsed.accelerator) v.accelerator = String.fromCharCode(parsed.accelerator);
+  return Object.keys(v).length ? v : undefined;
+}
 
 /**
  * Fill a control in from its ActiveX parts: the class id names the kind, and the persisted binary
@@ -235,9 +312,11 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
   if (parsed.position !== undefined) ctl.value = parsed.position;
   if (parsed.value !== undefined) {
     ctl.activeXValue = parsed.value;
-    // A checkbox persists "0"/"1"; anything else is the control's own text.
-    if (ctl.kind === "checkbox" || ctl.kind === "radio") ctl.checked = parsed.value === "1";
+    // A checkbox, an option button and a toggle all persist "0"/"1"; anything else is text.
+    if (ctl.kind === "checkbox" || ctl.kind === "radio" || ctl.kind === "toggle") ctl.checked = parsed.value === "1";
   }
+  const visuals = visualsOf(parsed);
+  if (visuals) ctl.visuals = visuals;
 }
 
 /** Whether the workbook carries ActiveX controls, which are Windows COM and left untouched. */
