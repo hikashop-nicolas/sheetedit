@@ -176,17 +176,24 @@ class Cursor {
   }
 }
 
+/** A string property in the ExtraDataBlock: where its bytes are, and where its length word is. */
+interface StringSlot {
+  prop: "value" | "caption" | "groupName";
+  /** Offset of the 4-byte length-and-flag word in the DataBlock. */
+  lenAt: number;
+  /** Offset and byte length of the characters themselves, padding excluded. */
+  at: number;
+  byteLen: number;
+}
+
 /** Where the pieces sit, so a write can splice rather than repeat the walk and risk diverging. */
 interface Layout {
-  /** Offsets of the 4-byte length-and-flag words in the DataBlock, or -1 when absent. */
-  valueLenAt: number;
-  captionLenAt: number;
-  groupLenAt: number;
-  /** The ExtraDataBlock's bounds, and how much of its head the Size takes. */
+  /** Every string the control carries, in the order the ExtraDataBlock holds them. */
+  strings: StringSlot[];
+  /** The ExtraDataBlock's bounds. */
   extraStart: number;
   extraEnd: number;
-  sizeBytes: number;
-  /** Where the PropMask starts, and how long it is, so cb can be recomputed. */
+  /** Where the PropMask starts and how long it is, so cb can be recomputed. */
   maskAt: number;
   maskBytes: number;
 }
@@ -222,7 +229,8 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     if (bit(0)) out.foreColor = data.u32();
     if (bit(1)) out.backColor = data.u32();
     if (bit(2)) data.u32();          // VariousPropertyBits
-    const caption = bit(3) ? data.u32() : 0;
+    let captionLenAt = -1, caption = 0;
+    if (bit(3)) { captionLenAt = data.aligned(4); caption = data.u32(); }
     if (bit(4)) data.u32();          // PicturePosition
     if (bit(6)) data.u16();          // MousePointer
     if (bit(7)) data.u16();          // Picture, a placeholder here and the image in StreamData
@@ -231,9 +239,14 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     // The ExtraDataBlock starts on a 4-byte boundary after the DataBlock.
     const extraStart = data.position + ((4 - (data.position % 4)) % 4);
     const extra = new Cursor(bytes, extraStart, extraStart);
-    if (caption) out.caption = extra.text(caption);
+    const strings: StringSlot[] = [];
+    if (caption) {
+      strings.push({ prop: "caption", lenAt: captionLenAt, at: extra.position, byteLen: caption & 0x7fffffff });
+      out.caption = extra.text(caption);
+    }
     if (bit(5)) out.size = { cx: extra.i32(), cy: extra.i32() };
-    return { control: out };
+    if (extra.position - (at + 4) !== dv.getUint16(at + 2, true)) return { control: out };
+    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 4 } };
   }
 
   const morph = MORPH_KINDS.has(kind);
@@ -277,23 +290,24 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     // The ExtraDataBlock follows on a 4-byte boundary, Size first and then the strings.
     const extraStart = block.position + ((4 - ((block.position - start) % 4)) % 4);
     const extra = new Cursor(bytes, extraStart, extraStart);
+    const strings: StringSlot[] = [];
     if (bit(8)) out.size = { cx: extra.i32(), cy: extra.i32() };
-    if (value) out.value = extra.text(value);
-    if (caption) out.caption = extra.text(caption);
-    if (group) out.groupName = extra.text(group);
+    const take = (prop: StringSlot["prop"], lenAndFlag: number, lenAt: number): void => {
+      if (!lenAndFlag) return;
+      strings.push({ prop, lenAt, at: extra.position, byteLen: lenAndFlag & 0x7fffffff });
+      const text = extra.text(lenAndFlag);
+      if (prop === "value") out.value = text;
+      else if (prop === "caption") out.caption = text;
+      else out.groupName = text;
+    };
+    take("value", value, valueLenAt);
+    take("caption", caption, captionLenAt);
+    take("groupName", group, groupLenAt);
     // cb states PropMask + DataBlock + ExtraDataBlock. If the walk did not land exactly there,
     // some field's width is wrong and every value read is suspect, so none of them are kept.
     const cb = dv.getUint16(at + 2, true);
     if (extra.position - (at + 4) !== cb) return { control: { kind } };
-    return {
-      control: out,
-      layout: {
-        valueLenAt, captionLenAt, groupLenAt,
-        extraStart, extraEnd: extra.position,
-        sizeBytes: bit(8) ? 8 : 0,
-        maskAt: at + 4, maskBytes: 8,
-      },
-    };
+    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 8 } };
   }
 
   const simple = SIMPLE_LAYOUTS[kind];
@@ -316,21 +330,17 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     const extraStart = block.position + ((4 - ((block.position - start) % 4)) % 4);
     const extra = new Cursor(bytes, extraStart, extraStart);
     // The order inside the ExtraDataBlock is not the same across families, so each states its own.
+    const strings: StringSlot[] = [];
     for (const what of simple.extraOrder) {
       if (what === "size" && bit(simple.sizeBit)) out.size = { cx: extra.i32(), cy: extra.i32() };
-      else if (what === "caption" && caption) out.caption = extra.text(caption);
+      else if (what === "caption" && caption) {
+        strings.push({ prop: "caption", lenAt: captionLenAt, at: extra.position, byteLen: caption & 0x7fffffff });
+        out.caption = extra.text(caption);
+      }
     }
     // The same guard the MorphData path uses: land on cb or report nothing but the kind.
     if (extra.position - (at + 4) !== dv.getUint16(at + 2, true)) return { control: { kind } };
-    return {
-      control: out,
-      layout: {
-        valueLenAt: -1, captionLenAt, groupLenAt: -1,
-        extraStart, extraEnd: extra.position,
-        sizeBytes: bit(simple.sizeBit) ? 8 : 0,
-        maskAt: at + 4, maskBytes: 4,
-      },
-    };
+    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 4 } };
   }
 
   // Anything left is a Forms 2.0 kind with no layout here: its kind is still trustworthy, since
@@ -353,47 +363,58 @@ function encodeText(text: string): { bytes: number[]; lengthAndFlag: number } {
 const padTo4 = (bytes: number[]): number[] => [...bytes, ...Array((4 - (bytes.length % 4)) % 4).fill(0)];
 
 /**
- * Change a control's persisted Value, returning the new stream.
+ * Change one of a control's persisted strings, returning the new stream.
  *
- * Returns undefined rather than guessing when the control has no Value to change, or when its
- * layout was not understood: the reader refuses a stream whose walk does not land on `cb`, and a
- * write must not proceed where a read would not.
+ * Returns undefined rather than guessing when the control does not carry that property, or when
+ * its layout was not understood: the reader refuses a stream whose walk does not land on `cb`, and
+ * a write must not proceed where a read would not.
  *
  * Where the new text encodes to the same length as the old, the bytes are patched IN PLACE, so
- * everything else in the stream stays byte-identical, padding included. Only a change of length
- * rebuilds the ExtraDataBlock, and then the parts this does not model (the picture streams, the
- * font properties, a combo's column widths) are carried over untouched from where they sat.
+ * everything else stays byte-identical, padding included. Only a change of length rebuilds the
+ * ExtraDataBlock, and then the strings around it and the blocks this does not model (the picture
+ * streams, the font properties, a combo's column widths) are carried over from where they sat.
  */
-export function setActiveXValue(bytes: Uint8Array, value: string): Uint8Array | undefined {
+export function setActiveXText(
+  bytes: Uint8Array,
+  prop: "value" | "caption" | "groupName",
+  text: string,
+): Uint8Array | undefined {
   const found = walk(bytes);
-  if (!found?.layout || found.layout.valueLenAt < 0) return undefined;
+  const slot = found?.layout?.strings.find((x) => x.prop === prop);
+  if (!found?.layout || !slot) return undefined;
   const L = found.layout;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const oldLen = dv.getUint32(L.valueLenAt, true) & 0x7fffffff;
-  const next = encodeText(value);
+  const next = encodeText(text);
 
-  const valueAt = L.extraStart + L.sizeBytes;
-  if (next.bytes.length === oldLen) {
-    // Same length: nothing moves, so only the characters themselves change.
+  if (next.bytes.length === slot.byteLen) {
+    // Nothing moves, so only the characters themselves change.
     const out = new Uint8Array(bytes);
-    out.set(next.bytes, valueAt);
+    out.set(next.bytes, slot.at);
     return out;
   }
 
-  // The strings after the value have to be carried across, since their offsets all shift.
-  const after = bytes.subarray(valueAt + oldLen + ((4 - (oldLen % 4)) % 4), L.extraEnd);
-  const extra = [
-    ...Array.from(bytes.subarray(L.extraStart, valueAt)),   // the Size, unchanged
-    ...padTo4(next.bytes),
-    ...Array.from(after),                                    // caption and group name, unchanged
-  ];
-  const head = Array.from(bytes.subarray(0, L.extraStart));
-  const tail = Array.from(bytes.subarray(L.extraEnd));       // StreamData, TextProps, rgColumnInfo
-  const out = new Uint8Array([...head, ...extra, ...tail]);
+  // Rebuild the ExtraDataBlock from its parts, keeping every other run exactly as it was.
+  const pieces: number[] = [];
+  let cursor = L.extraStart;
+  for (const st of L.strings) {
+    pieces.push(...Array.from(bytes.subarray(cursor, st.at)));   // whatever preceded it (the Size)
+    const run = st === slot ? next.bytes : Array.from(bytes.subarray(st.at, st.at + st.byteLen));
+    pieces.push(...padTo4(run));
+    cursor = st.at + st.byteLen + ((4 - (st.byteLen % 4)) % 4);
+  }
+  pieces.push(...Array.from(bytes.subarray(cursor, L.extraEnd)));  // anything after the last string
+
+  const out = new Uint8Array([
+    ...Array.from(bytes.subarray(0, L.extraStart)),
+    ...pieces,
+    ...Array.from(bytes.subarray(L.extraEnd)),   // StreamData, TextProps, rgColumnInfo
+  ]);
   const ov = new DataView(out.buffer);
-  ov.setUint32(L.valueLenAt, next.lengthAndFlag >>> 0, true);
+  ov.setUint32(slot.lenAt, next.lengthAndFlag >>> 0, true);
   // cb states PropMask + DataBlock + ExtraDataBlock, so it moves with the block that changed.
-  const cbAt = L.maskAt - 2;
-  ov.setUint16(cbAt, (L.maskBytes + (L.extraStart - L.maskAt - L.maskBytes) + extra.length) & 0xffff, true);
+  ov.setUint16(L.maskAt - 2, ((L.extraStart - L.maskAt) + pieces.length) & 0xffff, true);
   return out;
 }
+
+/** Change a control's persisted Value. A thin name over setActiveXText, which is the general one. */
+export const setActiveXValue = (bytes: Uint8Array, value: string): Uint8Array | undefined =>
+  setActiveXText(bytes, "value", value);

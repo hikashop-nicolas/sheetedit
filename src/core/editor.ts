@@ -2845,6 +2845,23 @@ export function createSheetEditor(
   // Apply a cell's visual style (fill/borders on the td, font/colour/align on the input) after
   // resetting the style-derived properties, so this both builds a fresh cell and re-styles an
   // existing one in place (a patch that avoids a full renderGrid, keeping focus and scroll).
+  /**
+   * Black or white, whichever the eye can actually read on `bg`. Uses the WCAG relative-luminance
+   * weighting rather than a plain average, since green carries far more apparent brightness than
+   * blue and a naive mean calls a mid-green dark.
+   */
+  const readableOn = (bg: string): string => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(bg.trim());
+    if (!m) return "";
+    const n = parseInt(m[1]!, 16);
+    const lin = (c: number): number => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    const L = 0.2126 * lin((n >> 16) & 0xff) + 0.7152 * lin((n >> 8) & 0xff) + 0.0722 * lin(n & 0xff);
+    return L > 0.4 ? "#1a1a1a" : "#f5f5f5";
+  };
+
   const applyCellVisualStyle = (td: HTMLElement, input: HTMLInputElement, cell: Cell | undefined): void => {
     td.style.background = "";
     td.style.boxShadow = "";
@@ -2859,7 +2876,13 @@ export function createSheetEditor(
     input.style.textAlign = "";
     const cs = cell?.cellStyle;
     if (!cs) return;
-    if (cs.bg) td.style.background = cs.bg;
+    if (cs.bg) {
+      td.style.background = cs.bg;
+      // A spreadsheet's default text colour is BLACK, not the UI theme's foreground. A cell the
+      // file fills but gives no colour to therefore has to be read against that fill, or a pale
+      // fill in dark mode puts light text on light ground and the value disappears.
+      if (!cs.color) input.style.color = readableOn(cs.bg);
+    }
     if (cs.borders) {
       const bd = cs.borders;
       const g = "#e3e3e6";
@@ -3013,7 +3036,10 @@ export function createSheetEditor(
       // colour-scale fill / data bar.
       const cfv = condVisuals.get(key(r, c));
       if (cfv) {
-        if (cfv.bg) td.style.background = cfv.bg;
+        if (cfv.bg) {
+          td.style.background = cfv.bg;
+          if (!cfv.color && !cell?.cellStyle?.color) input.style.color = readableOn(cfv.bg);
+        }
         if (cfv.color) input.style.color = cfv.color;
         if (cfv.bold) input.style.fontWeight = "bold";
         if (cfv.italic) input.style.fontStyle = "italic";

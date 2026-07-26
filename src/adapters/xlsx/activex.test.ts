@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { kindOfClsid, readActiveXStream, setActiveXValue } from "./activex-read";
+import { kindOfClsid, readActiveXStream, setActiveXText, setActiveXValue } from "./activex-read";
 
 // The bytes here are SYNTHETIC, built from [MS-OFORMS], because the real ActiveX files available
 // are other people's business documents: fine to develop against locally, not to commit.
@@ -286,5 +286,43 @@ describe("Label", () => {
     expect(readActiveXStream(bytes)).toEqual({
       kind: "label", caption: "Total", size: { cx: 1200, cy: 300 },
     });
+  });
+});
+
+describe("writing any of the strings, not only the value", () => {
+  it("renames a button's caption", () => {
+    const after = setActiveXText(button("Old label"), "caption", "A much longer new label")!;
+    expect(readActiveXStream(after)).toMatchObject({ caption: "A much longer new label", size: { cx: 5609, cy: 970 } });
+  });
+
+  it("changes one string of three and leaves the other two alone", () => {
+    // The three sit end to end in the ExtraDataBlock, so rewriting the middle one moves the last.
+    const before = checkbox("0", "CheckBox1", "DataEntry");
+    const after = setActiveXText(before, "caption", "Renamed rather more fully")!;
+    expect(readActiveXStream(after)).toEqual({
+      kind: "checkbox", size: { cx: 2831, cy: 767 },
+      value: "0", caption: "Renamed rather more fully", groupName: "DataEntry",
+    });
+  });
+
+  it("changes the group name, which is the last of them", () => {
+    const after = setActiveXText(checkbox("1", "Cap", "Grp"), "groupName", "AnotherGroupEntirely")!;
+    expect(readActiveXStream(after)).toMatchObject({ value: "1", caption: "Cap", groupName: "AnotherGroupEntirely" });
+  });
+
+  it("rewrites a label's caption, whose block puts it before the size", () => {
+    const caption = [..."Total"].map((c) => c.charCodeAt(0));
+    const LABEL = [0x23, 0x9e, 0x8c, 0x97, 0xb0, 0xd4, 0xce, 0x11, 0xbf, 0x2d, 0x00, 0xaa, 0x00, 0x3f, 0x40, 0xd0];
+    const bytes = new Uint8Array([
+      ...LABEL, 0x00, 0x02, ...u16(4 + 4 + 8 + 8), ...u32((1 << 3) | (1 << 5)),
+      ...u32(0x80000000 | caption.length), ...caption, ...Array(3).fill(0), ...u32(1200), ...u32(300),
+    ]);
+    const after = setActiveXText(bytes, "caption", "Grand total")!;
+    expect(readActiveXStream(after)).toEqual({ kind: "label", caption: "Grand total", size: { cx: 1200, cy: 300 } });
+  });
+
+  it("refuses a property the control does not carry", () => {
+    expect(setActiveXText(button("Go"), "value", "x")).toBeUndefined();
+    expect(setActiveXText(checkbox("0", "C", "G"), "caption", "ok")).toBeTruthy();
   });
 });

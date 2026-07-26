@@ -318,8 +318,10 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     and fPrevEnabled / fNextEnabled are mask bits with NO field behind them, so consuming bytes for
     them would push every later read out of place. The layouts are table-driven now, one table per
     family, each ending on the same cb check.
-  - Still open: only Value can be written (Caption and the rest are read-only), and the Image
-    control and any third-party ActiveX are kind-only.
+  - Writing covers every string a control carries (Value, Caption, GroupName), not just Value. The
+    layout records each string's own place, so rewriting the middle of three moves the last
+    correctly. Identity holds on all nine real streams for every property they carry.
+  - Still open: the Image control, and any third-party ActiveX, which is irreducible.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element
