@@ -6,9 +6,10 @@ into an editable grid, **preserves formulas and recalculates** them as you edit,
 exports a valid workbook, **keeping styles, number formats, charts, pivot tables and other
 sheets** intact. No server, no upload.
 
-It also **creates and edits charts and pivot tables**, and opens and edits a workbook's
-**Power Query** definitions in a built-in, Excel-style query editor, refreshing them on-device
-(see [Charts](#charts), [Pivot tables](#pivot-tables), [Power Query](#power-query)).
+It also **creates and edits charts and pivot tables**, **runs and edits a workbook's VBA macros**,
+and opens and edits its **Power Query** definitions in a built-in, Excel-style query editor,
+refreshing them on-device (see [Charts](#charts), [Pivot tables](#pivot-tables),
+[Macros](#macros-vba), [Power Query](#power-query)).
 
 **[▶ Live demo](https://hikashop-nicolas.github.io/sheetedit/)** - open a `.xlsx` or
 `.ods`, edit cells and formulas, and download the result, entirely in your browser.
@@ -26,7 +27,8 @@ const editedBytes = await editor.getBytes(); // a valid .xlsx or .ods
 
 Runtime dependencies: [`fflate`](https://github.com/101arrowz/fflate) (zip) and
 [`fast-formula-parser`](https://github.com/LesterLyu/fast-formula-parser) (formula
-engine), both MIT. The Power Query engine
+engine) and [`vbalang`](https://github.com/hikashop-nicolas/vbalang) (the VBA engine,
+extracted from this project), all MIT. The Power Query engine
 ([`mlang`](https://github.com/hikashop-nicolas/mlang)) and the on-device formula
 assistant ([`localml`](https://github.com/hikashop-nicolas/localml)) are lazy-loaded
 only when their features are used, so they stay out of the base bundle.
@@ -204,34 +206,94 @@ made to work. Their point is the **linked cell**: a checkbox writes TRUE/FALSE i
 writes the 1-based index of the chosen item, a spinner writes its number, and formulas read that
 cell. So ticking a box on a rendered sheet recalculates it, the way it would in Excel.
 
-A dropdown's items come from its source range, so it stays in step with the sheet. A **button** runs
-a macro, which a browser cannot and should not execute, so it is drawn disabled with a tooltip
-saying why rather than looking live and doing nothing. Labels and group boxes are drawn as-is.
+A dropdown's items come from its source range, so it stays in step with the sheet. A **button runs
+the macro it names** (see [Macros](#macros-vba)); one with nothing assigned is drawn disabled and
+says so. **Radio buttons** clear the rest of their group box, as they must to be radios at all.
+Labels and group boxes are drawn as-is.
 
-Controls can be **created and edited**, not only read. The toolbar's control button inserts a
-checkbox, dropdown or spinner at the selection and opens its settings; the same dialog edits an
-existing control's label, linked cell and item source, or deletes it. Creating one builds all three
-parts Excel expects (the `ctrlProps` part, a VML shape, the worksheet entry) plus the content types
-and relationships that make them findable, since missing any one of them makes Excel drop the
-control silently.
+Controls can be **created, edited, moved and resized**, not only read. The toolbar's control button
+inserts a checkbox, dropdown or spinner at the selection and opens its settings; the same dialog
+edits an existing control's label, linked cell, item source and assigned macro, or deletes it. Drag
+the grip on a control's left edge to move it and the corner handle to resize it; the face keeps its
+own clicks, so a checkbox stays tickable. Creating one builds all three parts Excel expects (the
+`ctrlProps` part, a VML shape, the worksheet entry) plus the content types and relationships that
+make them findable, since missing any one of them makes Excel drop the control silently.
+
+Files written by older Excel carry **no worksheet `<controls>` element at all**, only VML shapes.
+Those are read as controls too, or the buttons in such a file would be invisible.
 
 State lives in two places in an `.xlsx` and both are read and written: the modern `ctrlProps` part
 and the legacy VML drawing that positions the control. Files predating `ctrlProps` carry everything
 in the VML, so it is the fallback rather than an afterthought, and a state change is mirrored into
 both so an older reader sees it too. Everything else in either part is left untouched.
 
-**Macros and ActiveX are preserved, not run.** A `.xlsm`'s `vbaProject.bin` and any ActiveX part
-survive a save byte-for-byte, because untouched parts are never rebuilt. Running them is a different
-proposition: it needs a VBA interpreter *and* the Excel object model, since macros exist to
-manipulate the workbook. That is a project in its own right, not a missing flag, and a partial
-implementation would be worse than none: a macro that half-runs can leave a workbook in a state its
-author never intended.
-
 `.ods` keeps controls in `office:forms` with a `draw:control` frame, a different model that is
 preserved rather than rendered. Verified against LibreOffice, which reads the kind, label, linked
 cell and source range back from what we write; its own import does not carry a checkbox's checked
 state (a file that was never checked reads back as checked), so that part is verified by sheetedit's
 own round-trip rather than through it.
+
+## Macros (VBA)
+
+A `.xlsm`'s macros are **read, run and edited**, through
+[`vbalang`](https://github.com/hikashop-nicolas/vbalang) (the VBA engine, extracted from this
+project) plus an Excel object model that maps onto sheetedit's own workbook. Nothing reaches outside
+the page: a browser tab is where it all happens.
+
+The toolbar's macro button lists the modules and their source, with a **Run** button for each
+procedure that can run on its own. The source box is **editable**, and saving it compiles the text
+back into `vbaProject.bin`, verified by reading it back before it is accepted. A **button on the
+sheet** runs the macro its `<x:FmlaMacro>` names, which is how the workbook's author meant it to be
+run.
+
+`Workbook_Open` and `Worksheet_Change` run **only if you say so**, from a checkbox in the macro
+dialog that lasts for the session and is never persisted. A workbook that runs code the moment it
+opens is the whole reason Excel grew its own "enable content" bar.
+
+Two rules the whole feature is built on:
+
+- **A run is one undo step**, including the parts that touch no cell (hidden rows, a rename,
+  protection). One undo puts the workbook back.
+- **Refuse rather than approximate.** Anything unmodelled stops the run naming what was missing,
+  rather than evaluating to `Empty` and carrying on. A macro that half-runs leaves a workbook in a
+  state its author never intended, and the user then saves it. That covers both what cannot be done
+  in a page (`Shell`, `CreateObject`, `Application.Quit`, `Workbook.SaveAs`) and what simply is not
+  built yet. A step budget stops a runaway loop from hanging the tab, and `MsgBox` output is shown
+  after the run instead of blocking on a dialog.
+
+What the object model covers: `Range` (values, formulas, `Offset`/`Resize`/`Cells`, `Find`, `Sort`,
+`AutoFilter`, `SpecialCells`, `Copy`/`Cut`/`PasteSpecial`, `Replace`, `RemoveDuplicates`,
+`TextToColumns`, `AdvancedFilter`, `Clear`, `Font`/`Interior`), `Worksheet` and `Worksheets`
+(including `Visible`, `Add`, `Copy`, `Move`, `Delete`, `Protect`), `Workbook`, and `Application`
+with `WorksheetFunction` delegating to sheetedit's own formula engine rather than growing a second
+implementation of `SUM`. A `Range` can cover several areas, which is what makes `SpecialCells` and
+`Union` behave.
+
+**Not verified against Excel.** There is no Excel on the machine this was built on, so the writer is
+checked against the spec, sheetedit's own round-trip, and LibreOffice, which reads a rewritten
+project and reports the new source. Dropping the compiled p-code cache when source is rewritten (so
+the workbook can never show one macro and run another) is the decision most likely to behave
+differently in real Excel.
+
+## Hidden sheets
+
+A sheet the workbook hides draws no tab, in either format, and can be hidden or shown from the tab
+menu. The last visible sheet cannot be hidden. `Worksheet.Visible` works from a macro too, with
+Excel's three states including "very hidden", which is the one only a macro can reach.
+
+ODF keeps this somewhere other than where it looks like it should: in the sheet's **table style**
+(`<style:table-properties table:display>`), not on `<table:table>`. The attribute written on the
+element parses fine and LibreOffice ignores it entirely.
+
+## Sorting, filtering and the rest
+
+Beyond the sections above, sheetedit also reads, renders and authors: **sort and value filters** on
+an autofilter range, **conditional formatting** (every rule kind, icon sets included),
+**data validation** (list dropdowns plus the whole/decimal/date/time/length/custom family),
+**rich text** runs within a cell, **sparklines**, **images** (move, resize, replace),
+**drawing shapes**, **slicers** and **timelines** (interactive, and written back), **hyperlinks**,
+**comments**, **furigana**, and **dynamic arrays** (the Excel 365 spilling family: `UNIQUE`, `SORT`,
+`FILTER`, `SEQUENCE`, `TEXTSPLIT` and the rest).
 
 ## Workbook themes
 
@@ -365,8 +427,13 @@ OOXML export, so that flag was checked within ODF only.
   Desktop apps recompute on open, so cached values are a convenience, not authority.
 - `.ods` formulas typed in the grid are translated from A1 to ODF syntax on save; the
   common arithmetic, range and function cases are handled.
-- Not a full spreadsheet application (no drawing/shape editing, no macros). This is a lightweight,
-  embeddable in-browser editor for cell, formula, chart, pivot and query content.
+- Not a full spreadsheet application, but the gap is narrower than it was: shapes and macros are
+  both authored now. What it is not is a desktop suite.
+- **Nothing here is verified against Excel itself**, which is not available on the machine this was
+  built on. Authored pivots, slicers, timelines and rewritten macro projects are checked against the
+  published specs, sheetedit's own round-trips, and LibreOffice, which drops slicers entirely and
+  ignores calculated pivot fields on rebuild. Where a caveat matters it is stated in the section
+  concerned rather than left implied.
 - Power Query editing is `.xlsx`-only, and a query result loaded onto a brand-new sheet is
   written as plain cells (not a live, Excel-refreshable table). Loading onto an existing
   destination table refreshes it in place.
