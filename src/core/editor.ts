@@ -25,7 +25,7 @@ import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked,
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
-import { subNames } from "./vba";
+import { isSigned, subNames, vbaPartOf } from "./vba";
 import { editModuleSource, findSheetHandler, findWorkbookHandler, hasEventHandlers, runWorkbookMacro, runnableSubs } from "./vba-macro";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
@@ -1359,6 +1359,8 @@ export function createSheetEditor(
   /** Show the workbook's macro source, and run a procedure from it. */
   const openMacroViewer = (): void => {
     const project = wb.vba;
+    const bin = vbaPartOf(wb.files);
+    const signedProject = !!bin && isSigned(bin);
     const modal = document.createElement("div");
     modal.className = "sheetedit-modal";
     const card = document.createElement("div");
@@ -1393,6 +1395,12 @@ export function createSheetEditor(
       why.textContent = t("vbaEventsNote");
       card.append(row, why);
     }
+    if (signedProject) {
+      const note = document.createElement("p");
+      note.className = "sheetedit-note";
+      note.textContent = t("vbaSigned");
+      card.appendChild(note);
+    }
 
     if (project?.modules.length) {
       const list = document.createElement("div");
@@ -1423,6 +1431,9 @@ export function createSheetEditor(
         save.type = "button";
         save.className = "sheetedit-dlg-btn";
         save.textContent = t("vbaSave");
+        // A signed project cannot be rewritten without invalidating its signature, so say that
+        // before the user has typed an edit rather than after they try to save it.
+        if (signedProject) { save.disabled = true; save.title = t("vbaSigned"); }
         save.addEventListener("click", () => {
           const target = project.modules[current]!;
           const res = editModuleSource(wb, target.name, pre.value);
