@@ -12,6 +12,8 @@ import { kindOfClsid, readActiveXStream } from "./activex-read";
 const CLSID = {
   commandButton: [0x40, 0x32, 0x05, 0xd7, 0x69, 0xce, 0xcd, 0x11, 0xa7, 0x77, 0x00, 0xdd, 0x01, 0x14, 0x3c, 0x57],
   scroll: [0xe0, 0x81, 0xd1, 0xdf, 0x2f, 0x5e, 0xce, 0x11, 0xa4, 0x49, 0x00, 0xaa, 0x00, 0x4a, 0x80, 0x3d],
+  checkbox: [0x40, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  combo: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
 };
 
 const u16 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff];
@@ -98,5 +100,65 @@ describe("reading a persisted stream", () => {
     const bytes = button("Menu");
     bytes[17] = 0x03; // MajorVersion must be 2
     expect(readActiveXStream(bytes)).toEqual({ kind: "commandButton" });
+  });
+});
+
+// --- MorphData, the structure behind every kind except the button -----------------
+// Its mask is EIGHT bytes where CommandButton's is four, and the ExtraDataBlock puts Size first
+// and the strings after it. Both facts came from real files and are asserted here.
+
+const pad = (t: string): number[] => {
+  const b = [...t].map((c) => c.charCodeAt(0));
+  return [...b, ...Array((4 - (b.length % 4)) % 4).fill(0)];
+};
+
+/** A checkbox carrying a value, a caption and a group name: the mask Excel writes for one. */
+function checkbox(value: string, caption: string, group: string, cx = 2831, cy = 767): Uint8Array {
+  const data = [0x04, 0, 0, 0, ...u32(0x80000000 | value.length), ...u32(0x80000000 | caption.length), ...u32(0x80000000 | group.length)];
+  const extra = [...u32(cx), ...u32(cy), ...pad(value), ...pad(caption), ...pad(group)];
+  return new Uint8Array([
+    ...CLSID.checkbox, 0x00, 0x02, ...u16(8 + data.length + extra.length),
+    ...u32(0x80c00140),   // fDisplayStyle, fSize, fValue, fCaption, and the reserved top bit
+    ...u32(0x00000001),   // fGroupName, which lives in the mask's second word
+    ...data, ...extra,
+  ]);
+}
+
+describe("MorphData controls", () => {
+  it("reads a checkbox's value, caption and group", () => {
+    expect(readActiveXStream(checkbox("0", "CheckBox1", "DataEntry"))).toEqual({
+      kind: "checkbox",
+      size: { cx: 2831, cy: 767 },
+      value: "0",
+      caption: "CheckBox1",
+      groupName: "DataEntry",
+    });
+  });
+
+  it("reads a combo box's selected value", () => {
+    // A combo sets fVariousPropertyBits, fDisplayStyle, fSize, fMatchEntry, fShowDropButtonWhen
+    // and fValue, so the DataBlock mixes 4-byte and 1-byte fields and then realigns.
+    const data = [...u32(0x2c80481b), 0x03, 0x01, 0x02, 0x00, ...u32(0x80000004)];
+    const extra = [...u32(6244), ...u32(900), ...pad("West")];
+    const bytes = new Uint8Array([
+      ...CLSID.combo, 0x00, 0x02, ...u16(8 + data.length + extra.length),
+      ...u32(0x80450141), ...u32(0), ...data, ...extra,
+    ]);
+    expect(readActiveXStream(bytes)).toEqual({
+      kind: "dropdown", size: { cx: 6244, cy: 900 }, value: "West",
+    });
+  });
+
+  it("refuses everything rather than returning half-right values when the walk misses cb", () => {
+    // cb states PropMask + DataBlock + ExtraDataBlock. A wrong field width lands somewhere else,
+    // and every value read is then suspect, so the kind alone comes back.
+    const bytes = checkbox("0", "CheckBox1", "DataEntry");
+    bytes[18] = (bytes[18]! + 4) & 0xff; // overstate cb
+    expect(readActiveXStream(bytes)).toEqual({ kind: "checkbox" });
+  });
+
+  it("handles a caption needing padding and one that needs none", () => {
+    expect(readActiveXStream(checkbox("1", "Go", "G"))?.caption).toBe("Go");
+    expect(readActiveXStream(checkbox("1", "Four", "Grp1"))?.caption).toBe("Four");
   });
 });
