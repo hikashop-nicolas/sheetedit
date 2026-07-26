@@ -240,18 +240,26 @@ fit-to-width, margins, print gridlines and headings, centring, and the header/fo
 header menus carry **Insert** / **Remove page break** and **Repeat these rows (or columns) on every
 page**.
 
-**Print** lays the active sheet's print area out as pages and hands them to the browser. The
-pagination is real, not a screenshot of the grid: columns and rows are split by the paper size and
-margins, manual breaks are honoured, fit-to-width shrinks (never enlarges), title rows and columns
-repeat on every page, and the pages come out in the order the setup asks for. Each page carries its
+**Print** lays the print area out as pages and hands them to the browser. It asks what the job
+covers first: the **active sheet**, **all sheets**, or the **selection only** (offered when there is
+one; it never touches the sheet's stored print area). The pagination is real, not a screenshot of
+the grid: columns and rows are split by the paper size and margins, manual breaks are honoured,
+fit-to-width shrinks (never enlarges), title rows and columns repeat on every page, and the pages
+come out in the order the setup asks for. A print area with several ranges puts each range on its
+own page, as Excel does, and fit-to sizes from the widest so the ranges stay comparable. Each page carries its
 own header and footer with the field codes resolved, so `&P of &N` numbers correctly and
 `firstPageNumber` is respected. Merged cells span, hidden rows and columns are skipped, and each
 cell keeps its own formatting.
 
 Pages are emitted at exactly the paper size with `@page { margin: 0 }`, so the margins, header and
-footer are placed from the file's own values rather than the browser's. The one thing outside our
-control is the browser's own header and footer strip (the URL and date); turn that off in the print
-dialog for an exact page. Printing always uses light colours, whatever mode the editor is in.
+footer are placed from the file's own values rather than the browser's. Page numbers run through the
+whole job, so `&N` is the job's total rather than one sheet's.
+
+Two things outside our control: the browser's own header and footer strip (the URL and date), which
+you turn off in the print dialog for an exact page; and the fact that a browser applies **one**
+`@page` size to a whole job, so printing sheets that disagree on paper uses the first sheet's and
+says so rather than silently resizing the rest. Printing always uses light colours, whatever mode
+the editor is in.
 
 Header and footer text keeps the file's own field codes (`&P` page, `&N` total pages, `&D` date,
 `&T` time, `&A` sheet, `&F` file), so a header sheetedit did not author round-trips exactly,

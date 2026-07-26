@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrintDocument, pageGeom, pageOrder, paginate, resolveFields } from "./print-render";
+import { buildPrintDocument, buildPrintJob, pageGeom, pageOrder, paginate, resolveFields, samePaper } from "./print-render";
 import type { PrintSetup } from "./print";
 import type { Sheet, Workbook } from "./model";
 
@@ -30,7 +30,7 @@ describe("page geometry", () => {
 describe("pagination", () => {
   it("breaks rows when they no longer fit the page", () => {
     // 1000 rows of 24px against ~1027px of body: about 42 rows a page.
-    const p = paginate(sheetOf(1000, 3), A4_PORTRAIT, pageGeom(A4_PORTRAIT));
+    const p = paginate(sheetOf(1000, 3), A4_PORTRAIT, pageGeom(A4_PORTRAIT)).areas[0]!;
     expect(p.rowPages.length).toBeGreaterThan(20);
     expect(p.rowPages[0]!.length).toBeGreaterThan(30);
     // Every row appears exactly once, in order.
@@ -41,7 +41,7 @@ describe("pagination", () => {
   });
 
   it("honours a manual break even when the page is not full", () => {
-    const p = paginate(sheetOf(20, 2), { ...A4_PORTRAIT, rowBreaks: [5] }, pageGeom(A4_PORTRAIT));
+    const p = paginate(sheetOf(20, 2), { ...A4_PORTRAIT, rowBreaks: [5] }, pageGeom(A4_PORTRAIT)).areas[0]!;
     expect(p.rowPages[0]).toEqual([1, 2, 3, 4]);
     expect(p.rowPages[1]![0]).toBe(5);
   });
@@ -50,20 +50,20 @@ describe("pagination", () => {
     const p = paginate(sheetOf(200, 2), { ...A4_PORTRAIT, titleRows: { from: 1, to: 2 } }, pageGeom(A4_PORTRAIT));
     expect(p.titleRows).toEqual([1, 2]);
     // The repeated rows are not in the body run, or they would print twice on page one.
-    expect(p.rowPages.flat()).not.toContain(1);
-    expect(p.rowPages[0]![0]).toBe(3);
+    expect(p.areas[0]!.rowPages.flat()).not.toContain(1);
+    expect(p.areas[0]!.rowPages[0]![0]).toBe(3);
   });
 
   it("only prints the print area", () => {
     const sheet = sheetOf(50, 20, { printSetup: {} });
-    const p = paginate(sheet, { ...A4_PORTRAIT, printArea: [{ r1: 2, c1: 2, r2: 4, c2: 3 }] }, pageGeom(A4_PORTRAIT));
+    const p = paginate(sheet, { ...A4_PORTRAIT, printArea: [{ r1: 2, c1: 2, r2: 4, c2: 3 }] }, pageGeom(A4_PORTRAIT)).areas[0]!;
     expect(p.rowPages.flat()).toEqual([2, 3, 4]);
     expect(p.colPages.flat()).toEqual([2, 3]);
   });
 
   it("skips hidden lines, which take no space on the page either", () => {
     const sheet = sheetOf(10, 3, { hiddenRows: new Set([2, 3]) });
-    expect(paginate(sheet, A4_PORTRAIT, pageGeom(A4_PORTRAIT)).rowPages.flat()).toEqual([1, 4, 5, 6, 7, 8, 9, 10]);
+    expect(paginate(sheet, A4_PORTRAIT, pageGeom(A4_PORTRAIT)).areas[0]!.rowPages.flat()).toEqual([1, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("shrinks to fit the requested page width, and never enlarges", () => {
@@ -71,7 +71,7 @@ describe("pagination", () => {
     const geom = pageGeom(A4_PORTRAIT);
     const fitted = paginate(wide, { ...A4_PORTRAIT, fitToPage: true, fitToWidth: 1, fitToHeight: 0 }, geom);
     expect(fitted.scale).toBeLessThan(1);
-    expect(fitted.colPages.length).toBe(1); // the whole width now fits one page
+    expect(fitted.areas[0]!.colPages.length).toBe(1); // the whole width now fits one page
     // A sheet narrower than the page is left alone rather than blown up.
     const narrow = paginate(sheetOf(5, 2), { ...A4_PORTRAIT, fitToPage: true, fitToWidth: 1, fitToHeight: 0 }, geom);
     expect(narrow.scale).toBe(1);
@@ -79,13 +79,13 @@ describe("pagination", () => {
 
   it("a percentage scale changes how much fits on a page", () => {
     const geom = pageGeom(A4_PORTRAIT);
-    const full = paginate(sheetOf(300, 2), A4_PORTRAIT, geom);
-    const half = paginate(sheetOf(300, 2), { ...A4_PORTRAIT, scale: 50 }, geom);
+    const full = paginate(sheetOf(300, 2), A4_PORTRAIT, geom).areas[0]!;
+    const half = paginate(sheetOf(300, 2), { ...A4_PORTRAIT, scale: 50 }, geom).areas[0]!;
     expect(half.rowPages[0]!.length).toBeGreaterThan(full.rowPages[0]!.length);
   });
 
   it("orders the pages the way the setup asks", () => {
-    const p = { colPages: [[1], [2]], rowPages: [[1], [2]], scale: 1, titleRows: [], titleCols: [] };
+    const p = { areas: [{ colPages: [[1], [2]], rowPages: [[1], [2]] }], scale: 1, titleRows: [], titleCols: [] };
     expect(pageOrder(p, "downThenOver").map((x) => `${x.cols[0]}/${x.rows[0]}`)).toEqual(["1/1", "1/2", "2/1", "2/2"]);
     expect(pageOrder(p, "overThenDown").map((x) => `${x.cols[0]}/${x.rows[0]}`)).toEqual(["1/1", "2/1", "1/2", "2/2"]);
   });
@@ -172,5 +172,98 @@ describe("print document", () => {
 
   it("returns nothing for a sheet with nothing in it", () => {
     expect(buildPrintDocument(wbOf({ name: "S", cells: new Map(), maxRow: 0, maxCol: 0 }), 0, "b")).toBeNull();
+  });
+});
+
+describe("multi-range print areas", () => {
+  const wbOf = (...sheets: Sheet[]): Workbook => ({ kind: "xlsx", sheets, files: {} });
+
+  it("paginates each range separately", () => {
+    const setup = { ...A4_PORTRAIT, printArea: [{ r1: 1, c1: 1, r2: 2, c2: 2 }, { r1: 5, c1: 1, r2: 6, c2: 2 }] };
+    const p = paginate(sheetOf(10, 4), setup, pageGeom(A4_PORTRAIT));
+    expect(p.areas.length).toBe(2);
+    expect(p.areas[0]!.rowPages.flat()).toEqual([1, 2]);
+    expect(p.areas[1]!.rowPages.flat()).toEqual([5, 6]);
+  });
+
+  it("starts a new page for each range rather than running them together", () => {
+    // Both ranges are tiny and would share a page if they were one continuous run.
+    const setup = { ...A4_PORTRAIT, printArea: [{ r1: 1, c1: 1, r2: 2, c2: 2 }, { r1: 5, c1: 1, r2: 6, c2: 2 }] };
+    const sheet = sheetOf(10, 4, { printSetup: setup });
+    const root = buildPrintJob(wbOf(sheet), 0, "b")!.root;
+    const pages = root.querySelectorAll(".sheetedit-print-page");
+    expect(pages.length).toBe(2);
+    expect(pages[0]!.textContent).toContain("1-1");
+    expect(pages[0]!.textContent).not.toContain("5-1");
+    expect(pages[1]!.textContent).toContain("5-1");
+  });
+
+  it("sizes fit-to from the widest range, so the ranges stay comparable", () => {
+    const setup = { ...A4_PORTRAIT, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printArea: [{ r1: 1, c1: 1, r2: 2, c2: 2 }, { r1: 5, c1: 1, r2: 6, c2: 40 }] };
+    const p = paginate(sheetOf(10, 40), setup, pageGeom(A4_PORTRAIT));
+    expect(p.scale).toBeLessThan(1); // the wide range decides it
+    expect(p.areas[1]!.colPages.length).toBe(1);
+  });
+});
+
+describe("print scope", () => {
+  const wbOf = (...sheets: Sheet[]): Workbook => ({ kind: "xlsx", sheets, files: {} });
+  const twoSheets = () => [
+    sheetOf(3, 2, { printSetup: A4_PORTRAIT }),
+    { ...sheetOf(3, 2, { printSetup: A4_PORTRAIT }), name: "Second" },
+  ];
+
+  it("prints only the active sheet by default", () => {
+    const [a, b] = twoSheets();
+    const root = buildPrintJob(wbOf(a!, b!), 0, "f")!.root;
+    const sheets = new Set([...root.querySelectorAll(".sheetedit-print-page")].map((p) => (p as HTMLElement).dataset.sheet));
+    expect([...sheets]).toEqual(["S"]);
+  });
+
+  it("prints every sheet when the job says so", () => {
+    const [a, b] = twoSheets();
+    const root = buildPrintJob(wbOf(a!, b!), 0, "f", { scope: "all" })!.root;
+    const sheets = [...root.querySelectorAll(".sheetedit-print-page")].map((p) => (p as HTMLElement).dataset.sheet);
+    expect(sheets).toEqual(["S", "Second"]);
+  });
+
+  it("numbers the pages through the whole job, not per sheet", () => {
+    const setup = { ...A4_PORTRAIT, footer: { center: "&P/&N" } };
+    const a = sheetOf(3, 2, { printSetup: setup });
+    const b = { ...sheetOf(3, 2, { printSetup: setup }), name: "Second" };
+    const root = buildPrintJob(wbOf(a, b), 0, "f", { scope: "all" })!.root;
+    expect([...root.querySelectorAll(".is-footer")].map((f) => f.textContent)).toEqual(["1/2", "2/2"]);
+  });
+
+  it("skips a sheet with nothing to print instead of emitting a blank page", () => {
+    const a = sheetOf(3, 2, { printSetup: A4_PORTRAIT });
+    const empty: Sheet = { name: "Empty", cells: new Map(), maxRow: 0, maxCol: 0 };
+    const root = buildPrintJob(wbOf(a, empty), 0, "f", { scope: "all" })!.root;
+    expect(root.querySelectorAll(".sheetedit-print-page").length).toBe(1);
+  });
+
+  it("prints just the selection, without touching the sheet's own print area", () => {
+    const sheet = sheetOf(10, 4, { printSetup: { ...A4_PORTRAIT, printArea: [{ r1: 1, c1: 1, r2: 10, c2: 4 }] } });
+    const root = buildPrintJob(wbOf(sheet), 0, "f", { scope: "sheet", selection: { r1: 2, c1: 1, r2: 3, c2: 2 } })!.root;
+    const text = root.textContent!;
+    expect(text).toContain("2-1");
+    expect(text).not.toContain("9-1");
+    // The job is transient: the sheet keeps the area it had.
+    expect(sheet.printSetup!.printArea).toEqual([{ r1: 1, c1: 1, r2: 10, c2: 4 }]);
+  });
+
+  it("flags a job whose sheets disagree on paper, which one @page cannot express", () => {
+    const a = sheetOf(3, 2, { printSetup: { ...A4_PORTRAIT, paperSize: 9 } });
+    const b = { ...sheetOf(3, 2, { printSetup: { ...A4_PORTRAIT, paperSize: 8 } }), name: "A3" };
+    expect(buildPrintJob(wbOf(a, b), 0, "f", { scope: "all" })!.mixedPaper).toBe(true);
+    expect(buildPrintJob(wbOf(a), 0, "f", { scope: "all" })!.mixedPaper).toBe(false);
+    expect(samePaper([{ geom: pageGeom(A4_PORTRAIT) }, { geom: pageGeom(A4_PORTRAIT) }])).toBe(true);
+  });
+
+  it("returns nothing when no sheet in the job has anything", () => {
+    const empty: Sheet = { name: "Empty", cells: new Map(), maxRow: 0, maxCol: 0 };
+    expect(buildPrintJob(wbOf(empty), 0, "f", { scope: "all" })).toBeNull();
+    expect(buildPrintDocument(wbOf(empty), 0, "f")).toBeNull();
   });
 });

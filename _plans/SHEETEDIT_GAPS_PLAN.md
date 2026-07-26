@@ -312,6 +312,11 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     ours to place. The browser's own URL/date strip is a print-dialog setting we cannot control.
     Do NOT wait on requestAnimationFrame before print(): it is throttled in a background tab, which
     left the pages built and the dialog never opening. Force layout with an offsetHeight read.
+    A job covers the active sheet, every sheet, or a selection (transient, never committed to the
+    sheet's print area). Each range of a multi-range print area starts its own page, as Excel does.
+    Page numbers run through the whole job. A browser applies ONE @page size per job, so a job whose
+    sheets disagree on paper is flagged (mixedPaper) and uses the first sheet's rather than
+    silently resizing the rest.
 - **Protection** is read, enforced and authored in both formats. The flags are stated the way OOXML
   states them (each one names a BLOCKED action, each with its own default), and the ods adapter
   inverts them, because ODF's loext flags are permissions. Two layers decide editability: the sheet

@@ -23,7 +23,7 @@ import { SHEETEDIT_CSS } from "./ui/styles.generated";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
-import { buildPrintDocument } from "./print-render";
+import { buildPrintJob, type PrintJob } from "./print-render";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -1428,13 +1428,17 @@ export function createSheetEditor(
    * stylesheet hides everything else.
    */
   let printRoot: HTMLElement | null = null;
-  const doPrint = (): void => {
+  const doPrint = (job: PrintJob): void => {
     printRoot?.remove();
-    printRoot = buildPrintDocument(wb, active, options.fileName ?? "");
-    if (!printRoot) {
+    const result = buildPrintJob(wb, active, options.fileName ?? "", job);
+    if (!result) {
       showNotice(t("printNothing"));
       return;
     }
+    // One @page rule covers the whole job, so a workbook whose sheets disagree on paper cannot be
+    // printed faithfully in one go. Say so rather than silently printing them all at one size.
+    if (result.mixedPaper) showNotice(t("printMixedPaper"));
+    printRoot = result.root;
     document.body.appendChild(printRoot);
     const cleanup = (): void => { printRoot?.remove(); printRoot = null; };
     // afterprint is the reliable signal in every current browser; the timeout is the belt and
@@ -1445,6 +1449,24 @@ export function createSheetEditor(
     // throttled in a background tab, which left the pages built and the dialog never opened.
     void printRoot.offsetHeight;
     window.print();
+  };
+
+  /** Ask what the job covers, then print it. A single-sheet workbook with no selection just prints. */
+  const openPrintScopeDialog = (): void => {
+    const cur = sel;
+    const multiSheet = wb.sheets.length > 1;
+    const hasSelection = !!cur && (cur.r1 !== cur.r2 || cur.c1 !== cur.c2);
+    if (!multiSheet && !hasSelection) {
+      doPrint({ scope: "sheet" });
+      return;
+    }
+    const options2 = [{ value: "sheet", label: t("printScopeSheet") }];
+    if (multiSheet) options2.push({ value: "all", label: t("printScopeAll") });
+    if (hasSelection) options2.push({ value: "selection", label: t("printScopeSelection") });
+    formDialog(wrap, t("printScope"), [{ key: "scope", label: t("printScope"), type: "select", value: "sheet", options: options2 }], (vals) => {
+      const scope = String(vals.scope);
+      doPrint(scope === "selection" && cur ? { scope: "sheet", selection: { ...cur } } : { scope: scope === "all" ? "all" : "sheet" });
+    });
   };
 
   const openPrintDialog = (): void => {
@@ -2292,7 +2314,7 @@ export function createSheetEditor(
         b.addEventListener("click", () => { closeLineMenu(); run(); });
         pop.appendChild(b);
       };
-      item(t("printNow"), () => doPrint());
+      item(t("printNow"), () => openPrintScopeDialog());
       item(t("printSetup"), () => openPrintDialog());
       const sep = document.createElement("div");
       sep.className = "sheetedit-pop-sep";
