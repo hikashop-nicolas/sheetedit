@@ -27,6 +27,13 @@ export interface CellStyle {
   wrap?: boolean;
   /** Border presence + CSS colour per side. */
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
+  /** Theme colour references kept alongside the resolved colours, so switching the workbook's
+      theme recolours the cell instead of baking in the palette it was read with. */
+  colorRef?: import("./theme").ThemeColorRef;
+  bgRef?: import("./theme").ThemeColorRef;
+  borderRefs?: { top?: import("./theme").ThemeColorRef; right?: import("./theme").ThemeColorRef; bottom?: import("./theme").ThemeColorRef; left?: import("./theme").ThemeColorRef };
+  /** The font follows the theme's heading (major) or body (minor) typeface. */
+  fontScheme?: "major" | "minor";
   /** The cell is explicitly unlocked (xlsx `<protection locked="0"/>`, ODF cell-protect "none").
       Both formats default to locked, so absent = locked; this only matters once the sheet is
       protected, when locked cells become read-only. */
@@ -369,6 +376,13 @@ export interface Workbook {
   pivotCaches?: PivotCacheRef[];
   /** xlsx: user-defined slicer styles from styles.xml, keyed by name. */
   slicerStyles?: Map<string, import("../adapters/xlsx/slicer-style-read").SlicerStyleDef>;
+  /** The workbook's theme: the palette its cells reference and the heading / body fonts. */
+  theme?: import("./theme").WorkbookTheme;
+  /** The theme changed in the UI -> xl/theme/theme1.xml is rewritten on save. */
+  themeDirty?: boolean;
+  /** The resolved style pool a freshly rendered cell reads (xlsx cellXfs), kept so a theme switch
+      can re-resolve the styles of cells that have not been touched. */
+  themeStyles?: (CellStyle | undefined)[];
   /** Workbook-level protection (locked sheet set / window layout). */
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */

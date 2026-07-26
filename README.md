@@ -187,6 +187,36 @@ per column, `.ods` nests the rows in `<table:table-row-group>` (with `table:disp
 collapsed one). Verified through LibreOffice round-trips both ways. ODS **column** groups are read
 and preserved but not authored.
 
+## Workbook themes
+
+A workbook's theme is a named palette of twelve colours plus a heading and a body font. Cells do not
+store a theme colour, they store a **reference** to one, which is why switching the theme recolours
+everything that used it while leaving cells given an explicit colour completely alone.
+
+sheetedit reads the palette and the scheme fonts from `xl/theme/theme1.xml`, keeps each reference
+next to the colour it resolved to, and offers the built-in palettes (Office, Office 2007-2010,
+Berlin, Slice, Ion, Grayscale) behind the toolbar's theme button. A file whose own theme is not one
+of those keeps it at the top of the list, so switching away and back loses nothing.
+
+Switching rewrites **only** `theme1.xml`; `styles.xml` is untouched, exactly as Excel does it, and
+the part is patched in place so `<a:fmtScheme>` (the effect and fill styles behind chart and shape
+presets, which sheetedit does not model) survives. A workbook that shipped without a theme gets a
+complete one, registered in the content types and the workbook relationships so other readers
+actually find it. Verified through LibreOffice: it resolves the switched cells to the new palette.
+
+`.ods` has no equivalent palette that cells reference by index, so this is xlsx-only.
+
+## Dark and light
+
+The widget ships both. Colours resolve through `--sheetedit-*` custom properties, defaulting to
+light and following `prefers-color-scheme` for dark, with `data-theme="light"` or `"dark"` on the
+root element overriding the OS. That is the same signal Omnitext sets, so an embedded editor flips
+with its host and needs no wiring.
+
+A host can also redefine any subset of the properties on any ancestor to restyle the editor
+directly. The grid follows the mode too: a paper-white grid inside a dark app is the thing that
+actually looks broken.
+
 ## Print settings
 
 sheetedit does not print, so page setup is carried, shown and authored for whatever does: Excel,

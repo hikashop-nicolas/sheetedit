@@ -39,8 +39,8 @@ with its sibling elements intact:
 - Other drawings not modelled above (pictures, shapes, charts and pivot tables are now read +
   rendered + editable, see above)
 - Form controls, ActiveX (slicers are now read + interactive, see below)
-- Defined names (read for recalc, not user-editable), autofilter state, outline grouping, themes
-  (sheet/workbook protection and print settings are now read + authored, see below)
+- Defined names (read for recalc, not user-editable), autofilter state, outline grouping
+  (protection, print settings and workbook themes are now read + authored, see below)
 
 Now rendered (were inert): hyperlinks (click), data-validation dropdowns, conditional
 formatting (dxf / colour scales / data bars), comments and notes. See Progress below.

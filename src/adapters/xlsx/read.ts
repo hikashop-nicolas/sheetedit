@@ -11,6 +11,8 @@ import { readSparklines } from "./sparkline-read";
 import { readXlsxPivots } from "./pivot-read";
 import { isDateFmt, isoToSerial } from "../../core/dates";
 import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtection } from "../../core/protection";
+import type { ThemeColorRef } from "../../core/theme";
+import { readXlsxTheme } from "./theme-read";
 import { readXlsxPrintNames, readXlsxPrintSetup } from "./print-read";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
@@ -206,6 +208,16 @@ export function resolveColor(el: Element | undefined, theme: string[]): string |
   return undefined;
 }
 
+/** The theme reference a <color> element carries, if it is a theme colour rather than a literal. */
+export function themeRefOf(el: Element | undefined): ThemeColorRef | undefined {
+  const t = el?.getAttribute("theme");
+  if (t == null || el?.getAttribute("rgb")) return undefined;
+  const index = Number(t);
+  if (!Number.isFinite(index)) return undefined;
+  const tint = Number(el!.getAttribute("tint") || "0");
+  return tint ? { index, tint } : { index };
+}
+
 export function readXlsxStyles(doc: Document | undefined, theme: string[]): XlsxStyles {
   const customFmt = new Map<number, string>();
   const xfNumFmtIds: number[] = [];
@@ -231,18 +243,25 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
     size: Number(firstByLocal(f, "sz")?.getAttribute("val")) || undefined,
     name: firstByLocal(f, "name")?.getAttribute("val") || undefined,
     color: resolveColor(firstByLocal(f, "color"), theme),
+    colorRef: themeRefOf(firstByLocal(f, "color")),
+    // <scheme val="minor"/> means "the theme's body font"; the <name> beside it is only a cache.
+    scheme: firstByLocal(f, "scheme")?.getAttribute("val") as "major" | "minor" | undefined,
   }));
   const fills = pool("fills").map((fl) => {
     const pat = firstByLocal(fl, "patternFill");
-    return pat?.getAttribute("patternType") === "solid" ? resolveColor(firstByLocal(pat, "fgColor"), theme) : undefined;
+    if (pat?.getAttribute("patternType") !== "solid") return undefined;
+    const fg = firstByLocal(pat, "fgColor");
+    return { css: resolveColor(fg, theme), ref: themeRefOf(fg) };
   });
   const borders = pool("borders").map((bd) => {
-    const side = (name: string): string | undefined => {
+    const side = (name: string): { css?: string; ref?: ThemeColorRef } => {
       const s = firstByLocal(bd, name);
-      return s?.getAttribute("style") ? (resolveColor(firstByLocal(s, "color"), theme) ?? "#444") : undefined;
+      if (!s?.getAttribute("style")) return {};
+      const c = firstByLocal(s, "color");
+      return { css: resolveColor(c, theme) ?? "#444", ref: themeRefOf(c) };
     };
     const b = { top: side("top"), right: side("right"), bottom: side("bottom"), left: side("left") };
-    return b.top || b.right || b.bottom || b.left ? b : undefined;
+    return b.top.css || b.right.css || b.bottom.css || b.left.css ? b : undefined;
   });
 
   // The cell @s indexes <cellXfs>, not <cellStyleXfs>; read that list specifically.
@@ -264,11 +283,19 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
         if (font.size && font.size !== fonts[0]?.size) st.fontSize = font.size;
         if (font.name && font.name !== fonts[0]?.name) st.fontFamily = font.name;
         if (font.color) st.color = font.color;
+        if (font.colorRef) st.colorRef = font.colorRef;
+        if (font.scheme === "major" || font.scheme === "minor") st.fontScheme = font.scheme;
       }
       const fill = fills[Number(xf.getAttribute("fillId") || "0")];
-      if (fill) st.bg = fill;
+      if (fill?.css) st.bg = fill.css;
+      if (fill?.ref) st.bgRef = fill.ref;
       const border = borders[Number(xf.getAttribute("borderId") || "0")];
-      if (border) st.borders = border;
+      if (border) {
+        st.borders = { top: border.top.css, right: border.right.css, bottom: border.bottom.css, left: border.left.css };
+        const refs: NonNullable<CellStyle["borderRefs"]> = {};
+        for (const side of ["top", "right", "bottom", "left"] as const) if (border[side].ref) refs[side] = border[side].ref;
+        if (Object.keys(refs).length) st.borderRefs = refs;
+      }
       const alignEl = firstByLocal(xf, "alignment");
       const align = alignEl?.getAttribute("horizontal");
       if (align === "center" || align === "right" || align === "left") st.align = align;
@@ -479,6 +506,8 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   readXlsxPivots(wb, files);
   readSlicers(wb, files); // after pivots: a slicer borrows its pivot cache to label items
+  wb.theme = readXlsxTheme(files["xl/theme/theme1.xml"]);
+  wb.themeStyles = styles.xfStyles; // the resolved pool, so a theme switch can re-resolve it
   readXlsxPrintNames(wb, wbDoc); // sheet-scoped names, so every sheet must already be in place
   readXlsxSlicerStyles(wb, files, theme); // user-defined slicer styles, so the overlay can colour by name
   readTimelines(wb, files);

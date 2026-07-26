@@ -270,7 +270,18 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
-- **Preserved-only, not authored yet**: form controls / ActiveX, themes.
+- **Preserved-only, not authored yet**: form controls / ActiveX.
+- **Workbook themes** are read (palette + scheme fonts) and switchable. The trick is that cell styles
+  keep the theme *reference* (index + tint) beside the resolved colour, so a switch re-resolves
+  instead of having baked in whatever palette the file was read with. Cells share the style objects
+  in the resolved pool, so mutating the pool updates untouched cells; cells restyled in-app hold
+  their own object, which is why the switch walks both. Only theme1.xml is rewritten, patched in
+  place so the unmodelled fmtScheme survives. xlsx-only: ODF has no indexed palette.
+- **Styling** all lives in src/sheetedit.css, compiled to a string module by scripts/build-css.mjs
+  because the package ships through plain tsc. Colours go through a --sheetedit-* token layer with
+  light defaults and a dark set on prefers-color-scheme / [data-theme]. Tests fail on a literal
+  colour in a rule, an undefined token, or a stale generated module. Inline styles are reserved for
+  values that are data (a cell's own formatting, a measured overlay position).
 - **Print settings** are read, rendered and authored in both formats. The model is stated in xlsx's
   terms (inches, a paper-size id, scale as a percentage) because that format is the more explicit of
   the two; the ods adapter converts to ODF's page-layout / master-page pair. The print area and the

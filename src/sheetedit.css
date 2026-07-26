@@ -15,31 +15,32 @@
 
 /* --- design tokens ------------------------------------------------------- */
 /*
- * Every colour the widget draws resolves through one of these. A host (or a theme) restyles the
- * whole editor by redefining any subset of them on any ancestor: custom properties inherit, and the
- * closer definition wins over these defaults.
+ * Every colour the widget draws resolves through one of these. A host restyles the whole editor by
+ * redefining any subset on any ancestor: custom properties inherit, and the closer definition wins
+ * over these defaults.
  *
- * The grid canvas defaults to paper-light even though the chrome is dark, because that is what a
- * spreadsheet looks like; a theme that wants a dark grid overrides the --sheetedit-cell-* group.
+ * Light is the default and dark follows the OS preference, so an unstyled widget matches its
+ * surroundings. A host that runs its own switch overrides it with data-theme="light|dark" on the
+ * root element, which is the signal Omnitext already sets.
  */
 :root {
   /* chrome */
-  --sheetedit-bg: #1f2227;
-  --sheetedit-chrome: #2b2f36;
-  /* A second chrome shade for the bars that sit between the toolbar and the grid. */
-  --sheetedit-chrome2: #23262c;
-  --sheetedit-border: #1c1f24;
-  --sheetedit-text: #e6e6e6;
-  --sheetedit-muted: #cfd3da;
-  --sheetedit-btn: #3a3f47;
-  --sheetedit-btn-hover: #454b54;
-  --sheetedit-btn-border: #4a4f57;
-  --sheetedit-accent: #6e7bff;
+  --sheetedit-bg: #ffffff;
+  --sheetedit-chrome: #f7f7f9;
+  --sheetedit-chrome2: #f1f1f4;
+  --sheetedit-border: #e0e2e7;
+  --sheetedit-text: #1c1e21;
+  --sheetedit-muted: #5b6270;
+  --sheetedit-btn: #eceef2;
+  --sheetedit-btn-hover: #e2e5ea;
+  --sheetedit-btn-border: #d3d7de;
+  --sheetedit-accent: #4f46e5;
   --sheetedit-accent-fg: #ffffff;
-  --sheetedit-scrim: rgba(0, 0, 0, .45);
-  --sheetedit-shadow: rgba(0, 0, 0, .5);
-  --sheetedit-input-bg: #1c1f24;
-  --sheetedit-input-fg: #e7eaf0;
+  --sheetedit-accent-soft: #dfe3ff;
+  --sheetedit-scrim: rgba(0, 0, 0, .35);
+  --sheetedit-shadow: rgba(0, 0, 0, .2);
+  --sheetedit-input-bg: #ffffff;
+  --sheetedit-input-fg: #1c1e21;
 
   /* the grid canvas */
   --sheetedit-grid-bg: #e9e9ec;
@@ -51,7 +52,6 @@
   --sheetedit-head-border: #d4d4d8;
   --sheetedit-head-hover: #e3e3e8;
   --sheetedit-cell-focus-bg: #eef0ff;
-  --sheetedit-accent-soft: #dfe3ff;
   --sheetedit-zebra: #f6f6f8;
 
   /* in-cell affordances */
@@ -69,12 +69,12 @@
   --sheetedit-ok: #3fb950;
   --sheetedit-neutral: #c0c4cc;
   --sheetedit-faint: #8a8f98;
-  --sheetedit-error-bg: #7a2b2b;
-  --sheetedit-error-fg: #ffd7d7;
-  --sheetedit-error-text: #ff8a8a;
-  --sheetedit-notice-bg: #4a3410;
-  --sheetedit-notice-fg: #ffe2b0;
-  --sheetedit-notice-border: #6d4c16;
+  --sheetedit-error-bg: #fde8e8;
+  --sheetedit-error-fg: #8a2222;
+  --sheetedit-error-text: #c0392b;
+  --sheetedit-notice-bg: #fdf1d8;
+  --sheetedit-notice-fg: #6b4a10;
+  --sheetedit-notice-border: #e6cf9a;
   --sheetedit-pagebreak: #4f7bd6;
   --sheetedit-printarea: #2f6f3f;
 
@@ -82,6 +82,114 @@
   --sheetedit-overlay-bg: #ffffff;
   --sheetedit-overlay-border: #d0d0d6;
   --sheetedit-handle-border: #ffffff;
+}
+
+/*
+ * Dark. The same set, applied on the OS preference unless the host has forced light, and on an
+ * explicit data-theme="dark". The grid darkens with the chrome: a paper-white grid inside a dark
+ * app is the thing that actually looks broken.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sheetedit-bg: #1f2227;
+    --sheetedit-chrome: #2b2f36;
+    --sheetedit-chrome2: #23262c;
+    --sheetedit-border: #1c1f24;
+    --sheetedit-text: #e6e6e6;
+    --sheetedit-muted: #cfd3da;
+    --sheetedit-btn: #3a3f47;
+    --sheetedit-btn-hover: #454b54;
+    --sheetedit-btn-border: #4a4f57;
+    --sheetedit-accent: #6e7bff;
+    --sheetedit-accent-fg: #ffffff;
+    --sheetedit-accent-soft: #2f3560;
+    --sheetedit-scrim: rgba(0, 0, 0, .5);
+    --sheetedit-shadow: rgba(0, 0, 0, .55);
+    --sheetedit-input-bg: #1c1f24;
+    --sheetedit-input-fg: #e7eaf0;
+
+    --sheetedit-grid-bg: #16181c;
+    --sheetedit-cell-bg: #1e2126;
+    --sheetedit-cell-fg: #e3e6ea;
+    --sheetedit-gridline: #2f343b;
+    --sheetedit-head-bg: #262a31;
+    --sheetedit-head-fg: #b9c0cb;
+    --sheetedit-head-border: #343a43;
+    --sheetedit-head-hover: #2f353d;
+    --sheetedit-cell-focus-bg: #262c4a;
+    --sheetedit-zebra: #22252b;
+
+    --sheetedit-link: #7aa2ff;
+    --sheetedit-flat-bg: #2a2f36;
+    --sheetedit-flat-hover: #343a43;
+    --sheetedit-flat-fg: #b9c0cb;
+    --sheetedit-flat-fg-hover: #e6e6e6;
+
+    --sheetedit-neutral: #4a5059;
+    --sheetedit-faint: #8a8f98;
+    --sheetedit-error-bg: #7a2b2b;
+    --sheetedit-error-fg: #ffd7d7;
+    --sheetedit-error-text: #ff8a8a;
+    --sheetedit-notice-bg: #4a3410;
+    --sheetedit-notice-fg: #ffe2b0;
+    --sheetedit-notice-border: #6d4c16;
+    --sheetedit-pagebreak: #7aa2ff;
+    --sheetedit-printarea: #57a46b;
+
+    --sheetedit-overlay-bg: #22262c;
+    --sheetedit-overlay-border: #3a4049;
+    --sheetedit-handle-border: #e6e6e6;
+  }
+}
+:root[data-theme="dark"] {
+  --sheetedit-bg: #1f2227;
+  --sheetedit-chrome: #2b2f36;
+  --sheetedit-chrome2: #23262c;
+  --sheetedit-border: #1c1f24;
+  --sheetedit-text: #e6e6e6;
+  --sheetedit-muted: #cfd3da;
+  --sheetedit-btn: #3a3f47;
+  --sheetedit-btn-hover: #454b54;
+  --sheetedit-btn-border: #4a4f57;
+  --sheetedit-accent: #6e7bff;
+  --sheetedit-accent-fg: #ffffff;
+  --sheetedit-accent-soft: #2f3560;
+  --sheetedit-scrim: rgba(0, 0, 0, .5);
+  --sheetedit-shadow: rgba(0, 0, 0, .55);
+  --sheetedit-input-bg: #1c1f24;
+  --sheetedit-input-fg: #e7eaf0;
+
+  --sheetedit-grid-bg: #16181c;
+  --sheetedit-cell-bg: #1e2126;
+  --sheetedit-cell-fg: #e3e6ea;
+  --sheetedit-gridline: #2f343b;
+  --sheetedit-head-bg: #262a31;
+  --sheetedit-head-fg: #b9c0cb;
+  --sheetedit-head-border: #343a43;
+  --sheetedit-head-hover: #2f353d;
+  --sheetedit-cell-focus-bg: #262c4a;
+  --sheetedit-zebra: #22252b;
+
+  --sheetedit-link: #7aa2ff;
+  --sheetedit-flat-bg: #2a2f36;
+  --sheetedit-flat-hover: #343a43;
+  --sheetedit-flat-fg: #b9c0cb;
+  --sheetedit-flat-fg-hover: #e6e6e6;
+
+  --sheetedit-neutral: #4a5059;
+  --sheetedit-faint: #8a8f98;
+  --sheetedit-error-bg: #7a2b2b;
+  --sheetedit-error-fg: #ffd7d7;
+  --sheetedit-error-text: #ff8a8a;
+  --sheetedit-notice-bg: #4a3410;
+  --sheetedit-notice-fg: #ffe2b0;
+  --sheetedit-notice-border: #6d4c16;
+  --sheetedit-pagebreak: #7aa2ff;
+  --sheetedit-printarea: #57a46b;
+
+  --sheetedit-overlay-bg: #22262c;
+  --sheetedit-overlay-border: #3a4049;
+  --sheetedit-handle-border: #e6e6e6;
 }
 
 .sheetedit-wrap { position:relative; display:flex; flex-direction:column; height:100%; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); font:13px system-ui, sans-serif; }
@@ -734,3 +842,17 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
   position:absolute; visibility:hidden; left:-9999px; top:0;
   white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box; line-height:1.3; font:inherit;
 }
+
+/* --- theme picker -------------------------------------------------------- */
+.sheetedit-theme-list { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+.sheetedit-theme-opt {
+  display:flex; align-items:center; gap:10px; padding:7px 9px; border-radius:7px; cursor:pointer;
+  background:none; color:inherit; font:inherit; text-align:left;
+  border:1px solid var(--sheetedit-btn-border);
+}
+.sheetedit-theme-opt:hover { background:var(--sheetedit-btn); }
+.sheetedit-theme-opt.is-current { border-color:var(--sheetedit-accent); }
+.sheetedit-theme-name { flex:1 1 auto; }
+.sheetedit-theme-tag { font-size:11px; color:var(--sheetedit-muted); }
+.sheetedit-theme-swatches { display:flex; gap:2px; flex:none; }
+.sheetedit-theme-chip { width:13px; height:16px; border-radius:2px; border:1px solid var(--sheetedit-border); }

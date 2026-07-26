@@ -31,6 +31,8 @@ export interface WorkbookCapabilities {
   protection: boolean;
   /** Page setup for printing (author + write back; the grid shows breaks and the print area). */
   printSetup: boolean;
+  /** The workbook's own theme: its colour palette and heading / body fonts. */
+  themes: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -47,6 +49,7 @@ const NONE: WorkbookCapabilities = {
   freezePanes: false,
   protection: false,
   printSetup: false,
+  themes: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -63,6 +66,7 @@ const XLSX: WorkbookCapabilities = {
   freezePanes: true,
   protection: true,
   printSetup: true,
+  themes: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -88,6 +92,8 @@ const ODS: WorkbookCapabilities = {
   // ODF states page setup as a page-layout + master-page pair in styles.xml, reached through the
   // table style; print ranges, repeated rows and page breaks live in content.xml.
   printSetup: true,
+  // ODF has no theme palette that cells reference by index, so there is nothing to switch.
+  themes: false,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

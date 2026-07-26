@@ -22,6 +22,7 @@ import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from ".
 import { SHEETEDIT_CSS } from "./ui/styles.generated";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
+import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -1261,6 +1262,80 @@ export function createSheetEditor(
     });
   };
 
+  // --- workbook theme ----------------------------------------------------------
+  /**
+   * Switch the workbook's palette. Cells reference the theme by index, so this recolours every
+   * cell that used it and rewrites only theme1.xml; cells given an explicit colour are untouched.
+   */
+  const openThemeDialog = (): void => {
+    const modal = document.createElement("div");
+    modal.className = "sheetedit-modal";
+    const card = document.createElement("div");
+    card.className = "sheetedit-card";
+    const h = document.createElement("h3");
+    h.textContent = t("themeTitle");
+    card.appendChild(h);
+    const note = document.createElement("p");
+    note.className = "sheetedit-note";
+    note.textContent = t("themeNote");
+    card.appendChild(note);
+    const close = () => modal.remove();
+
+    const list = document.createElement("div");
+    list.className = "sheetedit-theme-list";
+    const current = wb.theme;
+    // The file's own theme leads the list when it is not one of the built-ins, so switching away
+    // and back is possible without losing it.
+    const known = BUILTIN_THEMES.some((th) => th.name === current?.name);
+    const options = current && !known ? [current, ...BUILTIN_THEMES] : BUILTIN_THEMES;
+    for (const theme of options) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className = "sheetedit-theme-opt";
+      opt.dataset.theme = theme.name;
+      if (theme.name === current?.name) opt.classList.add("is-current");
+      const name = document.createElement("span");
+      name.className = "sheetedit-theme-name";
+      name.textContent = theme.name;
+      opt.appendChild(name);
+      if (theme.name === current?.name) {
+        const tag = document.createElement("span");
+        tag.className = "sheetedit-theme-tag";
+        tag.textContent = t("themeCurrent");
+        opt.appendChild(tag);
+      }
+      // The six accents are what a palette is recognised by.
+      const chips = document.createElement("span");
+      chips.className = "sheetedit-theme-swatches";
+      for (const slot of ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"] as const) {
+        const chip = document.createElement("span");
+        chip.className = "sheetedit-theme-chip";
+        chip.style.background = theme.colors[slot]; // the palette itself: data, not styling
+        chips.appendChild(chip);
+      }
+      opt.appendChild(chips);
+      opt.addEventListener("click", () => {
+        close();
+        setWorkbookTheme(wb, { ...theme, colors: { ...theme.colors } });
+        mark();
+        renderGrid();
+      });
+      list.appendChild(opt);
+    }
+    card.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "sheetedit-actions";
+    const cancel = document.createElement("button");
+    cancel.className = "sheetedit-dlg-btn";
+    cancel.textContent = t("chartCancel");
+    cancel.addEventListener("click", close);
+    actions.appendChild(cancel);
+    card.appendChild(actions);
+    modal.appendChild(card);
+    wrap.appendChild(modal);
+    modal.addEventListener("mousedown", (e) => { if (e.target === modal) close(); });
+  };
+
   // --- print setup -------------------------------------------------------------
   /** Change the active sheet's page setup and flag it for the writer. */
   const updatePrint = (change: (p: PrintSetup) => void): void => {
@@ -2099,6 +2174,10 @@ export function createSheetEditor(
       setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
     });
     trailingIcons.push(freezeBtn);
+  }
+  if (caps.themes) {
+    const THEME_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12 3 3 0 0 0 0-6 3 3 0 0 1 0-6z"/></svg>`;
+    trailingIcons.push(tbIcon(THEME_ICON, t("themeTitle"), () => openThemeDialog()));
   }
   if (caps.printSetup) {
     const PRINT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5V2.5h7v4"/><rect x="2" y="6.5" width="12" height="5" rx="1"/><path d="M4.5 10h7v3.5h-7z"/></svg>`;

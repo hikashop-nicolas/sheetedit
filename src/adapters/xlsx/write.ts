@@ -10,6 +10,7 @@ import { writeXlsxOutlines } from "./outline-write";
 import { writeXlsxFreezes } from "./freeze-write";
 import { writeXlsxProtections } from "./protection-write";
 import { writeXlsxPrintSetups } from "./print-write";
+import { writeXlsxTheme } from "./theme-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -733,6 +734,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxFreezes(wb); // persist frozen panes
   writeXlsxProtections(wb); // persist sheet / workbook protection
   writeXlsxPrintSetups(wb); // persist page setup + the print area / titles defined names
+  writeXlsxTheme(wb); // persist a theme switch into xl/theme/theme1.xml
   for (const sheet of wb.sheets) {
     if (!sheet.doc || !sheet.sheetData) continue;
     // Typed dates/percents adopted a number format in the model; persist it to
