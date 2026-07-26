@@ -240,10 +240,19 @@
   overflow:hidden; pointer-events:none; line-height:1.3; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
+/* Spill: text longer than its column, drawn over the empty cells beside it. The overlay is
+   pulled past the cell's own edges by the inline left/right the renderer works out. */
+.sheetedit-table td.has-spill { position:relative; }
+.sheetedit-table td.has-spill:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-spill .sheetedit-cellspill {
+  position:absolute; top:0; bottom:0; z-index:1; padding:0 8px; display:flex; align-items:center;
+  white-space:pre; overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
+}
+.sheetedit-table td.has-spill:focus-within .sheetedit-cellspill { display:none; }
 .sheetedit-table td.has-rich { position:relative; }
 .sheetedit-table td.has-rich:not(:focus-within) input { color:transparent !important; }
 .sheetedit-table td.has-rich .sheetedit-cellrich {
-  position:absolute; inset:0; padding:1px 8px; display:flex; align-items:center; white-space:pre;
+  position:absolute; inset:0; z-index:1; padding:1px 8px; display:flex; align-items:center; white-space:pre;
   overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-table td.has-rich:focus-within .sheetedit-cellrich { display:none; }
@@ -854,6 +863,11 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-measure {
   position:absolute; visibility:hidden; left:-9999px; top:0;
   white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box; line-height:1.3; font:inherit;
+}
+/* The same twin, on one line, measured to find whether a text is too wide for its column. */
+.sheetedit-measure1 {
+  position:absolute; visibility:hidden; left:-9999px; top:0;
+  white-space:pre; padding:0; line-height:1.3; font:inherit;
 }
 
 /* --- theme picker -------------------------------------------------------- */

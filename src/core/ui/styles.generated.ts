@@ -186,10 +186,17 @@ position:absolute; inset:0; padding:3px 8px; white-space:pre-wrap; word-break:br
 overflow:hidden; pointer-events:none; line-height:1.3; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
+.sheetedit-table td.has-spill { position:relative; }
+.sheetedit-table td.has-spill:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-spill .sheetedit-cellspill {
+position:absolute; top:0; bottom:0; z-index:1; padding:0 8px; display:flex; align-items:center;
+white-space:pre; overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
+}
+.sheetedit-table td.has-spill:focus-within .sheetedit-cellspill { display:none; }
 .sheetedit-table td.has-rich { position:relative; }
 .sheetedit-table td.has-rich:not(:focus-within) input { color:transparent !important; }
 .sheetedit-table td.has-rich .sheetedit-cellrich {
-position:absolute; inset:0; padding:1px 8px; display:flex; align-items:center; white-space:pre;
+position:absolute; inset:0; z-index:1; padding:1px 8px; display:flex; align-items:center; white-space:pre;
 overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-table td.has-rich:focus-within .sheetedit-cellrich { display:none; }
@@ -729,6 +736,10 @@ content:""; position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.35);
 .sheetedit-measure {
 position:absolute; visibility:hidden; left:-9999px; top:0;
 white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box; line-height:1.3; font:inherit;
+}
+.sheetedit-measure1 {
+position:absolute; visibility:hidden; left:-9999px; top:0;
+white-space:pre; padding:0; line-height:1.3; font:inherit;
 }
 .sheetedit-theme-list { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
 .sheetedit-theme-opt {

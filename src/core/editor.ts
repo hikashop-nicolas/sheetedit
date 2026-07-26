@@ -1860,7 +1860,14 @@ export function createSheetEditor(
     // A wrap cell's new text may change its row height; a validated cell may gain/lose its
     // invalid flag; a conditional-format edit can recolour the whole range; any of these needs a
     // re-render. Otherwise just refresh displays.
-    if (getCell(sheet, r, c)?.cellStyle?.wrap || dvForCell(sheet, r, c) || sheet.condFormats?.length) renderGrid();
+    if (
+      getCell(sheet, r, c)?.cellStyle?.wrap ||
+      dvForCell(sheet, r, c) ||
+      sheet.condFormats?.length ||
+      spilledRows.has(r) || // a neighbour's spill has to stop at the text just typed
+      spillOf(sheet, getCell(sheet, r, c), r, c)
+    )
+      renderGrid();
     else refreshDisplays(sheet);
     if (sheet.charts?.length) chartLayer.update(); // live-update any chart reading this cell
     fireSheetChange({ r1: r, c1: c, r2: r, c2: c });
@@ -2162,11 +2169,13 @@ export function createSheetEditor(
   const wrapH = new Map<number, number>();
   let measureEl: HTMLElement | null = null;
   const measureWrap = (text: string, widthPx: number, cs: CellStyle | undefined): number => {
+    // Re-attach as well as create: a render clears the grid, which detaches the twin, and a
+    // detached element measures as zero.
     if (!measureEl) {
       measureEl = document.createElement("div");
       measureEl.className = "sheetedit-measure";
-      gridScroll.appendChild(measureEl);
     }
+    if (!measureEl.isConnected) gridScroll.appendChild(measureEl);
     measureEl.style.width = `${widthPx}px`;
     measureEl.style.fontWeight = cs?.bold ? "700" : "";
     measureEl.style.fontStyle = cs?.italic ? "italic" : "";
@@ -2175,6 +2184,72 @@ export function createSheetEditor(
     measureEl.textContent = text || " ";
     return measureEl.offsetHeight;
   };
+  // The width one line of a cell's text wants, for the spill test below.
+  let measureLineEl: HTMLElement | null = null;
+  const measureLine = (text: string, f: { bold?: boolean; italic?: boolean; size?: number; font?: string }): number => {
+    if (!measureLineEl) {
+      measureLineEl = document.createElement("div");
+      measureLineEl.className = "sheetedit-measure1";
+    }
+    if (!measureLineEl.isConnected) gridScroll.appendChild(measureLineEl);
+    measureLineEl.style.fontWeight = f.bold ? "700" : "";
+    measureLineEl.style.fontStyle = f.italic ? "italic" : "";
+    measureLineEl.style.fontSize = f.size ? `${f.size}pt` : "";
+    measureLineEl.style.fontFamily = f.font ?? "";
+    measureLineEl.textContent = text;
+    return measureLineEl.offsetWidth;
+  };
+  /** What a cell's text measures across, runs and the editor's own side padding included. */
+  const measureCell = (cell: Cell): number => {
+    const cs = cell.cellStyle;
+    const pad = 16; // the editor's 8px each side
+    if (cell.richRuns?.length)
+      return pad + cell.richRuns.reduce((a, run) => a + measureLine(run.text, { bold: run.bold ?? cs?.bold, italic: run.italic ?? cs?.italic, size: run.size ?? cs?.fontSize, font: run.font ?? cs?.fontFamily }), 0);
+    return pad + measureLine(cellDisplay(cell), { bold: cs?.bold, italic: cs?.italic, size: cs?.fontSize, font: cs?.fontFamily });
+  };
+
+  /**
+   * How far a too-long text may bleed into its neighbours, in px each way, as Excel does it:
+   * text spills, numbers do not, and a spill stops at the first cell that holds anything. The
+   * direction follows the alignment, so a right-aligned label spills left over its own label
+   * column. Without this a heading in a narrow column simply disappears at the gridline.
+   */
+  const SPILL_MAX_COLS = 64;
+  const spillOf = (sheet: Sheet, cell: Cell | undefined, r: number, c: number): { left: number; right: number } | undefined => {
+    if (!cell || cell.kind === "n" || cell.cellStyle?.wrap || cell.phonetic?.length) return undefined;
+    if (spanAtMap.has(key(r, c)) || coveredSet.has(key(r, c))) return undefined;
+    if (!cellDisplay(cell).trim()) return undefined;
+    const over = measureCell(cell) - effColW(sheet, c);
+    if (over <= 0) return undefined;
+    const free = (dir: -1 | 1, budget: number): number => {
+      let got = 0;
+      for (let n = c + dir, i = 0; got < budget && n >= 1 && i < SPILL_MAX_COLS; n += dir, i++) {
+        if (coveredSet.has(key(r, n)) || spanAtMap.has(key(r, n))) break;
+        const nb = getCell(sheet, r, n);
+        if (nb && cellDisplay(nb) !== "") break;
+        got += effColW(sheet, n);
+      }
+      return Math.min(got, budget);
+    };
+    const align = cell.cellStyle?.align ?? "left";
+    const out =
+      align === "right" ? { left: free(-1, over), right: 0 }
+      : align === "center" ? { left: free(-1, over / 2), right: free(1, over / 2) }
+      : { left: 0, right: free(1, over) };
+    return out.left > 0 || out.right > 0 ? out : undefined;
+  };
+
+  /** Rows currently showing a spill: an edit in one of them has to re-render, since a spill
+      depends on whether the neighbours are empty and a display refresh would not notice. */
+  const spilledRows = new Set<number>();
+  /** Widen a display overlay past its own cell by what the spill allows. */
+  const applySpill = (ov: HTMLElement, r: number, spill: { left: number; right: number } | undefined): void => {
+    if (!spill) return;
+    if (spill.left > 0) ov.style.left = `${-spill.left}px`;
+    if (spill.right > 0) ov.style.right = `${-spill.right}px`;
+    spilledRows.add(r);
+  };
+
   const computeWrapHeights = (sheet: Sheet): void => {
     wrapH.clear();
     for (const cell of sheet.cells.values()) {
@@ -3189,6 +3264,7 @@ export function createSheetEditor(
           ov.appendChild(sp);
         }
         if (cell.cellStyle?.align) ov.style.textAlign = cell.cellStyle.align;
+        applySpill(ov, r, spillOf(sheet, cell, r, c));
         td.appendChild(ov);
       } else if (cell?.phonetic?.length) {
         // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
@@ -3211,6 +3287,24 @@ export function createSheetEditor(
         if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
         if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
         td.appendChild(ov);
+      } else {
+        const spill = spillOf(sheet, cell, r, c);
+        if (spill) {
+          td.classList.add("has-spill");
+          const ov = document.createElement("div");
+          ov.className = "sheetedit-cellspill";
+          ov.setAttribute("aria-hidden", "true");
+          ov.textContent = cellDisplay(cell!);
+          const cs = cell?.cellStyle;
+          if (cs?.align) ov.style.textAlign = cs.align;
+          if (cs?.color) ov.style.color = cs.color;
+          if (cs?.bold) ov.style.fontWeight = "700";
+          if (cs?.italic) ov.style.fontStyle = "italic";
+          if (cs?.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+          if (cs?.fontFamily) ov.style.fontFamily = cs.fontFamily;
+          applySpill(ov, r, spill);
+          td.appendChild(ov);
+        }
       }
       cur.inputs.set(ki, input);
       return td;
@@ -3819,6 +3913,7 @@ export function createSheetEditor(
     printAreas = sheet.printSetup?.printArea ?? [];
     computeWrapHeights(sheet); // measure wrap cells so rows grow to fit
     rebuildSizeIndexes(sheet);
+    spilledRows.clear();
 
     // Merged ranges: the top-left cell spans; covered cells are not rendered.
     coveredSet = new Set<string>();
