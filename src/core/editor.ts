@@ -24,6 +24,7 @@ import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked,
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
+import { setupControlLayer } from "./ui/control-layer";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -2128,6 +2129,53 @@ export function createSheetEditor(
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     onChange: (sl) => { applySlicer(sl); mark(); slicerLayer.refresh(); },
   });
+  /** "$D$1:$D$3" (optionally sheet-qualified) -> a 1-based inclusive range. */
+  const parseRangeRefLocal = (ref: string): { r1: number; c1: number; r2: number; c2: number } | null => {
+    const body = (ref.includes("!") ? ref.slice(ref.lastIndexOf("!") + 1) : ref).replace(/\$/g, "");
+    const [a, b] = body.split(":");
+    const p1 = parseA1Ref(a ?? "");
+    const p2 = b ? parseA1Ref(b) : p1;
+    if (!p1 || !p2) return null;
+    return { r1: Math.min(p1.row, p2.row), c1: Math.min(p1.col, p2.col), r2: Math.max(p1.row, p2.row), c2: Math.max(p1.col, p2.col) };
+  };
+
+  // Form controls. A control exists to drive its linked cell, so a change writes there and
+  // recalculates, exactly as it would in Excel.
+  // Only xlsx models controls this way; ODF keeps them in office:forms, which is preserved rather
+  // than rendered, so the layer is not built at all for other formats.
+  const controlLayer = setupControlLayer({
+    wrap,
+    panes: () => panes.map((p) => ({ el: p.scrollEl, header: p.header, rowHeader: p.rowHeader })),
+    getSheet: () => wb.sheets[active],
+    geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
+    inertTitle: t("ctrlMacroInert"),
+    itemsFor: (ctl) => {
+      const sheet = wb.sheets[active];
+      const rng = ctl.sourceRange ? parseRangeRefLocal(ctl.sourceRange) : null;
+      if (!sheet || !rng) return [];
+      const out: string[] = [];
+      for (let r = rng.r1; r <= rng.r2; r++)
+        for (let c = rng.c1; c <= rng.c2; c++) out.push(displayValue(sheet, r, c));
+      return out;
+    },
+    onChange: (ctl) => {
+      const sheet = wb.sheets[active];
+      const at = ctl.linkedCell ? parseA1Ref(ctl.linkedCell.replace(/\$/g, "").split("!").pop() ?? "") : null;
+      // A control with no linked cell still remembers its own state; there is just nowhere to put it.
+      if (sheet && at) {
+        const value = ctl.kind === "checkbox" || ctl.kind === "radio"
+          ? (ctl.checked ? "TRUE" : "FALSE")
+          : ctl.kind === "dropdown" || ctl.kind === "list"
+            ? String(ctl.selected ?? 0)
+            : String(ctl.value ?? 0);
+        recordCells([{ r: at.row, c: at.col }], () => setCellInput(sheet, at.row, at.col, value));
+        recalc(wb);
+      }
+      mark();
+      renderGrid();
+    },
+  });
+
   // The row-outline gutter, left of the row numbers.
   const outlineLayer = setupOutlineLayer({
     wrap,
@@ -3432,6 +3480,7 @@ export function createSheetEditor(
     imageLayer.refresh();
     shapeLayer.refresh();
     slicerLayer.refresh();
+    if (caps.formControls) controlLayer.refresh();
     timelineLayer.refresh();
     outlineLayer.refresh();
     paneDividers.refresh();
@@ -3629,6 +3678,7 @@ export function createSheetEditor(
       imageLayer.teardown();
       shapeLayer.teardown();
       slicerLayer.teardown();
+      controlLayer.teardown();
       timelineLayer.teardown();
       outlineLayer.teardown();
       paneDividers.teardown();

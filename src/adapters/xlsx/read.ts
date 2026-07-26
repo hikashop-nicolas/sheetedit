@@ -13,6 +13,7 @@ import { isDateFmt, isoToSerial } from "../../core/dates";
 import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtection } from "../../core/protection";
 import type { ThemeColorRef } from "../../core/theme";
 import { readXlsxTheme } from "./theme-read";
+import { readXlsxControls } from "./control-read";
 import { readXlsxPrintNames, readXlsxPrintSetup } from "./print-read";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
@@ -508,6 +509,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   readSlicers(wb, files); // after pivots: a slicer borrows its pivot cache to label items
   wb.theme = readXlsxTheme(files["xl/theme/theme1.xml"]);
   wb.themeStyles = styles.xfStyles; // the resolved pool, so a theme switch can re-resolve it
+  readXlsxControls(wb, files); // form controls: the worksheet <controls>, ctrlProps and the VML
   readXlsxPrintNames(wb, wbDoc); // sheet-scoped names, so every sheet must already be in place
   readXlsxSlicerStyles(wb, files, theme); // user-defined slicer styles, so the overlay can colour by name
   readTimelines(wb, files);

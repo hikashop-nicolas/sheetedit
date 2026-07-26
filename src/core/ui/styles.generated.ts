@@ -764,4 +764,26 @@ border:1px solid var(--sheetedit-print-rule); background:var(--sheetedit-print-h
 body > *:not(.sheetedit-print) { display:none !important; }
 .sheetedit-print { position:static !important; left:auto !important; }
 .sheetedit-print-page { break-after:page; }
+}
+.sheetedit-ctrllayer { position:absolute; overflow:hidden; pointer-events:none; z-index:14; }
+.sheetedit-ctrllayer-inner { position:absolute; left:0; top:0; }
+.sheetedit-ctrlbox {
+position:absolute; pointer-events:auto; display:flex; align-items:center; overflow:hidden;
+font:12px system-ui, sans-serif; color:var(--sheetedit-cell-fg);
+}
+.sheetedit-ctrlbox > * { max-width:100%; }
+.sheetedit-ctrl-check { display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
+.sheetedit-ctrl-check input { margin:0; cursor:pointer; }
+.sheetedit-ctrl-select, .sheetedit-ctrl-num {
+font:inherit; width:100%; box-sizing:border-box; padding:1px 4px; border-radius:3px;
+background:var(--sheetedit-cell-bg); color:var(--sheetedit-cell-fg); border:1px solid var(--sheetedit-head-border);
+}
+.sheetedit-ctrl-button {
+font:inherit; width:100%; height:100%; border-radius:4px; cursor:not-allowed;
+background:var(--sheetedit-flat-bg); color:var(--sheetedit-flat-fg); border:1px solid var(--sheetedit-head-border);
+}
+.sheetedit-ctrl-label { white-space:nowrap; }
+.sheetedit-ctrl-group {
+width:100%; height:100%; box-sizing:border-box; padding:1px 4px;
+border:1px solid var(--sheetedit-head-border); border-radius:3px; color:var(--sheetedit-head-fg);
 }`;

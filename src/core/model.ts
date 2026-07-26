@@ -300,6 +300,9 @@ export interface Sheet {
   slicers?: SheetSlicer[];
   /** Timelines (date-range pivot filters) on this sheet; rendered as a range overlay. */
   timelines?: SheetTimeline[];
+  /** Form controls (checkboxes, dropdowns, spinners, buttons) over this sheet; rendered as an
+      interactive overlay, with a state change written back into their parts. */
+  controls?: SheetControl[];
   /** Sparklines (in-cell mini charts) hosted on this sheet; rendered in the host cell, preserved. */
   sparklines?: { type: "line" | "column" | "stacked"; color: string; negColor?: string; host: { r: number; c: number }; dataRef: string }[];
   /** Frozen panes: count of frozen leading rows / columns (from the file's <pane> /
@@ -435,6 +438,42 @@ export interface SheetImage {
   replaceBytes?: Uint8Array;
   replaceExt?: string;
   /** Moved/resized/replaced in the UI -> written back; otherwise the parts stay verbatim. */
+  dirty?: boolean;
+}
+
+/**
+ * A form control: the checkboxes, dropdowns, spinners and buttons a workbook can put over the grid.
+ * Their point is the LINKED CELL: a checkbox writes TRUE/FALSE into it, a dropdown writes the
+ * 1-based index of the chosen item, a spinner writes its number. Formulas read that cell, so a
+ * control is an input device for the sheet rather than decoration.
+ *
+ * xlsx keeps the state in a ctrlProps part and mirrors it in the legacy VML drawing that positions
+ * the control; the VML is the only source for older files, so both are read and both written back.
+ */
+export interface SheetControl {
+  /** What the control is. Anything unrecognised is rendered as a label so it is never invisible. */
+  kind: "checkbox" | "radio" | "dropdown" | "list" | "spin" | "scroll" | "button" | "label" | "groupBox";
+  name: string;
+  /** The text drawn on the control (from the VML textbox). */
+  label?: string;
+  /** A1 reference of the cell this control drives ("$B$1"), when it is linked to one. */
+  linkedCell?: string;
+  /** List controls: the range the items come from, and the 1-based selection (0 = nothing). */
+  sourceRange?: string;
+  selected?: number;
+  /** Checkbox / radio state. */
+  checked?: boolean;
+  /** Spinner / scrollbar value and bounds. */
+  value?: number;
+  min?: number;
+  max?: number;
+  inc?: number;
+  anchor?: import("./chart-model").ChartAnchor;
+  /** Part paths + shape id, so a state change can be written back into both places. */
+  propsPath?: string;
+  vmlPath?: string;
+  shapeId?: string;
+  /** The user changed the state -> the parts are rewritten on save. */
   dirty?: boolean;
 }
 

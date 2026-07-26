@@ -270,7 +270,16 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
   so they can never reach a scrollbar. The same mismatch made a fresh split show a sliver of the row
   above, so the top viewport is trimmed to its last row's rendered bottom and the lower one is
   snapped to the first row past the boundary, once, at creation.
-- **Preserved-only, not authored yet**: form controls / ActiveX.
+- **Preserved-only**: ActiveX (Windows COM in a .bin part; carried through a save, never rendered).
+- **Form controls** are read, rendered and interactive: the linked cell is the point, so a checkbox
+  writes TRUE/FALSE there, a dropdown the 1-based index, a spinner its value, each triggering a
+  recalc. State is read from ctrlProps with the VML as fallback (files predating ctrlProps have only
+  the VML) and written back to BOTH, since an older reader looks only at the VML. Buttons are drawn
+  disabled: they run macros. Creating new controls is not implemented.
+  - The VML shape id is "_x0000_s1025" and the worksheet's @shapeId is the trailing number, so it
+    must be matched from the END; a lazy match from the start stops at the first underscore.
+  - LibreOffice validates the structure but NOT the checkbox state: a file that was never checked
+    still reads back as checked, so state fidelity is verified by our own round-trip.
 - **Undo covers the sheet-level settings** (protection, page setup, panes, outline grouping) and the
   workbook theme, not just cell edits. A cell edit records its own fields; these live on the sheet,
   so the step carries a before/after snapshot instead, via the history's existing undoExtra /

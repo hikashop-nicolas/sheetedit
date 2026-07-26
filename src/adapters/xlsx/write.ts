@@ -11,6 +11,7 @@ import { writeXlsxFreezes } from "./freeze-write";
 import { writeXlsxProtections } from "./protection-write";
 import { writeXlsxPrintSetups } from "./print-write";
 import { writeXlsxTheme } from "./theme-write";
+import { writeXlsxControls } from "./control-write";
 import { setXlsxCellNumFmt } from "./styles";
 // ---------------------------------------------------------------------------
 // xlsx write: surgical cell/layout writers and the save pass
@@ -729,6 +730,7 @@ export function writeXlsx(wb: Workbook): void {
   writeXlsxImages(wb); // persist moved/resized pictures into their drawing parts
   writeXlsxShapes(wb); // persist authored/moved/resized/restyled shapes into their drawing parts
   writeXlsxSlicers(wb); // persist slicer selections into their cache parts
+  writeXlsxControls(wb); // persist form-control state into ctrlProps and the mirrored VML
   writeXlsxTimelines(wb); // persist timeline ranges into their cache parts
   writeXlsxOutlines(wb); // persist row/column grouping levels
   writeXlsxFreezes(wb); // persist frozen panes

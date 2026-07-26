@@ -33,6 +33,8 @@ export interface WorkbookCapabilities {
   printSetup: boolean;
   /** The workbook's own theme: its colour palette and heading / body fonts. */
   themes: boolean;
+  /** Form controls (checkbox, dropdown, spinner) rendered and driving their linked cell. */
+  formControls: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -50,6 +52,7 @@ const NONE: WorkbookCapabilities = {
   protection: false,
   printSetup: false,
   themes: false,
+  formControls: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -67,6 +70,7 @@ const XLSX: WorkbookCapabilities = {
   protection: true,
   printSetup: true,
   themes: true,
+  formControls: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -94,6 +98,9 @@ const ODS: WorkbookCapabilities = {
   printSetup: true,
   // ODF has no theme palette that cells reference by index, so there is nothing to switch.
   themes: false,
+  // ODF keeps controls in office:forms with a draw:control frame, a different model that is
+  // preserved rather than rendered.
+  formControls: false,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

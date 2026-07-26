@@ -197,6 +197,31 @@ their references to the palette rather than the colours it resolved to.
 Row and column insert/delete clear the history, because they shift every recorded position and
 steps from before them cannot replay safely.
 
+## Form controls
+
+The checkboxes, dropdowns, spinners and buttons a workbook can put over the grid are read, drawn and
+made to work. Their point is the **linked cell**: a checkbox writes TRUE/FALSE into it, a dropdown
+writes the 1-based index of the chosen item, a spinner writes its number, and formulas read that
+cell. So ticking a box on a rendered sheet recalculates it, the way it would in Excel.
+
+A dropdown's items come from its source range, so it stays in step with the sheet. A **button** runs
+a macro, which a browser cannot and should not execute, so it is drawn disabled with a tooltip
+saying why rather than looking live and doing nothing. Labels and group boxes are drawn as-is.
+
+State lives in two places in an `.xlsx` and both are read and written: the modern `ctrlProps` part
+and the legacy VML drawing that positions the control. Files predating `ctrlProps` carry everything
+in the VML, so it is the fallback rather than an afterthought, and a state change is mirrored into
+both so an older reader sees it too. Everything else in either part is left untouched.
+
+**ActiveX controls are preserved, not rendered.** They are Windows COM objects in a `.bin` part;
+there is no honest way to run one in a browser, so they are carried through a save unchanged.
+
+`.ods` keeps controls in `office:forms` with a `draw:control` frame, a different model that is
+preserved rather than rendered. Verified against LibreOffice, which reads the kind, label, linked
+cell and source range back from what we write; its own import does not carry a checkbox's checked
+state (a file that was never checked reads back as checked), so that part is verified by sheetedit's
+own round-trip rather than through it.
+
 ## Workbook themes
 
 A workbook's theme is a named palette of twelve colours plus a heading and a body font. Cells do not
