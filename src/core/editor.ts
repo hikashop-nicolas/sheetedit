@@ -2181,24 +2181,33 @@ export function createSheetEditor(
       if (!cell.cellStyle?.wrap || cell.value === "") continue;
       if (sheet.hiddenRows?.has(cell.row) || sheet.hiddenCols?.has(cell.col)) continue;
       const h = measureWrap(cellDisplay(cell) ?? cell.value, effColW(sheet, cell.col), cell.cellStyle) + 2; // gridline buffer
-      if (h > ROW_H) wrapH.set(cell.row, Math.max(wrapH.get(cell.row) ?? 0, h));
+      if (h > (sheet.defaultRowHeight ?? ROW_H)) wrapH.set(cell.row, Math.max(wrapH.get(cell.row) ?? 0, h));
     }
   };
 
   // Effective row height / column width: a hidden line collapses to zero; otherwise the
   // file's custom size, a wrap-grown height, or the default. Drive the size index and the DOM.
+  // A sheet may set its own default size for unsized lines; baseRowH/baseColW are that default
+  // for the sheet on screen, and the uniform stride the virtual offsets are built on.
+  let baseRowH = ROW_H;
+  let baseColW = COL_W;
   const effRowH = (sheet: Sheet, r: number): number =>
-    sheet.hiddenRows?.has(r) || sheet.filterHidden?.has(r) ? 0 : Math.max(sheet.rowHeights?.get(r) ?? ROW_H, wrapH.get(r) ?? 0);
-  const effColW = (sheet: Sheet, c: number): number => (sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? COL_W));
+    sheet.hiddenRows?.has(r) || sheet.filterHidden?.has(r)
+      ? 0
+      : Math.max(sheet.rowHeights?.get(r) ?? sheet.defaultRowHeight ?? ROW_H, wrapH.get(r) ?? 0);
+  const effColW = (sheet: Sheet, c: number): number =>
+    sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? sheet.defaultColWidth ?? COL_W);
   const rowShown = (sheet: Sheet, r: number): boolean => !sheet.hiddenRows?.has(r) && !sheet.filterHidden?.has(r);
 
   const rebuildSizeIndexes = (sheet: Sheet) => {
+    baseRowH = sheet.defaultRowHeight ?? ROW_H;
+    baseColW = sheet.defaultColWidth ?? COL_W;
     heightRows = [...new Set([...(sheet.rowHeights?.keys() ?? []), ...(sheet.hiddenRows ?? []), ...(sheet.filterHidden ?? []), ...wrapH.keys()])].sort((a, b) => a - b);
     heightPrefix = [0];
-    for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (effRowH(sheet, r) - ROW_H));
+    for (const r of heightRows) heightPrefix.push(heightPrefix[heightPrefix.length - 1]! + (effRowH(sheet, r) - baseRowH));
     widthCols = [...new Set([...(sheet.colWidths?.keys() ?? []), ...(sheet.hiddenCols ?? [])])].sort((a, b) => a - b);
     widthPrefix = [0];
-    for (const c of widthCols) widthPrefix.push(widthPrefix[widthPrefix.length - 1]! + (effColW(sheet, c) - COL_W));
+    for (const c of widthCols) widthPrefix.push(widthPrefix[widthPrefix.length - 1]! + (effColW(sheet, c) - baseColW));
   };
   const sumBefore = (lines: number[], prefix: number[], i: number): number => {
     let lo = 0;
@@ -2210,8 +2219,8 @@ export function createSheetEditor(
     }
     return prefix[lo]!;
   };
-  const yOfRow = (r: number): number => (r - 1) * ROW_H + sumBefore(heightRows, heightPrefix, r);
-  const xOfCol = (c: number): number => (c - 1) * COL_W + sumBefore(widthCols, widthPrefix, c);
+  const yOfRow = (r: number): number => (r - 1) * baseRowH + sumBefore(heightRows, heightPrefix, r);
+  const xOfCol = (c: number): number => (c - 1) * baseColW + sumBefore(widthCols, widthPrefix, c);
   const lineAt = (pos: number, total: number, ofLine: (i: number) => number): number => {
     let lo = 1;
     let hi = Math.max(1, total);
@@ -3249,7 +3258,7 @@ export function createSheetEditor(
     rn.addEventListener("contextmenu", (e) => openLineMenu(e, "row", r));
     const rgrip = document.createElement("div");
     rgrip.className = "sheetedit-rowgrip";
-    rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, sheet.rowHeights?.get(r) ?? ROW_H));
+    rgrip.addEventListener("pointerdown", (e) => startRowResize(e, r, tr, sheet.rowHeights?.get(r) ?? baseRowH));
     rn.appendChild(rgrip);
     if (frozenRow) {
       rn.classList.add("frz");
@@ -3402,7 +3411,7 @@ export function createSheetEditor(
       th.addEventListener("contextmenu", (e) => openLineMenu(e, "col", c));
       const grip = document.createElement("div");
       grip.className = "sheetedit-colgrip";
-      grip.addEventListener("pointerdown", (e) => startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? COL_W));
+      grip.addEventListener("pointerdown", (e) => startColResize(e, c, colEl, sheet.colWidths?.get(c) ?? baseColW));
       th.appendChild(grip);
       return th;
     };

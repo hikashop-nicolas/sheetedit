@@ -270,8 +270,15 @@ export interface Sheet {
   maxCol: number;
   /** 1-based column -> width in px (from the file's <cols>), when specified. */
   colWidths?: Map<number, number>;
+  /** Pixels per character unit for this sheet's column widths: the workbook normal font's
+      maximum digit width. Absent = Calibri 11's 7. */
+  maxDigitWidth?: number;
   /** 1-based row -> height in px (from the file's <row ht>), when specified. */
   rowHeights?: Map<number, number>;
+  /** The sheet's own defaults for rows/columns with no explicit size, in px (xlsx
+      <sheetFormatPr defaultRowHeight/defaultColWidth>). Absent = the grid's own. */
+  defaultRowHeight?: number;
+  defaultColWidth?: number;
   /** 1-based rows / columns hidden in the file (<row hidden> / <col hidden> / ODF
       table:visibility). Rendered collapsed (zero size); preserved on save. */
   hiddenRows?: Set<number>;

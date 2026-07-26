@@ -123,6 +123,7 @@ export interface XlsxStyles {
   customFmt: Map<number, string>; // numFmtId -> format code (custom, id >= 164)
   xfNumFmtIds: number[]; // cellXfs index (the cell @s) -> numFmtId
   xfStyles: (CellStyle | undefined)[]; // cellXfs index (the cell @s) -> resolved style
+  normalFontSize?: number; // <fonts>' first entry, which is the Normal style's font
 }
 
 // ARGB ("FFRRGGBB" or "RRGGBB") -> CSS "#rrggbb".
@@ -219,6 +220,16 @@ export function themeRefOf(el: Element | undefined): ThemeColorRef | undefined {
   const tint = Number(el!.getAttribute("tint") || "0");
   return tint ? { index, tint } : { index };
 }
+
+/** The maximum digit width, in px at 96dpi, of the workbook's normal font at `pt`. Calibri 11
+    gives Excel's familiar 7; a workbook whose Normal style is 14pt gets 9, and its columns are
+    that much wider, so the number cannot be hardcoded. */
+export const maxDigitWidth = (pt: number | undefined): number =>
+  Math.max(1, Math.round(((pt || 11) * 4) / 3 / 2));
+
+/** ECMA-376's character-units to pixels. `mdw` is the normal font's maximum digit width. */
+export const colWidthToPx = (width: number, mdw = 7): number =>
+  Math.trunc(((256 * width + Math.trunc(128 / mdw)) / 256) * mdw);
 
 export function readXlsxStyles(doc: Document | undefined, theme: string[]): XlsxStyles {
   const customFmt = new Map<number, string>();
@@ -317,7 +328,7 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
       xfStyles.push(Object.keys(st).length ? st : undefined);
     }
   }
-  return { customFmt, xfNumFmtIds, xfStyles };
+  return { customFmt, xfNumFmtIds, xfStyles, normalFontSize: fonts[0]?.size };
 }
 
 /** Resolve a cell's number format (code or built-in id), or undefined for General. */
@@ -368,6 +379,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   wb.stylesDoc = files["xl/styles.xml"] ? parseXmlOpt(files["xl/styles.xml"]) : undefined;
   const styles = readXlsxStyles(wb.stylesDoc, theme);
   const dxfs = parseDxfs(wb.stylesDoc, theme);
+  const mdw = maxDigitWidth(styles.normalFontSize);
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
@@ -390,8 +402,20 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       const sheetData = doc.getElementsByTagName("sheetData")[0];
       sheet.doc = doc;
       sheet.sheetData = sheetData;
-      // Column widths: <cols><col min max width/></cols>. Width is in character units;
-      // convert to px (~7px per char + padding for the default font).
+      // <sheetFormatPr>: what a row/column with no size of its own measures. Ignoring it left
+      // every unsized row at the grid's own height, which drifts anchored objects down the sheet.
+      const fmtPr = doc.getElementsByTagName("sheetFormatPr")[0];
+      const defHt = Number(fmtPr?.getAttribute("defaultRowHeight") || "0");
+      if (defHt > 0) sheet.defaultRowHeight = Math.round((defHt * 4) / 3);
+      const defW = Number(fmtPr?.getAttribute("defaultColWidth") || "0");
+      if (defW > 0) sheet.defaultColWidth = colWidthToPx(defW, mdw);
+      // Column widths: <cols><col min max width/></cols>. The width is in CHARACTER units, and
+      // ECMA-376 gives the conversion exactly: truncate(((256*width + truncate(128/MDW))/256)*MDW),
+      // where MDW is the NORMAL STYLE FONT's maximum digit width, not a constant: a workbook set
+      // in Calibri 14 has MDW 9, and hardcoding Calibri 11's 7 ran its every column ~28% narrow.
+      // That compounds across a sheet, since an anchored object's position is the sum of the
+      // widths to its left, so a wrong MDW pulls every control out of place.
+      sheet.maxDigitWidth = mdw;
       const colsEl = doc.getElementsByTagName("cols")[0];
       if (colsEl) {
         const cw = new Map<number, number>();
@@ -409,7 +433,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
           const level = Number(col.getAttribute("outlineLevel") || "0");
           const collapsed = col.getAttribute("collapsed") === "1" || col.getAttribute("collapsed") === "true";
           for (let c = min; c <= last; c++) {
-            if (width) cw.set(c, Math.round(width * 7 + 5));
+            if (width) cw.set(c, colWidthToPx(width, mdw));
             if (hidden) hiddenCols.add(c);
             if (level > 0) colOutline.set(c, level);
             if (collapsed) colCollapsed.add(c);
@@ -484,8 +508,8 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
           if (x > 0 || y > 0) {
             const tl = pane.getAttribute("topLeftCell");
             const at = tl ? parseA1Ref(tl) : null;
-            const cols = at ? at.col - 1 : linesForTwips(x, (c) => (sheet.colWidths?.get(c) ?? DEFAULT_COL_PX));
-            const rows = at ? at.row - 1 : linesForTwips(y, (r) => (sheet.rowHeights?.get(r) ?? DEFAULT_ROW_PX));
+            const cols = at ? at.col - 1 : linesForTwips(x, (c) => (sheet.colWidths?.get(c) ?? sheet.defaultColWidth ?? DEFAULT_COL_PX));
+            const rows = at ? at.row - 1 : linesForTwips(y, (r) => (sheet.rowHeights?.get(r) ?? sheet.defaultRowHeight ?? DEFAULT_ROW_PX));
             if (rows > 0 || cols > 0) { sheet.freeze = { rows: Math.max(0, rows), cols: Math.max(0, cols) }; sheet.paneSplit = true; }
           }
         }

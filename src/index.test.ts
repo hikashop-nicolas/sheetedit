@@ -562,8 +562,40 @@ describe("xlsx cell styles", () => {
     expect(a1.color).toBe("#ff0000");
     expect(a1.bg).toBe("#ffff00");
     expect(a1.align).toBe("center");
-    // Column B has width 20 (chars) -> ~145px.
-    expect(sheet.colWidths?.get(2)).toBe(145);
+    // Column B is 20 character units. ECMA-376 converts that exactly:
+    // trunc(((256*20 + trunc(128/7)) / 256) * 7) = 140px, which is what Excel lays out.
+    expect(sheet.colWidths?.get(2)).toBe(140);
+    expect(sheet.maxDigitWidth).toBe(7);
+  });
+
+  it("scales column widths by the normal style's font, not a fixed Calibri 11", () => {
+    // A workbook whose Normal style is 14pt has a maximum digit width of 9px, so the same 20
+    // character units are 180px, not 140. Hardcoding 7 renders such a workbook ~28% too narrow
+    // and drags every anchored control out of place with it.
+    const bytes = makeVisualXlsx();
+    const files = unzipSync(bytes);
+    files["xl/styles.xml"] = strToU8(STYLES.replace(`<sz val="11"/>`, `<sz val="14"/>`));
+    const sheet = readWorkbook(zipSync(files)).sheets[0]!;
+    expect(sheet.maxDigitWidth).toBe(9);
+    expect(sheet.colWidths?.get(2)).toBe(180);
+  });
+
+  it("reads the sheet's own default row height and column width", () => {
+    const files = unzipSync(makeVisualXlsx());
+    files["xl/worksheets/sheet1.xml"] = strToU8(
+      VSTYLE_SHEET.replace("<cols>", `<sheetFormatPr defaultRowHeight="15.75" defaultColWidth="12"/><cols>`),
+    );
+    const sheet = readWorkbook(zipSync(files)).sheets[0]!;
+    expect(sheet.defaultRowHeight).toBe(21); // 15.75pt at 96dpi
+    expect(sheet.defaultColWidth).toBe(84); // 12 character units at MDW 7
+  });
+
+  it("writes column widths back in the workbook's own character units", () => {
+    const files = unzipSync(makeVisualXlsx());
+    files["xl/styles.xml"] = strToU8(STYLES.replace(`<sz val="11"/>`, `<sz val="14"/>`));
+    const wb = readWorkbook(zipSync(files));
+    setXlsxColWidth(wb.sheets[0]!, 3, 216);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0]!.colWidths?.get(3)).toBe(216);
   });
 
   it("resolves borders per side", () => {
@@ -688,7 +720,7 @@ describe("xlsx cell styles", () => {
     const out = readWorkbook(writeWorkbook(wb)).sheets[0]!;
     expect(out.colWidths?.get(3)).toBe(215);
     // The pre-existing width on column B is preserved.
-    expect(out.colWidths?.get(2)).toBe(145);
+    expect(out.colWidths?.get(2)).toBe(140);
   });
 
   it("writes a row height and round-trips", () => {

@@ -1,5 +1,6 @@
 import type { Cell, DataValidation, DvSpec, Sheet, Workbook } from "../../core/model";
 import { colToLetters, ensureCell, firstByLocal, parseXmlOpt, removeByLocal, serializeXml } from "../../core/model";
+import { colWidthToPx } from "./read";
 import { SS_MAIN, ensureXlsxCellEl } from "./shared";
 import { writeXlsxCharts } from "./chart-write";
 import { writeXlsxImages } from "./image-write";
@@ -125,13 +126,25 @@ export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): v
 
 // Set a single column's width (px) in the worksheet's <cols>, creating <cols>/<col>
 // as needed and splitting any existing run that covers the column. Keeps colWidths in sync.
+/** The `width` attribute that `colWidthToPx` turns back into exactly `px`. */
+export function colWidthChars(px: number, mdw = 7): number {
+  let width = px / mdw - Math.trunc(128 / mdw) / 256;
+  // A few widths land a pixel short through the truncation; step up until they do not.
+  for (let i = 0; i < 4 && colWidthToPx(width, mdw) < px; i++) width += 0.01;
+  return width;
+}
+
 export function setXlsxColWidth(sheet: Sheet, col: number, px: number): void {
   if (!sheet.colWidths) sheet.colWidths = new Map();
   sheet.colWidths.set(col, px);
   const doc = sheet.doc;
   if (!doc) return;
   const ns = doc.documentElement.namespaceURI || SS_MAIN;
-  const width = Math.max(0, (px - 5) / 7);
+  // The character value that reads back as exactly this many pixels. ECMA-376's own px-to-chars
+  // formula is not the exact inverse of its chars-to-px one, so using it loses a few pixels of a
+  // drag; this inverts the read directly, and nudges up on the handful of widths where the
+  // truncation still lands a pixel short.
+  const width = Math.max(0, colWidthChars(px, sheet.maxDigitWidth));
   let colsEl = doc.getElementsByTagName("cols")[0] as Element | undefined;
   if (!colsEl) {
     colsEl = doc.createElementNS(ns, "cols");

@@ -42,8 +42,10 @@ export function pageGeom(setup: PrintSetup): PageGeom {
   return { pageW, pageH, left, right, top, bottom, header: inchToPx(m.header), footer: inchToPx(m.footer), bodyW: pageW - left - right, bodyH: pageH - top - bottom };
 }
 
-const colWidth = (sheet: Sheet, c: number): number => (sheet.hiddenCols?.has(c) ? 0 : sheet.colWidths?.get(c) ?? 96);
-const rowHeight = (sheet: Sheet, r: number): number => (sheet.hiddenRows?.has(r) || sheet.filterHidden?.has(r) ? 0 : sheet.rowHeights?.get(r) ?? 24);
+const colWidth = (sheet: Sheet, c: number): number =>
+  sheet.hiddenCols?.has(c) ? 0 : (sheet.colWidths?.get(c) ?? sheet.defaultColWidth ?? 96);
+const rowHeight = (sheet: Sheet, r: number): number =>
+  sheet.hiddenRows?.has(r) || sheet.filterHidden?.has(r) ? 0 : (sheet.rowHeights?.get(r) ?? sheet.defaultRowHeight ?? 24);
 
 /** Split a run of lines into pages: at a manual break, or when the next line would overflow. */
 function splitLines(lines: number[], sizeOf: (n: number) => number, capacity: number, breaks: Set<number>, repeatSize: number): number[][] {
