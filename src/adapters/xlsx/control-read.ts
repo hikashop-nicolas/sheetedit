@@ -156,9 +156,21 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
         ctl.propsPath = propsPath;
         applyProps(ctl, propsDoc.documentElement);
       }
-      // The anchor is on the worksheet's controlPr when the file is modern enough to have one.
+      // <controlPr> carries the placement AND the Excel-side properties that are not the control's
+      // own: which cell it drives and where a list gets its items. An ActiveX control keeps them
+      // here rather than in its binary, so they read without touching it.
+      const prEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "controlPr");
       const anchorEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "anchor");
       if (anchorEl) ctl.anchor = anchorOf(anchorEl) ?? undefined;
+      if (prEl) {
+        const link = prEl.getAttribute("linkedCell");
+        if (link) ctl.linkedCell = link;
+        const fill = prEl.getAttribute("listFillRange");
+        if (fill) ctl.sourceRange = fill;
+        // A macro named here wins over the one a button's name implies.
+        const macro = prEl.getAttribute("macro");
+        if (macro) ctl.macro = macro.replace(/^\[\d+\]!/, "").replace(/^.*!/, "");
+      }
 
       const shape = shapeId ? vml.get(shapeId) : undefined;
       if (shape) {
@@ -212,7 +224,7 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
   const binPath = bin ? resolvePart(xmlPath.replace(/\/[^/]+$/, ""), bin.target) : undefined;
   // An ActiveX button's handler lives in the sheet's own code module, named after the control:
   // CommandButton1 runs CommandButton1_Click. That is the convention, not a guess.
-  if (ctl.kind === "button") ctl.macro = `${ctl.name}_Click`;
+  if (ctl.kind === "button") ctl.macro ??= `${ctl.name}_Click`;
   const parsed = binPath && files[binPath] ? readActiveXStream(files[binPath]) : undefined;
   if (!parsed) return;
   if (parsed.caption) ctl.label = parsed.caption;

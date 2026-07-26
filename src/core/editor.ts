@@ -2346,8 +2346,15 @@ export function createSheetEditor(
       renderGrid();
     },
     itemsFor: (ctl) => {
-      const sheet = wb.sheets[active];
-      const rng = ctl.sourceRange ? parseRangeRefLocal(ctl.sourceRange) : null;
+      // An ActiveX listFillRange is usually a DEFINED NAME rather than a reference, which is what
+      // the real files use, so the name is resolved before the reference is parsed.
+      const raw = ctl.sourceRange
+        ? wb.definedNames?.get(ctl.sourceRange) ?? wb.definedNames?.get(ctl.sourceRange.toUpperCase()) ?? ctl.sourceRange
+        : undefined;
+      // A named range may name another sheet; its own sheet is where the items live.
+      const named = raw?.includes("!") ? raw.split("!") : undefined;
+      const sheet = named ? wb.sheets.find((s) => s.name === named[0]!.replace(/^'|'$/g, "")) ?? wb.sheets[active] : wb.sheets[active];
+      const rng = raw ? parseRangeRefLocal(named ? named[1]! : raw) : null;
       if (!sheet || !rng) return [];
       const out: string[] = [];
       for (let r = rng.r1; r <= rng.r2; r++)
@@ -2361,10 +2368,12 @@ export function createSheetEditor(
       const writes = changed.flatMap((ctl) => {
         const at = ctl.linkedCell ? parseA1Ref(ctl.linkedCell.replace(/\$/g, "").split("!").pop() ?? "") : null;
         if (!at) return [];
+        // An ActiveX list writes the chosen TEXT to its linked cell where a form control writes the
+        // 1-based index, which is the difference between the two families that actually shows.
         const value = ctl.kind === "checkbox" || ctl.kind === "radio"
           ? (ctl.checked ? "TRUE" : "FALSE")
           : ctl.kind === "dropdown" || ctl.kind === "list"
-            ? String(ctl.selected ?? 0)
+            ? (ctl.activeX ? ctl.activeXValue ?? "" : String(ctl.selected ?? 0))
             : String(ctl.value ?? 0);
         return [{ r: at.row, c: at.col, value }];
       });

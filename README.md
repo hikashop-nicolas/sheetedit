@@ -226,7 +226,10 @@ Those are read as controls too, or the buttons in such a file would be invisible
 sheet, which is not opaque: [MS-OFORMS] specifies it, so a Forms 2.0 control gives up its kind,
 caption and value on the same published-spec basis as everything else here. A button runs the
 handler its name implies (`CommandButton1` runs `CommandButton1_Click` from the sheet's own code
-module); the rest are shown with their state and left read-only, because changing one would mean
+module). A control with a **linked cell** is live: an ActiveX combo lists the items its
+`listFillRange` names, resolving a defined name, and writing the chosen **text** to that cell,
+which is where the two control families differ (a form control writes the item's position). One
+with no linked cell is shown with its state and left read-only, since changing it would mean
 writing a Windows component's own saved data. A third-party ActiveX control is genuinely opaque,
 since OOXML says its content is determined by the control itself, and it is preserved untouched.
 

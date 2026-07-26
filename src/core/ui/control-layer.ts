@@ -84,7 +84,8 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
    * everything except a button is shown and left alone: a control that took an edit and then lost
    * it on save would be worse than one that plainly does not take edits.
    */
-  const readOnlyActiveX = (ctl: SheetControl): boolean => !!ctl.activeX && ctl.kind !== "button";
+  const readOnlyActiveX = (ctl: SheetControl): boolean =>
+    !!ctl.activeX && ctl.kind !== "button" && !ctl.linkedCell;
 
   const build = (ctl: SheetControl): HTMLElement => {
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
@@ -131,6 +132,7 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         // An ActiveX combo lists from a range sheetedit does not read, so its persisted value is
         // shown rather than an empty list that would look like the file had lost it.
         if (readOnlyActiveX(ctl) && ctl.activeXValue) {
+          // No linked cell and no item source: the persisted value is all there is to show.
           const only = document.createElement("option");
           only.textContent = ctl.activeXValue;
           select.appendChild(only);
@@ -140,11 +142,17 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         }
         deps.itemsFor(ctl).forEach((text, i) => {
           const opt = document.createElement("option");
-          opt.value = String(i + 1);
+          opt.value = ctl.activeX ? text : String(i + 1);
           opt.textContent = text;
           select.appendChild(opt);
         });
         if (ctl.kind === "list") select.size = Math.max(2, Math.min(8, select.options.length));
+        if (ctl.activeX) {
+          // Its options are values, not positions: the file records which TEXT is chosen.
+          select.value = ctl.activeXValue ?? "";
+          select.addEventListener("change", () => { ctl.activeXValue = select.value; commit(); });
+          return select;
+        }
         select.value = String(ctl.selected ?? 0);
         select.addEventListener("change", () => { ctl.selected = Number(select.value) || 0; commit(); });
         return select;
