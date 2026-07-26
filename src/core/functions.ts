@@ -1,5 +1,6 @@
 import FormulaParser from "fast-formula-parser";
 import { asMatrix, asNumber, asScalar, cmp } from "./dynamic-arrays";
+import { makeIf } from "./if-fn";
 
 // Excel functions fast-formula-parser ships as empty stubs (they throw "not implemented"), supplied
 // here so real workbooks recalculate instead of showing a stale cached value. Grouped by family:
@@ -215,6 +216,9 @@ function SWITCH(expr: unknown, ...rest: unknown[]): unknown {
 
 /** The custom-function map to merge into the parser config. */
 export function extraFunctions(): Record<string, (...args: unknown[]) => unknown> {
+  // IF: the library never dereferences its condition, so `IF(A1,x,y)` always took the true
+  // branch. See if-fn.ts.
+  const IF = makeIf();
   const statAgg = (fn: (v: number[]) => unknown) => (...args: unknown[]): unknown => fn(args.flatMap(nums));
   const sortedAgg = (fn: (v: number[], k: number) => unknown) => (a: unknown, k: unknown): unknown => fn(nums(a).sort((x, y) => x - y), asNumber(k, 0));
   // SUMIFS/AVERAGEIFS/MAXIFS/MINIFS take the value range first, then (range, criteria) pairs.
@@ -227,6 +231,7 @@ export function extraFunctions(): Record<string, (...args: unknown[]) => unknown
     return fn(picked);
   };
   return {
+    IF: (...args: unknown[]) => IF(args[0], args[1], args[2], args[3]),
     // lookup
     MATCH: (a, b, c) => MATCH(a, b, c),
     XMATCH: (a, b, c, d) => XMATCH(a, b, c, d),
