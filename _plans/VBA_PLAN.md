@@ -133,11 +133,15 @@ nonsense into the file.
   calling `new ActiveXObject(...)`; it has nothing to do with the OLE objects embedded in a
   workbook. Preserve, never run.
 
-## Where it should live
+## Where it lives
 
-Probably its own repo, as [[mlang]] is, once past Stage 1: a VBA engine is useful beyond sheetedit
-and keeping it separate keeps the clean-room boundary visible. Stage 0 (container reading) can start
-inside sheetedit and move later.
+Its own repo, as [[mlang]] is: **vbalang** (github:hikashop-nicolas/vbalang, MIT), consumed here as
+a git dependency. The container, the language, the runtime and the writer went; the Excel object
+model (`vba-excel.ts`) and the glue that runs a macro against a workbook (`vba-macro.ts`) stayed,
+because those are the parts that know what a spreadsheet is.
+
+The seam that made the split cheap was there from Stage 2: the interpreter only ever talks to a
+`VbaObject` interface, so the language half was already testable with no spreadsheet behind it.
 
 ## Status
 

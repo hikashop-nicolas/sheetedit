@@ -10,7 +10,7 @@ import { makeFormulaEvaluator } from "./recalc";
 import { canEditCell } from "./protection";
 import { filterHiddenRows, sortedPositions, sortRange, sortText, type SortKey } from "./range-ops";
 import { addSheet, deleteSheet, sheetsEditable } from "./sheet-ops";
-import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "./vba-value";
+import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "vbalang";
 
 // ---------------------------------------------------------------------------
 // The Excel object model for VBA (Stage 3 of _plans/VBA_PLAN.md)

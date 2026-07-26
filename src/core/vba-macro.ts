@@ -1,11 +1,11 @@
 import { applyFields, snapFields, type CellFields } from "./history";
 import { getCell, type Sheet, type Workbook } from "./model";
-import { parseModule } from "./vba-parse";
-import { VbaInterpreter } from "./vba-run";
-import { VbaError } from "./vba-value";
-import { VbaSyntaxError } from "./vba-lex";
+import { parseModule } from "vbalang";
+import { VbaInterpreter } from "vbalang";
+import { VbaError } from "vbalang";
+import { VbaSyntaxError } from "vbalang";
 import { excelGlobals, RangeObject, type ExcelHost, type Rect } from "./vba-excel";
-import { setModuleSource, VbaWriteError } from "./vba-write";
+import { setModuleSource, VbaWriteError } from "vbalang";
 import { vbaPartOf } from "./vba";
 
 // ---------------------------------------------------------------------------

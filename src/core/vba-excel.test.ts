@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { readWorkbook } from "../index";
 import { getCell, type Workbook } from "./model";
-import { parseModule } from "./vba-parse";
-import { VbaInterpreter, type RunResult } from "./vba-run";
-import { EMPTY, VbaArray, type VbaValue } from "./vba-value";
+import { parseModule } from "vbalang";
+import { VbaInterpreter, type RunResult } from "vbalang";
+import { EMPTY, VbaArray, type VbaValue } from "vbalang";
 import { excelGlobals, type ExcelHost } from "./vba-excel";
 
 // Stage 3 of _plans/VBA_PLAN.md. The object model a macro talks to, mapped onto sheetedit's own

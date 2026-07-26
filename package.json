@@ -34,7 +34,8 @@
     "fast-formula-parser": "^1.0.19",
     "fflate": "^0.8.2",
     "localml": "github:hikashop-nicolas/localml",
-    "mlang": "github:hikashop-nicolas/mlang"
+    "mlang": "github:hikashop-nicolas/mlang",
+    "vbalang": "github:hikashop-nicolas/vbalang"
   },
   "devDependencies": {
     "cypress": "^15.17.0",
