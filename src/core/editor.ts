@@ -24,6 +24,7 @@ import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked,
 import { DEFAULT_MARGINS, DEFAULT_PAPER, PAPER_SIZES, toggleBreak, type PrintSetup } from "./print";
 import { BUILTIN_THEMES, setWorkbookTheme } from "./theme";
 import { buildPrintJob, type PrintJob } from "./print-render";
+import { subNames } from "./vba";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { formDialog, type FormField } from "./ui/form-dialog";
@@ -1318,6 +1319,58 @@ export function createSheetEditor(
     });
   };
 
+  /** Show the workbook's macro source. Read-only: nothing here runs, and nothing is written. */
+  const openMacroViewer = (): void => {
+    const project = wb.vba;
+    const modal = document.createElement("div");
+    modal.className = "sheetedit-modal";
+    const card = document.createElement("div");
+    card.className = "sheetedit-card is-wide";
+    const h = document.createElement("h3");
+    h.textContent = t("vbaTitle");
+    card.appendChild(h);
+    const note = document.createElement("p");
+    note.className = "sheetedit-note";
+    note.textContent = project?.modules.length ? t("vbaNote") : t("vbaNone");
+    card.appendChild(note);
+
+    if (project?.modules.length) {
+      const list = document.createElement("div");
+      list.className = "sheetedit-vba-list";
+      const pre = document.createElement("pre");
+      pre.className = "sheetedit-vba-src";
+      const show = (i: number): void => {
+        const mod = project.modules[i]!;
+        pre.textContent = mod.source;
+        for (const [j, b] of [...list.children].entries()) b.classList.toggle("is-current", j === i);
+        // Naming the procedures is what makes a long module readable at a glance.
+        const subs = subNames(mod.source);
+        note.textContent = subs.length ? `${t("vbaNote")}  ${t("vbaSubs")}: ${subs.join(", ")}` : t("vbaNote");
+      };
+      project.modules.forEach((mod, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-vba-mod";
+        b.textContent = mod.name;
+        b.addEventListener("click", () => show(i));
+        list.appendChild(b);
+      });
+      card.append(list, pre);
+      show(0);
+    }
+    const actions = document.createElement("div");
+    actions.className = "sheetedit-actions";
+    const close = document.createElement("button");
+    close.className = "sheetedit-dlg-btn";
+    close.textContent = t("chartCancel");
+    close.addEventListener("click", () => modal.remove());
+    actions.appendChild(close);
+    card.appendChild(actions);
+    modal.appendChild(card);
+    wrap.appendChild(modal);
+    modal.addEventListener("mousedown", (e) => { if (e.target === modal) modal.remove(); });
+  };
+
   // --- workbook theme ----------------------------------------------------------
   /**
    * Switch the workbook's palette. Cells reference the theme by index, so this recolours every
@@ -2395,6 +2448,11 @@ export function createSheetEditor(
       setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
     });
     trailingIcons.push(freezeBtn);
+  }
+  // Macros: shown when the workbook actually has some, so the button is never a dead end.
+  if (wb.vba?.modules.length) {
+    const VBA_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5.5 5.5-3 2.5 3 2.5M10.5 5.5l3 2.5-3 2.5"/></svg>`;
+    trailingIcons.push(tbIcon(VBA_ICON, t("vbaTitle"), () => openMacroViewer()));
   }
   if (caps.formControls) {
     const CTRL_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="5" height="5" rx="1"/><path d="m3.2 5.5 1.1 1.1 1.6-2"/><rect x="9" y="3" width="5" height="5" rx="1"/><path d="m10.2 5 1.3 1.3L12.8 5"/><path d="M2 11.5h12"/></svg>`;

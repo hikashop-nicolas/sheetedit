@@ -14,6 +14,7 @@ import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtect
 import type { ThemeColorRef } from "../../core/theme";
 import { readXlsxTheme } from "./theme-read";
 import { readXlsxControls } from "./control-read";
+import { readVbaProject, vbaPartOf } from "../../core/vba";
 import { readXlsxPrintNames, readXlsxPrintSetup } from "./print-read";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
@@ -507,6 +508,9 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   }
   readXlsxPivots(wb, files);
   readSlicers(wb, files); // after pivots: a slicer borrows its pivot cache to label items
+  // Macros: read the source so it can be shown. The part itself is never rewritten.
+  const vbaBin = vbaPartOf(files);
+  if (vbaBin) wb.vba = readVbaProject(vbaBin);
   wb.theme = readXlsxTheme(files["xl/theme/theme1.xml"]);
   wb.themeStyles = styles.xfStyles; // the resolved pool, so a theme switch can re-resolve it
   readXlsxControls(wb, files); // form controls: the worksheet <controls>, ctrlProps and the VML

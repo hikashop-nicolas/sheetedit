@@ -386,6 +386,9 @@ export interface Workbook {
   /** The resolved style pool a freshly rendered cell reads (xlsx cellXfs), kept so a theme switch
       can re-resolve the styles of cells that have not been touched. */
   themeStyles?: (CellStyle | undefined)[];
+  /** The VBA project, when the file carries one (.xlsm/.xlsb). Read-only: the source is shown so a
+      user can see what a workbook does. The bin itself is preserved untouched on save. */
+  vba?: import("./vba").VbaProject;
   /** Workbook-level protection (locked sheet set / window layout). */
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */
