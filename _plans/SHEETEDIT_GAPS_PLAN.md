@@ -285,11 +285,20 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     carries ONLY `ax:classid` plus a relationship to the `.bin` when persistence is
     `persistStreamInit`. Caption, value, size, colours and the linked cell are all in the binary.
     So there is no cheap "read the XML and render it" half: the work IS the MS-OFORMS parser.
-  - Blocked on samples. Apache POI's 14 macro-enabled test workbooks contain no ActiveX part at
-    all, and the public files that do are business documents or malware corpora, so neither the
-    licence nor the absence of real data can be relied on. Every solid piece of this project was
-    built against genuine files, and hand-built fixtures are what hid the missing styles
-    relationship and the PROJECTVERSION desync.
+  - DONE for reading: CommandButton and every MorphData kind (checkbox, combo, text, list, option,
+    toggle, label) give up their kind, caption and value. The parse self-checks against the stream's
+    own `cb` field and returns the kind alone rather than half-right values when it does not land
+    exactly. ScrollBar and SpinButton stay kind-only: their mask's bit order is unconfirmed.
+  - Two bugs it uncovered, both worse than the missing feature. Every ActiveX control was read as a
+    blank "label" because its part was fed to the formControlPr reader; and each was read TWICE,
+    since Excel writes a control under both mc:Choice and mc:Fallback. A workbook with six controls
+    drew twelve phantom labels.
+  - Samples: found via a plain web search, not GitHub code search, which does not index binaries.
+    Contextures' combo-box tutorial workbook has six. It is their copyright, so it is used locally
+    and never committed; the committed fixtures are synthetic and were verified byte-identical to
+    the real streams before being written down.
+  - Still to do: writing state back (an MS-OFORMS writer), and ListFillRange, so an ActiveX combo
+    could offer its items rather than only its current value.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

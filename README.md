@@ -222,6 +222,14 @@ make them findable, since missing any one of them makes Excel drop the control s
 Files written by older Excel carry **no worksheet `<controls>` element at all**, only VML shapes.
 Those are read as controls too, or the buttons in such a file would be invisible.
 
+**ActiveX controls are read and drawn as well.** Their state lives in a persisted binary beside the
+sheet, which is not opaque: [MS-OFORMS] specifies it, so a Forms 2.0 control gives up its kind,
+caption and value on the same published-spec basis as everything else here. A button runs the
+handler its name implies (`CommandButton1` runs `CommandButton1_Click` from the sheet's own code
+module); the rest are shown with their state and left read-only, because changing one would mean
+writing a Windows component's own saved data. A third-party ActiveX control is genuinely opaque,
+since OOXML says its content is determined by the control itself, and it is preserved untouched.
+
 State lives in two places in an `.xlsx` and both are read and written: the modern `ctrlProps` part
 and the legacy VML drawing that positions the control. Files predating `ctrlProps` carry everything
 in the VML, so it is the fallback rather than an afterthought, and a state change is mirrored into

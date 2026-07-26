@@ -471,6 +471,11 @@ export interface SheetControl {
   linkedCell?: string;
   /** The macro assigned to the control (VML `<x:FmlaMacro>`), without its workbook prefix. */
   macro?: string;
+  /** An ActiveX control rather than a form control. Its state lives in a persisted binary this
+      does not write, and its click handler lives in the sheet's own code module. */
+  activeX?: boolean;
+  /** ActiveX: the control's persisted value, as the file spells it. */
+  activeXValue?: string;
   /** List controls: the range the items come from, and the 1-based selection (0 = nothing). */
   sourceRange?: string;
   selected?: number;

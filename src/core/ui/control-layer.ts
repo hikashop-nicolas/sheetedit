@@ -29,6 +29,8 @@ export interface ControlLayerDeps {
   editable?: () => boolean;
   /** Text for the tooltip on a button with no macro to run. */
   inertTitle: string;
+  /** Tooltip for an ActiveX control whose state is shown but cannot be changed here. */
+  activeXTitle: string;
   /** Run a control's assigned macro. Absent when the workbook carries no macros at all. */
   runMacro?: (name: string) => void;
   /** Tooltip prefix for a control that does have a macro. */
@@ -77,6 +79,13 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
   });
 
   /** The control's body, by kind. Returns null for a kind with nothing to draw. */
+  /**
+   * An ActiveX control's state lives in a persisted binary sheetedit reads but does not write, so
+   * everything except a button is shown and left alone: a control that took an edit and then lost
+   * it on save would be worse than one that plainly does not take edits.
+   */
+  const readOnlyActiveX = (ctl: SheetControl): boolean => !!ctl.activeX && ctl.kind !== "button";
+
   const build = (ctl: SheetControl): HTMLElement => {
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
     // cell sees the new state. Same order here.
@@ -95,6 +104,7 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         const input = document.createElement("input");
         input.type = ctl.kind === "radio" ? "radio" : "checkbox";
         input.checked = !!ctl.checked;
+        if (readOnlyActiveX(ctl)) { input.disabled = true; label.title = deps.activeXTitle; }
         input.addEventListener("change", () => {
           ctl.checked = input.checked;
           // One radio on means the rest of its group off, which is the only thing that makes a
@@ -118,6 +128,16 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
           blank.textContent = "";
           select.appendChild(blank);
         }
+        // An ActiveX combo lists from a range sheetedit does not read, so its persisted value is
+        // shown rather than an empty list that would look like the file had lost it.
+        if (readOnlyActiveX(ctl) && ctl.activeXValue) {
+          const only = document.createElement("option");
+          only.textContent = ctl.activeXValue;
+          select.appendChild(only);
+          select.disabled = true;
+          select.title = deps.activeXTitle;
+          return select;
+        }
         deps.itemsFor(ctl).forEach((text, i) => {
           const opt = document.createElement("option");
           opt.value = String(i + 1);
@@ -138,6 +158,7 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         input.max = String(ctl.max ?? 100);
         input.step = String(ctl.inc || 1);
         input.value = String(ctl.value ?? ctl.min ?? 0);
+        if (readOnlyActiveX(ctl)) { input.disabled = true; input.title = deps.activeXTitle; }
         input.addEventListener("change", () => { ctl.value = Number(input.value) || 0; commit(); });
         return input;
       }

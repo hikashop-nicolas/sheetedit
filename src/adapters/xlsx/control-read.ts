@@ -1,5 +1,6 @@
 import { parseXmlOpt, type SheetControl, type Workbook } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
+import { kindOfClsid, readActiveXStream, type ActiveXKind } from "./activex-read";
 
 // A form control is spread across three parts:
 //   the worksheet   <controls><control shapeId r:id name>  (often inside mc:AlternateContent)
@@ -130,16 +131,28 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
 
     const controls: SheetControl[] = [];
     const claimed = new Set<string>();
+    // A control is written twice, once under mc:Choice with its placement and once under
+    // mc:Fallback without it, so the same shape id appears twice and only the first is wanted.
+    const seen = new Set<string>();
     for (const el of Array.from(sheet.doc.getElementsByTagName("*"))) {
       if (el.localName !== "control") continue;
+      const dedupe = el.getAttribute("shapeId") ?? el.getAttribute("name") ?? "";
+      if (dedupe && seen.has(dedupe)) continue;
+      if (dedupe) seen.add(dedupe);
       const shapeId = el.getAttribute("shapeId") ?? undefined;
       const rid = Array.from(el.attributes).find((a) => a.localName === "id" && a.name !== "id")?.value ?? el.getAttribute("r:id") ?? undefined;
       const ctl: SheetControl = { kind: "label", name: el.getAttribute("name") ?? `Control ${controls.length + 1}`, shapeId, vmlPath };
 
       const target = rid ? rels.byId.get(rid) : undefined;
       const propsPath = target ? resolvePart("xl/worksheets", target) : undefined;
+      // Form controls and ActiveX controls share this element and are told apart by the part the
+      // relationship lands on. Reading an ActiveX part as a formControlPr yields a kind of "label"
+      // with no properties, which is how a workbook full of ActiveX drew a screen of blank labels.
+      const isActiveX = /\/activeX\//i.test(propsPath ?? "");
       const propsDoc = propsPath && files[propsPath] ? parseXmlOpt(files[propsPath]) : undefined;
-      if (propsDoc?.documentElement) {
+      if (isActiveX) {
+        applyActiveX(ctl, files, propsPath!, propsDoc);
+      } else if (propsDoc?.documentElement) {
         ctl.propsPath = propsPath;
         applyProps(ctl, propsDoc.documentElement);
       }
@@ -172,6 +185,41 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
       controls.push(ctl);
     }
     if (controls.length) sheet.controls = controls;
+  }
+}
+
+/** How an ActiveX control's kind maps onto the model's own vocabulary. */
+const ACTIVEX_KINDS: Partial<Record<ActiveXKind, SheetControl["kind"]>> = {
+  commandButton: "button", checkbox: "checkbox", radio: "radio", textbox: "label",
+  dropdown: "dropdown", list: "list", toggle: "checkbox", label: "label",
+  scroll: "scroll", spin: "spin",
+};
+
+/**
+ * Fill a control in from its ActiveX parts: the class id names the kind, and the persisted binary
+ * beside it carries the caption and the value. What cannot be read leaves the control as a label
+ * rather than as something it is not.
+ */
+function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlPath: string, doc: Document | undefined): void {
+  ctl.activeX = true;
+  const clsid = doc?.documentElement?.getAttribute("ax:classid")
+    ?? doc?.documentElement?.getAttribute("classid") ?? "";
+  const kind = kindOfClsid(clsid);
+  ctl.kind = ACTIVEX_KINDS[kind] ?? "label";
+  // The binary is a separate part, reached through the activeX part's own relationships.
+  const relsPath = xmlPath.replace(/([^/]+)$/, "_rels/$1.rels");
+  const bin = relMap(files, relsPath).byType.find((r) => /activeXControlBinary/i.test(r.type));
+  const binPath = bin ? resolvePart(xmlPath.replace(/\/[^/]+$/, ""), bin.target) : undefined;
+  // An ActiveX button's handler lives in the sheet's own code module, named after the control:
+  // CommandButton1 runs CommandButton1_Click. That is the convention, not a guess.
+  if (ctl.kind === "button") ctl.macro = `${ctl.name}_Click`;
+  const parsed = binPath && files[binPath] ? readActiveXStream(files[binPath]) : undefined;
+  if (!parsed) return;
+  if (parsed.caption) ctl.label = parsed.caption;
+  if (parsed.value !== undefined) {
+    ctl.activeXValue = parsed.value;
+    // A checkbox persists "0"/"1"; anything else is the control's own text.
+    if (ctl.kind === "checkbox" || ctl.kind === "radio") ctl.checked = parsed.value === "1";
   }
 }
 

@@ -358,3 +358,87 @@ describe("moving and resizing a control", () => {
     expect(part(writeWorkbook(wb), "xl/drawings/vmlDrawing1.vml")).toContain("<x:Anchor>1,0,2,0,3,0,4,0</x:Anchor>");
   });
 });
+
+describe("ActiveX controls", () => {
+  const AX = "http://schemas.microsoft.com/office/2006/activeX";
+  const AXREL = "http://schemas.microsoft.com/office/2006/relationships";
+  const u16 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff];
+  const u32 = (n: number): number[] => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+  const padded = (t: string): number[] => {
+    const b = [...t].map((c) => c.charCodeAt(0));
+    return [...b, ...Array((4 - (b.length % 4)) % 4).fill(0)];
+  };
+  const BUTTON_CLSID = [0x40, 0x32, 0x05, 0xd7, 0x69, 0xce, 0xcd, 0x11, 0xa7, 0x77, 0x00, 0xdd, 0x01, 0x14, 0x3c, 0x57];
+  const CHECK_CLSID = [0x40, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3];
+
+  const buttonBin = (caption: string): Uint8Array => {
+    const data = u32(0x80000000 | caption.length);
+    const extra = [...padded(caption), ...u32(3731), ...u32(979)];
+    return new Uint8Array([...BUTTON_CLSID, 0, 2, ...u16(4 + data.length + extra.length), ...u32(0x28), ...data, ...extra]);
+  };
+  const checkBin = (value: string, caption: string): Uint8Array => {
+    const data = [0x04, 0, 0, 0, ...u32(0x80000000 | value.length), ...u32(0x80000000 | caption.length)];
+    const extra = [...u32(2831), ...u32(767), ...padded(value), ...padded(caption)];
+    return new Uint8Array([...CHECK_CLSID, 0, 2, ...u16(8 + data.length + extra.length), ...u32(0x80c00140 & ~1), ...u32(0), ...data, ...extra]);
+  };
+
+  /** A workbook whose controls are ActiveX, written the way Excel writes them. */
+  function axBook(): Uint8Array {
+    // Excel writes each control TWICE, under mc:Choice with its placement and mc:Fallback without.
+    const control = (sid: string, rid: string, name: string, r1: number): string =>
+      `<mc:AlternateContent xmlns:mc="${MC}"><mc:Choice Requires="x14">` +
+      `<control shapeId="${sid}" r:id="${rid}" name="${name}">${anchor(r1, r1 + 1)}</control>` +
+      `</mc:Choice><mc:Fallback><control shapeId="${sid}" r:id="${rid}" name="${name}"/></mc:Fallback></mc:AlternateContent>`;
+    const ocx = (clsid: string): Uint8Array => strToU8(
+      `<ax:ocx xmlns:ax="${AX}" xmlns:r="${R}" ax:classid="${clsid}" ax:persistence="persistStreamInit" r:id="rId1"/>`);
+    const binRels = strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${AXREL}/activeXControlBinary" Target="activeX1.bin"/></Relationships>`);
+    return zipSync({
+      "[Content_Types].xml": strToU8(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="bin" ContentType="application/vnd.ms-office.activeX"/></Types>`),
+      "_rels/.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+      "xl/workbook.xml": strToU8(`<workbook xmlns="${MAIN}" xmlns:r="${R}"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+      "xl/_rels/workbook.xml.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`),
+      "xl/worksheets/sheet1.xml": strToU8(
+        `<worksheet xmlns="${MAIN}" xmlns:r="${R}" xmlns:mc="${MC}" mc:Ignorable="x14"><sheetData/>` +
+        `<controls>${control("1", "rIdA", "CommandButton1", 0)}${control("2", "rIdB", "CheckBox1", 4)}</controls></worksheet>`),
+      "xl/worksheets/_rels/sheet1.xml.rels": strToU8(
+        `<Relationships xmlns="${RELNS}">` +
+        `<Relationship Id="rIdA" Type="${AXREL}/control" Target="../activeX/activeX1.xml"/>` +
+        `<Relationship Id="rIdB" Type="${AXREL}/control" Target="../activeX/activeX2.xml"/></Relationships>`),
+      "xl/activeX/activeX1.xml": ocx("{D7053240-CE69-11CD-A777-00DD01143C57}"),
+      "xl/activeX/_rels/activeX1.xml.rels": binRels,
+      "xl/activeX/activeX1.bin": buttonBin("CommandButton1"),
+      "xl/activeX/activeX2.xml": ocx("{8BD21D40-EC42-11CE-9E0D-00AA006002F3}"),
+      "xl/activeX/_rels/activeX2.xml.rels": strToU8(`<Relationships xmlns="${RELNS}"><Relationship Id="rId1" Type="${AXREL}/activeXControlBinary" Target="activeX2.bin"/></Relationships>`),
+      "xl/activeX/activeX2.bin": checkBin("1", "CheckBox1"),
+    });
+  }
+
+  it("reads each control once, not once per mc branch", () => {
+    // Excel writes a Choice and a Fallback for every control; counting both drew each one twice.
+    expect(readWorkbook(axBook()).sheets[0]!.controls).toHaveLength(2);
+  });
+
+  it("takes the kind from the class id, not from a formControlPr that is not there", () => {
+    const [button, check] = readWorkbook(axBook()).sheets[0]!.controls!;
+    expect(button!.kind).toBe("button");
+    expect(check!.kind).toBe("checkbox");
+    expect(button!.activeX).toBe(true);
+  });
+
+  it("reads the caption and the persisted value out of the binary", () => {
+    const [button, check] = readWorkbook(axBook()).sheets[0]!.controls!;
+    expect(button!.label).toBe("CommandButton1");
+    expect(check!.label).toBe("CheckBox1");
+    expect(check!.activeXValue).toBe("1");
+    expect(check!.checked).toBe(true);
+  });
+
+  it("points a button at the handler its name implies", () => {
+    // An ActiveX button runs <name>_Click from the sheet's own code module.
+    expect(readWorkbook(axBook()).sheets[0]!.controls![0]!.macro).toBe("CommandButton1_Click");
+  });
+
+  it("places them from the worksheet anchor", () => {
+    expect(readWorkbook(axBook()).sheets[0]!.controls![0]!.anchor?.fromRow).toBe(1);
+  });
+});

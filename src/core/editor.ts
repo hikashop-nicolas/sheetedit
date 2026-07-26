@@ -2334,6 +2334,7 @@ export function createSheetEditor(
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     inertTitle: t("ctrlMacroInert"),
     macroTitle: t("ctrlMacroRun"),
+    activeXTitle: t("ctrlActiveX"),
     runMacro: (name) => runControlMacro(name),
     // Only xlsx writes controls back, so only there is dragging one offered.
     editable: () => wb.kind === "xlsx",
