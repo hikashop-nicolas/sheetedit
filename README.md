@@ -224,7 +224,9 @@ Those are read as controls too, or the buttons in such a file would be invisible
 
 **ActiveX controls are read and drawn as well.** Their state lives in a persisted binary beside the
 sheet, which is not opaque: [MS-OFORMS] specifies it, so a Forms 2.0 control gives up its kind,
-caption and value on the same published-spec basis as everything else here. A button runs the
+caption, value, size, colours and (for a scroll bar or spin button) its bounds, on the same
+published-spec basis as everything else here. Command buttons, check boxes, option buttons, text
+boxes, combo and list boxes, toggle buttons, labels, scroll bars and spin buttons are all read. A button runs the
 handler its name implies (`CommandButton1` runs `CommandButton1_Click` from the sheet's own code
 module). A control with a **linked cell** is live: an ActiveX combo lists the items its
 `listFillRange` names, resolving a defined name, and writing the chosen **text** to that cell,

@@ -229,6 +229,10 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
   if (!parsed) return;
   ctl.activeXBinPath = binPath;
   if (parsed.caption) ctl.label = parsed.caption;
+  // A range control's bounds come from its binary, where a form control keeps them in ctrlProps.
+  if (parsed.min !== undefined) ctl.min = parsed.min;
+  if (parsed.max !== undefined) ctl.max = parsed.max;
+  if (parsed.position !== undefined) ctl.value = parsed.position;
   if (parsed.value !== undefined) {
     ctl.activeXValue = parsed.value;
     // A checkbox persists "0"/"1"; anything else is the control's own text.

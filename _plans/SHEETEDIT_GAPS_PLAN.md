@@ -311,8 +311,15 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     unlike the VBA writer (which an independent engine was made to RUN) there is no outside judge.
     It reopens a rewritten workbook without complaint, and that only proves the package is not
     corrupt. Excel remains the untested case.
-  - Still open: Caption and the other string properties are read but only Value can be written, and
-    a control's binary is left alone entirely when its mask is unmodelled (ScrollBar, SpinButton).
+  - ScrollBar, SpinButton and Label are read too, from their own spec tables fetched rather than
+    guessed. Three findings worth keeping: a LABEL IS NOT A MORPHDATA CONTROL, it has its own
+    LabelPropMask, which is an easy and wrong assumption; ScrollBar and SpinButton do NOT share a
+    mask (the spin has no LargeChange or ProportionalThumb, and fMousePointer moves to the end);
+    and fPrevEnabled / fNextEnabled are mask bits with NO field behind them, so consuming bytes for
+    them would push every later read out of place. The layouts are table-driven now, one table per
+    family, each ending on the same cb check.
+  - Still open: only Value can be written (Caption and the rest are read-only), and the Image
+    control and any third-party ActiveX are kind-only.
 - **Hidden sheets** are read, honoured (no tab is drawn) and authored on both formats, plus
   Worksheet.Visible in VBA with Excel's three states. ODF keeps this in the sheet's TABLE STYLE
   (`<style:table-properties table:display>`), NOT on `<table:table>`: the attribute on the element

@@ -86,9 +86,11 @@ describe("reading a persisted stream", () => {
   });
 
   it("gives a kind but no properties for a control whose mask is not modelled", () => {
-    // A ScrollBar: its mask's bit order could not be confirmed, so nothing is invented for it.
-    const bytes = new Uint8Array([...CLSID.scroll, 0x00, 0x02, ...u16(20), ...u32(0x2048), ...Array(16).fill(0)]);
-    expect(readActiveXStream(bytes)).toEqual({ kind: "scroll" });
+    // An Image control: its class id is known, so the kind is trustworthy, but nothing here reads
+    // its layout and nothing is invented for it.
+    const IMAGE = [0x41, 0x92, 0x59, 0x4c, 0x26, 0x69, 0x1b, 0x10, 0x99, 0x92, 0x00, 0x00, 0x0b, 0x65, 0xc6, 0xf9];
+    const bytes = new Uint8Array([...IMAGE, 0x00, 0x02, ...u16(20), ...u32(0), ...Array(16).fill(0)]);
+    expect(readActiveXStream(bytes)).toEqual({ kind: "image" });
   });
 
   it("returns nothing for bytes that are not a control at all", () => {
@@ -212,5 +214,77 @@ describe("writing a value back", () => {
       const after = setActiveXValue(checkbox("0", "Cap", "Grp"), v)!;
       expect(readActiveXStream(after)?.value ?? "", JSON.stringify(v)).toBe(v);
     }
+  });
+});
+
+// --- the flat families: scroll bar, spin button, label ---------------------------
+// Each is [MS-OFORMS] section 2.2 read across, and each ends on the same cb check, which is what
+// turns "these widths look right" into something the code verifies per file.
+
+describe("ScrollBar", () => {
+  const CLSID_SCROLL = [0xe0, 0x81, 0xd1, 0xdf, 0x2f, 0x5e, 0xce, 0x11, 0xa4, 0x49, 0x00, 0xaa, 0x00, 0x4a, 0x80, 0x3d];
+
+  /** Exactly what Excel wrote in the sample: fSize, fMax and fOrientation, and nothing else. */
+  const scrollBar = (max: number, cx: number, cy: number): Uint8Array => new Uint8Array([
+    ...CLSID_SCROLL, 0x00, 0x02, ...u16(20), ...u32(0x2048),
+    ...u32(max), ...u32(0xffffffff),   // Max, then Orientation (-1, "auto")
+    ...u32(cx), ...u32(cy),            // the ExtraDataBlock is the Size alone
+  ]);
+
+  it("reads its bounds and size", () => {
+    expect(readActiveXStream(scrollBar(1, 3069, 1005))).toEqual({
+      kind: "scroll", max: 1, size: { cx: 3069, cy: 1005 },
+    });
+  });
+
+  it("skips fPrevEnabled and fNextEnabled, which carry no field at all", () => {
+    // Those two bits only mirror VariousPropertyBits.Enabled. Consuming four bytes for either
+    // would push every later read out of place, and cb would then refuse the whole parse.
+    const bytes = scrollBar(1, 100, 200);
+    const dv = new DataView(bytes.buffer);
+    dv.setUint32(20, 0x2048 | (1 << 9) | (1 << 10), true);
+    expect(readActiveXStream(bytes)).toEqual({ kind: "scroll", max: 1, size: { cx: 100, cy: 200 } });
+  });
+
+  it("reports the kind alone when the walk does not land on cb", () => {
+    const bytes = scrollBar(1, 100, 200);
+    bytes[18] = (bytes[18]! + 4) & 0xff;
+    expect(readActiveXStream(bytes)).toEqual({ kind: "scroll" });
+  });
+});
+
+describe("SpinButton", () => {
+  const CLSID_SPIN = [0xb0, 0x6f, 0x17, 0x79, 0xf2, 0xb7, 0xce, 0x11, 0x97, 0xef, 0x00, 0xaa, 0x00, 0x6d, 0x27, 0x76];
+
+  it("uses its own mask, not the scroll bar's", () => {
+    // fSize is bit 3 as for a scroll bar, but Min/Max/Position sit at 5/6/7 with no LargeChange
+    // or ProportionalThumb between them, and fMousePointer moves to the end.
+    const bytes = new Uint8Array([
+      ...CLSID_SPIN, 0x00, 0x02, ...u16(4 + 12 + 8), ...u32((1 << 3) | (1 << 5) | (1 << 6) | (1 << 7)),
+      ...u32(0), ...u32(100), ...u32(42),   // Min, Max, Position
+      ...u32(500), ...u32(900),
+    ]);
+    expect(readActiveXStream(bytes)).toEqual({
+      kind: "spin", min: 0, max: 100, position: 42, size: { cx: 500, cy: 900 },
+    });
+  });
+});
+
+describe("Label", () => {
+  const CLSID_LABEL = [0x23, 0x9e, 0x8c, 0x97, 0xb0, 0xd4, 0xce, 0x11, 0xbf, 0x2d, 0x00, 0xaa, 0x00, 0x3f, 0x40, 0xd0];
+
+  it("is its own control, not a MorphData one", () => {
+    // Assuming otherwise is easy and wrong: a Label has LabelPropMask, where fCaption is bit 3 and
+    // fSize is bit 5, and its ExtraDataBlock puts the caption BEFORE the size.
+    const caption = [..."Total"].map((c) => c.charCodeAt(0));
+    const bytes = new Uint8Array([
+      ...CLSID_LABEL, 0x00, 0x02, ...u16(4 + 4 + 8 + 8), ...u32((1 << 3) | (1 << 5)),
+      ...u32(0x80000000 | caption.length),
+      ...caption, ...Array(3).fill(0),
+      ...u32(1200), ...u32(300),
+    ]);
+    expect(readActiveXStream(bytes)).toEqual({
+      kind: "label", caption: "Total", size: { cx: 1200, cy: 300 },
+    });
   });
 });

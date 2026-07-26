@@ -38,8 +38,68 @@ const KIND_BY_CLSID: Record<string, ActiveXKind> = {
   "4C599241-6926-101B-9992-00000B65C6F9": "image",
 };
 
+/**
+ * The families whose whole control is a flat field list: a 4-byte mask, a DataBlock in bit order,
+ * and an ExtraDataBlock. Each table below is [MS-OFORMS] section 2.2 read straight across, and the
+ * `cb` check at the end of the walk is what proves the widths right on any given file.
+ *
+ * Two subtleties the tables encode. ScrollBar and SpinButton put fPrevEnabled and fNextEnabled in
+ * the mask with NO field behind them, since they only mirror VariousPropertyBits.Enabled; and the
+ * ExtraDataBlock order differs by family, Caption before Size for a label, Size alone otherwise.
+ */
+interface SimpleField { bit: number; width: 1 | 2 | 4; prop?: "foreColor" | "backColor" | "min" | "max" | "position" | "caption" }
+interface SimpleLayout { fields: SimpleField[]; sizeBit: number; extraOrder: ("size" | "caption")[] }
+
+const SIMPLE_LAYOUTS: Partial<Record<ActiveXKind, SimpleLayout>> = {
+  // 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fSize, 4 fMousePointer, 5 fMin, 6 fMax,
+  // 7 fPosition, 8 unused, 9 fPrevEnabled, 10 fNextEnabled, 11 fSmallChange, 12 fLargeChange,
+  // 13 fOrientation, 14 fProportionalThumb, 15 fDelay, 16 fMouseIcon.
+  scroll: {
+    sizeBit: 3,
+    extraOrder: ["size"],
+    fields: [
+      { bit: 0, width: 4, prop: "foreColor" }, { bit: 1, width: 4, prop: "backColor" },
+      { bit: 2, width: 4 }, { bit: 4, width: 1 },
+      { bit: 5, width: 4, prop: "min" }, { bit: 6, width: 4, prop: "max" },
+      { bit: 7, width: 4, prop: "position" },
+      { bit: 11, width: 4 }, { bit: 12, width: 4 }, { bit: 13, width: 4 },
+      { bit: 14, width: 2 }, { bit: 15, width: 4 }, { bit: 16, width: 2 },
+    ],
+  },
+  // The same family but not the same mask: no LargeChange or ProportionalThumb, and fMousePointer
+  // moves to the end. 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fSize, 4 unused,
+  // 5 fMin, 6 fMax, 7 fPosition, 8 fPrevEnabled, 9 fNextEnabled, 10 fSmallChange, 11 fOrientation,
+  // 12 fDelay, 13 fMouseIcon, 14 fMousePointer.
+  spin: {
+    sizeBit: 3,
+    extraOrder: ["size"],
+    fields: [
+      { bit: 0, width: 4, prop: "foreColor" }, { bit: 1, width: 4, prop: "backColor" },
+      { bit: 2, width: 4 },
+      { bit: 5, width: 4, prop: "min" }, { bit: 6, width: 4, prop: "max" },
+      { bit: 7, width: 4, prop: "position" },
+      { bit: 10, width: 4 }, { bit: 11, width: 4 }, { bit: 12, width: 4 },
+      { bit: 13, width: 2 }, { bit: 14, width: 1 },
+    ],
+  },
+  // A Label is its own control, NOT a MorphData one, which is easy to assume and wrong.
+  // 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fCaption, 4 fPicturePosition, 5 fSize,
+  // 6 fMousePointer, 7 fBorderColor, 8 fBorderStyle, 9 fSpecialEffect, 10 fPicture,
+  // 11 fAccelerator, 12 fMouseIcon.
+  label: {
+    sizeBit: 5,
+    extraOrder: ["caption", "size"],
+    fields: [
+      { bit: 0, width: 4, prop: "foreColor" }, { bit: 1, width: 4, prop: "backColor" },
+      { bit: 2, width: 4 }, { bit: 3, width: 4, prop: "caption" }, { bit: 4, width: 4 },
+      { bit: 6, width: 1 }, { bit: 7, width: 4 }, { bit: 8, width: 2 }, { bit: 9, width: 2 },
+      { bit: 10, width: 2 }, { bit: 11, width: 2 }, { bit: 12, width: 2 },
+    ],
+  },
+};
+
 /** The kinds that persist through MorphDataControl, which share one structure and one mask. */
-const MORPH_KINDS = new Set<ActiveXKind>(["checkbox", "radio", "textbox", "dropdown", "list", "toggle", "label"]);
+const MORPH_KINDS = new Set<ActiveXKind>(["checkbox", "radio", "textbox", "dropdown", "list", "toggle"]);
 
 /** The class id a class string names, normalised to bare uppercase hex with dashes. */
 export const kindOfClsid = (clsid: string): ActiveXKind =>
@@ -47,6 +107,10 @@ export const kindOfClsid = (clsid: string): ActiveXKind =>
 
 export interface ActiveXControl {
   kind: ActiveXKind;
+  /** Range controls (scroll bar, spin button) report their bounds and where they sit. */
+  min?: number;
+  max?: number;
+  position?: number;
   /** The text on the control, when it carries one. */
   caption?: string;
   /** The control's current value, as the file spells it: "0"/"1" for a checkbox, the chosen text
@@ -232,11 +296,45 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     };
   }
 
-  // ScrollBar and SpinButton are NOT parsed for properties. Their mask's contents are published
-  // but its bit ORDER could not be confirmed, and the one real sample here has a bit set that is
-  // unaccounted for: reading it with a guessed layout produced a width of -1, which is exactly the
-  // plausible-but-wrong answer this codebase refuses to ship. The kind is still trustworthy, and
-  // the cb check the MorphData path uses would catch it anyway if the layout were ever added.
+  const simple = SIMPLE_LAYOUTS[kind];
+  if (simple) {
+    const mask = dv.getUint32(at + 4, true);
+    const bit = (n: number): boolean => (mask & (1 << n)) !== 0;
+    const start = at + 8;
+    const block = new Cursor(bytes, start, start);
+    let captionLenAt = -1, caption = 0;
+    for (const f of simple.fields) {
+      if (!bit(f.bit)) continue;
+      if (f.prop === "caption") { captionLenAt = block.aligned(4); caption = block.u32(); continue; }
+      const v = f.width === 1 ? block.u8() : f.width === 2 ? block.u16() : block.i32();
+      if (f.prop === "foreColor") out.foreColor = v >>> 0;
+      else if (f.prop === "backColor") out.backColor = v >>> 0;
+      else if (f.prop === "min") out.min = v;
+      else if (f.prop === "max") out.max = v;
+      else if (f.prop === "position") out.position = v;
+    }
+    const extraStart = block.position + ((4 - ((block.position - start) % 4)) % 4);
+    const extra = new Cursor(bytes, extraStart, extraStart);
+    // The order inside the ExtraDataBlock is not the same across families, so each states its own.
+    for (const what of simple.extraOrder) {
+      if (what === "size" && bit(simple.sizeBit)) out.size = { cx: extra.i32(), cy: extra.i32() };
+      else if (what === "caption" && caption) out.caption = extra.text(caption);
+    }
+    // The same guard the MorphData path uses: land on cb or report nothing but the kind.
+    if (extra.position - (at + 4) !== dv.getUint16(at + 2, true)) return { control: { kind } };
+    return {
+      control: out,
+      layout: {
+        valueLenAt: -1, captionLenAt, groupLenAt: -1,
+        extraStart, extraEnd: extra.position,
+        sizeBytes: bit(simple.sizeBit) ? 8 : 0,
+        maskAt: at + 4, maskBytes: 4,
+      },
+    };
+  }
+
+  // Anything left is a Forms 2.0 kind with no layout here: its kind is still trustworthy, since
+  // that comes from the class id rather than from the binary.
   return { control: out };
 }
 
