@@ -2234,10 +2234,13 @@ export function createSheetEditor(
   const insertControl = (kind: SheetControl["kind"]): void => {
     const sheet = wb.sheets[active];
     if (!sheet) return;
-    const at = sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: 1 };
+    // Where the user is looking, in order of how clearly they asked for it. With no selection at
+    // all, drop it clear of the used range: defaulting to A1 lands it on top of the header row,
+    // which is the one place a control is guaranteed to be in the way.
+    const at = activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : { r: 1, c: Math.max(1, sheet.maxCol + 2) });
     const created = createXlsxControl(wb, sheet, {
       kind,
-      label: kind === "checkbox" ? t("ctrlAddCheckbox").replace(/^\S+\s/, "") : undefined,
+      label: kind === "checkbox" || kind === "button" ? t("ctrlNewLabel") : undefined,
       // Default to the cell just right of the control, which is where a reader looks for its value.
       linkedCell: defaultLink(at.r, at.c + 3),
       sourceRange: kind === "dropdown" ? undefined : undefined,
