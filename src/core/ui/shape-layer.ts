@@ -20,28 +20,6 @@ export interface ShapeLayerDeps {
   editable?: () => boolean;
 }
 
-const STYLE_ID = "sheetedit-shape-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-shapelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
-    .sheetedit-shapelayer-inner { position:absolute; inset:0; }
-    .sheetedit-shapebox { position:absolute; }
-    .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
-    .sheetedit-shapebox.editable { pointer-events:auto; cursor:move; }
-    .sheetedit-shapebox.selected { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
-    .sheetedit-shape-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
-      background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid #fff; cursor:nwse-resize; pointer-events:auto; display:none; }
-    .sheetedit-shapebox.selected .sheetedit-shape-resize { display:block; }
-    .sheetedit-shape-del { position:absolute; right:-9px; top:-9px; width:16px; height:16px; border-radius:50%; padding:0;
-      background:#e03131; color:#fff; border:1.5px solid #fff; cursor:pointer; pointer-events:auto; display:none;
-      font:700 11px/13px sans-serif; text-align:center; }
-    .sheetedit-shapebox.selected .sheetedit-shape-del { display:block; }
-  `;
-  document.head.appendChild(s);
-}
 
 /** Build the SVG markup for one shape at the given pixel size. */
 export function shapeSvg(sh: SheetShape, w: number, h: number): string {
@@ -80,7 +58,6 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
 }
 
 export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,

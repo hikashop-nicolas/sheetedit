@@ -16,35 +16,6 @@ export interface TimelineLayerDeps {
   onChange?: (t: SheetTimeline) => void;
 }
 
-const STYLE_ID = "sheetedit-timeline-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-timelinelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
-    .sheetedit-timelinelayer-inner { position:absolute; inset:0; }
-    .sheetedit-timelinebox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
-      background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
-      border:1px solid var(--sheetedit-border,#c8ccd2); border-radius:6px;
-      box-shadow:0 2px 10px rgba(0,0,0,.18); font:12px system-ui,sans-serif; overflow:hidden; }
-    .sheetedit-timeline-head { display:flex; align-items:baseline; gap:6px; padding:5px 7px;
-      border-bottom:1px solid var(--sheetedit-border,#c8ccd2); background:rgba(127,127,127,.08); }
-    .sheetedit-timeline-title { font-weight:600; flex:0 0 auto; }
-    .sheetedit-timeline-range { flex:1; color:var(--sheetedit-muted,#6b7280); overflow:hidden;
-      text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-    .sheetedit-timeline-clear { border:0; background:none; cursor:pointer; color:inherit; opacity:.65;
-      font:inherit; padding:1px 4px; border-radius:4px; }
-    .sheetedit-timeline-clear:hover { opacity:1; background:rgba(127,127,127,.18); }
-    .sheetedit-timeline-periods { flex:1; display:flex; align-items:stretch; gap:2px; padding:5px; overflow-x:auto; }
-    .sheetedit-timeline-period { flex:1 0 34px; border:1px solid var(--sheetedit-border,#c8ccd2);
-      border-radius:3px; background:transparent; color:inherit; font:inherit; font-size:11px;
-      cursor:pointer; padding:2px; opacity:.45; white-space:nowrap; }
-    .sheetedit-timeline-period.on { opacity:1; background:var(--sheetedit-accent,#4c8bf5); color:#fff;
-      border-color:var(--sheetedit-accent,#4c8bf5); }
-  `;
-  document.head.appendChild(s);
-}
 
 /** ISO date -> [y, m, d] (the parts we need; Excel writes "2024-01-01T00:00:00"). */
 function parts(iso: string | undefined): { y: number; m: number; d: number } | null {
@@ -92,7 +63,6 @@ export function timelinePeriods(tl: SheetTimeline): { label: string; start: stri
 }
 
 export function setupTimelineLayer(deps: TimelineLayerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,
@@ -116,7 +86,7 @@ export function setupTimelineLayer(deps: TimelineLayerDeps): { refresh(): void; 
       const h = a ? Math.max(70, g.yOfRow(a.toRow) + a.toRowOff - y) : 90;
       const box = document.createElement("div");
       box.className = "sheetedit-timelinebox";
-      box.style.cssText += `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+      Object.assign(box.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
       box.dataset.timeline = tl.name;
 
       const head = document.createElement("div");

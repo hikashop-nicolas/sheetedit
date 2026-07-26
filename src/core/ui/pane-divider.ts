@@ -27,26 +27,8 @@ export interface PaneDividerDeps {
   onMove: (rows: number, cols: number) => void;
 }
 
-const STYLE_ID = "sheetedit-pane-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    /* Clips the bars to the grid area, so neither can reach the scrollbar or the sheet tabs. */
-    .sheetedit-panediv-layer { position:absolute; overflow:hidden; pointer-events:none; z-index:11; }
-    .sheetedit-panediv { position:absolute; pointer-events:auto; background:var(--sheetedit-accent,#6e7bff); opacity:.55; }
-    .sheetedit-panediv:hover, .sheetedit-panediv.dragging { opacity:1; }
-    .sheetedit-panediv-h { left:0; right:0; height:3px; cursor:row-resize; }
-    .sheetedit-panediv-v { top:0; bottom:0; width:3px; cursor:col-resize; }
-    /* A wider invisible grab area, so the thin bar is still easy to catch. */
-    .sheetedit-panediv::after { content:""; position:absolute; inset:-4px; }
-  `;
-  document.head.appendChild(s);
-}
 
 export function setupPaneDividers(deps: PaneDividerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const { wrap } = deps;
   const layer = document.createElement("div");
   layer.className = "sheetedit-panediv-layer";

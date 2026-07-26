@@ -19,41 +19,6 @@ export interface SlicerLayerDeps {
   onChange?: (s: SheetSlicer) => void;
 }
 
-const STYLE_ID = "sheetedit-slicer-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-slicerlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
-    .sheetedit-slicerlayer-inner { position:absolute; inset:0; }
-    .sheetedit-slicerbox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
-      background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
-      border:1px solid var(--sheetedit-border,#c8ccd2); border-radius:6px;
-      box-shadow:0 2px 10px rgba(0,0,0,.18); font:12px system-ui,sans-serif; overflow:hidden; }
-    .sheetedit-slicer-head { display:flex; align-items:center; gap:6px; padding:5px 7px; font-weight:600;
-      border-bottom:1px solid var(--sheetedit-border,#c8ccd2); background:rgba(127,127,127,.08); }
-    .sheetedit-slicer-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .sheetedit-slicer-clear { border:0; background:none; cursor:pointer; color:inherit; opacity:.65;
-      font:inherit; padding:1px 4px; border-radius:4px; }
-    .sheetedit-slicer-clear:hover { opacity:1; background:rgba(127,127,127,.18); }
-    .sheetedit-slicer-items { flex:1; overflow:auto; padding:4px; display:grid; gap:3px; }
-    .sheetedit-slicer-item { border:1px solid var(--sheetedit-border,#c8ccd2); border-radius:4px;
-      background:var(--se-slicer-off-bg,transparent); color:var(--se-slicer-off-fg,inherit);
-      font:inherit; padding:3px 6px; cursor:pointer;
-      text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.45; }
-    .sheetedit-slicer-item:hover { border-color:var(--sheetedit-accent,#4c8bf5); }
-    .sheetedit-slicer-item.on { opacity:1; background:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5));
-      color:var(--se-slicer-on-fg,#fff);
-      border-color:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); }
-    /* A custom style says exactly how an unselected item looks, so do not dim it on top. */
-    .sheetedit-slicerbox.styled .sheetedit-slicer-item { opacity:1; }
-    /* OLAP slicers have no source we can filter, so they show their items but do not react. */
-    .sheetedit-slicerbox.readonly .sheetedit-slicer-item { cursor:default; }
-    .sheetedit-slicerbox.readonly .sheetedit-slicer-clear { display:none; }
-  `;
-  document.head.appendChild(s);
-}
 
 /** The accent colour of a built-in slicer style (SlicerStyleLight1..6 / Dark1..6 / Other1..2).
     Excel's built-ins differ mainly by accent, so the family index picks a theme-ish accent. */
@@ -81,7 +46,6 @@ function shade(hex: string, amount: number): string {
 }
 
 export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,
@@ -107,7 +71,7 @@ export function setupSlicerLayer(deps: SlicerLayerDeps): { refresh(): void; tear
       const readonly = sl.kind === "olap";
       const box = document.createElement("div");
       box.className = "sheetedit-slicerbox" + (readonly ? " readonly" : "");
-      box.style.cssText += `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+      Object.assign(box.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
       // A user-defined style carries real colours; the built-ins only differ by accent, so map the
       // family to a theme accent instead.
       const custom = sl.style ? deps.getWorkbook?.().slicerStyles?.get(sl.style) : undefined;

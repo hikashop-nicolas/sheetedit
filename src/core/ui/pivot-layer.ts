@@ -18,22 +18,8 @@ export interface PivotLayerDeps {
   onTag?: (pivot: NonNullable<Sheet["pivotTables"]>[number], x: number, y: number) => void;
 }
 
-const STYLE_ID = "sheetedit-pivot-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-pivotlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:4; }
-    .sheetedit-pivotlayer-inner { position:absolute; inset:0; }
-    .sheetedit-pivotbox { position:absolute; box-sizing:border-box; border:1.5px dashed var(--sheetedit-accent,#3b82f6); border-radius:3px; background:color-mix(in srgb, var(--sheetedit-accent,#3b82f6) 6%, transparent); }
-    .sheetedit-pivottag { position:absolute; top:0; left:0; transform:translateY(-100%); pointer-events:auto; font:600 10px/1.4 system-ui,sans-serif; color:#fff; background:var(--sheetedit-accent,#3b82f6); padding:1px 6px; border-radius:3px 3px 0 0; white-space:nowrap; cursor:default; }
-  `;
-  document.head.appendChild(s);
-}
 
 export function setupPivotLayer(deps: PivotLayerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,

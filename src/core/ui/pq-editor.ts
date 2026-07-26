@@ -41,131 +41,6 @@ export interface QueryEditorDeps {
   onSaved?(): void;
 }
 
-const STYLE_ID = "sheetedit-pqe-style";
-
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .se-pqe { position:fixed; inset:0; z-index:60; display:flex; flex-direction:column;
-      background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6);
-      font:13px system-ui, sans-serif; }
-    .se-pqe[hidden] { display:none; }
-    .se-pqe-bar { display:flex; align-items:center; gap:10px; padding:8px 12px;
-      background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-title { font-weight:600; }
-    .se-pqe-spacer { flex:1; }
-    .se-pqe-btn { font:inherit; font-size:13px; display:inline-flex; align-items:center; gap:6px; background:var(--sheetedit-btn, #3a3f47);
-      color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57);
-      border-radius:6px; padding:5px 12px; cursor:pointer; }
-    .se-pqe-btn svg { display:block; }
-    .se-pqe-btn:hover:not(:disabled) { background:var(--sheetedit-btn-hover, #454b54); }
-    .se-pqe-btn:disabled { opacity:.5; cursor:default; }
-    .se-pqe-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
-    /* Excel-style ribbon: horizontal groups, each a 3-row column of buttons with a centered
-       group label underneath, divided by vertical rules. Scrolls horizontally when narrow. */
-    .se-pqe-ribbon { display:flex; align-items:stretch; padding:6px 2px 3px; overflow-x:auto;
-      background:var(--sheetedit-chrome, #2b2f36); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-grp { display:flex; flex-direction:column; padding:0 9px; border-right:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-grp:last-child { border-right:0; }
-    .se-pqe-grp-body { display:grid; grid-template-rows:repeat(3, 23px); grid-auto-flow:column; grid-auto-columns:max-content; gap:2px 6px; }
-    .se-pqe-grp-label { text-align:center; font-size:10.5px; color:var(--sheetedit-muted, #aab2bf); padding-top:4px; margin-top:auto; }
-    .se-pqe-rbtn { font:inherit; font-size:12px; display:inline-flex; align-items:center; gap:8px; width:100%; justify-content:flex-start;
-      background:transparent; color:var(--sheetedit-text, #e6e6e6); border:1px solid transparent; border-radius:5px; padding:0 9px 0 7px; cursor:pointer; white-space:nowrap; }
-    .se-pqe-rbtn svg { display:block; flex:none; width:16px; height:16px; color:var(--sheetedit-accent, #6e7bff); }
-    .se-pqe-rbtn:hover:not(:disabled) { background:var(--sheetedit-btn, #3a3f47); }
-    .se-pqe-rbtn:disabled { opacity:.4; cursor:default; }
-    .se-pqe-rbtn:disabled svg { color:var(--sheetedit-muted, #aab2bf); }
-    .se-pqe-modal { position:absolute; inset:0; z-index:5; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); }
-    .se-pqe-modal[hidden] { display:none; }
-    .se-pqe-card { width:min(420px,92%); max-height:80%; overflow:auto; background:var(--sheetedit-chrome, #2b2f36);
-      border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.5); padding:16px; }
-    .se-pqe-card h3 { margin:0 0 12px; font-size:15px; }
-    .se-pqe-field { display:flex; flex-direction:column; gap:4px; margin-bottom:11px; }
-    .se-pqe-field > span { color:var(--sheetedit-muted, #aab2bf); font-size:12px; }
-    .se-pqe-field input, .se-pqe-field select { font:inherit; background:var(--sheetedit-border, #1c1f24);
-      border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); padding:5px 8px; }
-    .se-pqe-checks { display:flex; flex-direction:column; gap:3px; max-height:180px; overflow:auto;
-      border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; padding:6px 8px; background:var(--sheetedit-border, #1c1f24); }
-    .se-pqe-checks label { display:flex; align-items:center; gap:7px; font-size:13px; }
-    .se-pqe-card-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
-    .se-pqe-fx { display:flex; align-items:stretch; gap:6px; padding:6px 12px;
-      background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-fx-lbl { align-self:center; color:var(--sheetedit-muted, #aab2bf); font:12px ui-monospace,monospace; }
-    .se-pqe-fx textarea { flex:1; min-height:26px; max-height:120px; resize:vertical;
-      background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047);
-      border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:5px 8px; }
-    .se-pqe-main { flex:1; min-height:0; display:flex; position:relative; }
-    .se-pqe-queries { width:200px; flex:none; overflow:auto; border-right:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-settings { width:240px; flex:none; overflow:auto; border-left:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-panetoggle { display:none; }
-    .se-pqe-center { flex:1; min-width:0; display:flex; flex-direction:column; }
-    .se-pqe-pane-h { padding:7px 12px; font-weight:600; color:var(--sheetedit-muted, #aab2bf);
-      font-size:12px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-pane-h-row { display:flex; align-items:center; justify-content:space-between; }
-    .se-pqe-newq { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; padding:0; cursor:pointer;
-      background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6);
-      border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
-    .se-pqe-newq svg { display:block; }
-    .se-pqe-newq:hover { background:var(--sheetedit-btn-hover, #454b54); }
-    .se-pqe-item { display:flex; align-items:center; gap:6px; padding:7px 12px; cursor:pointer; border-bottom:1px solid rgba(0,0,0,.12); }
-    .se-pqe-item:hover { background:var(--sheetedit-btn, #3a3f47); }
-    .se-pqe-item.sel { background:var(--sheetedit-accent, #6e7bff); color:#fff; }
-    .se-pqe-item-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .se-pqe-item-x { opacity:0; border:0; background:none; color:inherit; cursor:pointer; font-size:15px; line-height:1; padding:0 2px; border-radius:4px; }
-    .se-pqe-item:hover .se-pqe-item-x { opacity:.7; }
-    .se-pqe-item-x:hover { opacity:1 !important; background:rgba(255,255,255,.15); }
-    .se-pqe-name-in { width:100%; box-sizing:border-box; font:inherit; background:var(--sheetedit-border, #1c1f24);
-      border:1px solid var(--sheetedit-accent, #6e7bff); border-radius:4px; color:inherit; padding:3px 6px; }
-    .se-pqe-preview { flex:1; min-height:0; overflow:auto; background:#e9e9ec; }
-    .se-pqe-ptable { border-collapse:collapse; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; color:#1a1a1a; }
-    .se-pqe-ptable th, .se-pqe-ptable td { border:1px solid #d4d4d8; padding:3px 9px; text-align:left; white-space:nowrap; }
-    .se-pqe-ptable th { position:sticky; top:0; background:#f1f1f4; color:#333; font-weight:600; z-index:1; }
-    .se-pqe-ptable th .nm { display:block; }
-    .se-pqe-ptable th .ty { display:block; font-weight:400; font-size:10px; color:#888; }
-    .se-pqe-ptable th .qbar { display:flex; height:3px; margin-top:3px; border-radius:2px; overflow:hidden; background:#d4d4d8; }
-    .se-pqe-ptable th .qv { background:#3fb950; }
-    .se-pqe-ptable th .qe { background:#c0c4cc; }
-    .se-pqe-ptable th .qx { background:#d33d3d; }
-    .se-pqe-ptable td.num { text-align:right; font-variant-numeric:tabular-nums; }
-    .se-pqe-ptable td.null, .se-pqe-ptable td.obj { color:#8a8f98; }
-    .se-pqe-ptable td.err { color:#c0392b; }
-    .se-pqe-ptable tr:nth-child(even) td { background:#f6f6f8; }
-    .se-pqe-scalar { padding:16px; font:14px ui-monospace,monospace; color:var(--sheetedit-text, #e6e6e6); }
-    .se-pqe-foot { display:flex; align-items:center; gap:14px; padding:5px 12px; color:var(--sheetedit-muted, #aab2bf);
-      font-size:12px; background:var(--sheetedit-chrome2, #23262c); border-top:1px solid var(--sheetedit-border, #1c1f24); }
-    .se-pqe-foot .err { color:#ff8a8a; }
-    .se-pqe-empty { padding:24px; color:var(--sheetedit-muted, #aab2bf); }
-
-    /* Narrow screens: icon-only ribbon and action buttons; the side panels become drawers that
-       slide over the preview, toggled from the title bar (one open at a time). */
-    @media (max-width: 760px) {
-      .se-pqe-title { display:none; }
-      .se-pqe-bar { gap:6px; padding:7px 8px; }
-      .se-pqe-bar .se-pqe-btn span { display:none; }
-      .se-pqe-btn { padding:6px 8px; }
-      .se-pqe-panetoggle { display:inline-flex; }
-      .se-pqe-rbtn span { display:none; }
-      .se-pqe-rbtn { gap:0; padding:0 7px; justify-content:center; width:auto; }
-      .se-pqe-grp { padding:0 6px; }
-      .se-pqe-queries, .se-pqe-settings {
-        position:absolute; top:0; bottom:0; z-index:6; width:min(280px, 82%);
-        background:var(--sheetedit-chrome, #2b2f36); box-shadow:0 0 30px rgba(0,0,0,.45);
-        transition:transform .18s ease; will-change:transform;
-      }
-      .se-pqe-queries { left:0; border-right:1px solid var(--sheetedit-border, #1c1f24); transform:translateX(-102%); }
-      .se-pqe-settings { right:0; border-left:1px solid var(--sheetedit-border, #1c1f24); transform:translateX(102%); }
-      .se-pqe.show-queries .se-pqe-queries { transform:none; }
-      .se-pqe.show-steps .se-pqe-settings { transform:none; }
-      .se-pqe.show-queries .se-pqe-center::after, .se-pqe.show-steps .se-pqe-center::after {
-        content:""; position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.35);
-      }
-      .se-pqe-center { position:relative; }
-    }
-  `;
-  document.head.appendChild(s);
-}
 
 const pad = (n: number, w = 2): string => String(Math.abs(n)).padStart(w, "0");
 function hms(secs: number): string {
@@ -194,7 +69,6 @@ function cellText(v: MValue): { text: string; cls: string } {
 
 export function setupQueryEditor(deps: QueryEditorDeps): { open(sectionM: string): void } {
   const { wrap, wb, attachedFiles } = deps;
-  injectStyles();
 
   const overlay = document.createElement("div");
   overlay.className = "se-pqe";

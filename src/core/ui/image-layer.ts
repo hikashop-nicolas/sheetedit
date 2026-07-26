@@ -21,27 +21,8 @@ export interface ImageLayerDeps {
   editable?: () => boolean;
 }
 
-const STYLE_ID = "sheetedit-image-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-imagelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
-    .sheetedit-imagelayer-inner { position:absolute; inset:0; }
-    .sheetedit-imagebox { position:absolute; }
-    .sheetedit-imagebox img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
-    .sheetedit-imagebox.editable { pointer-events:auto; cursor:move; }
-    .sheetedit-imagebox.selected { outline:1.5px solid var(--sheetedit-accent,#4c8bf5); outline-offset:1px; }
-    .sheetedit-image-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
-      background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid #fff; cursor:nwse-resize; pointer-events:auto; display:none; }
-    .sheetedit-imagebox.selected .sheetedit-image-resize { display:block; }
-  `;
-  document.head.appendChild(s);
-}
 
 export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardown(): void } {
-  injectStyles();
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,

@@ -36,68 +36,6 @@ const hasLine = (k: ChartKind): boolean => k === "line" || k === "area" || k ===
 const hasAxes = (k: ChartKind): boolean => isCartesian(k) || k === "scatter";
 const DASHES: { val: string; key: string }[] = [{ val: "solid", key: "chartDashSolid" }, { val: "dash", key: "chartDashDash" }, { val: "dot", key: "chartDashDot" }];
 
-const STYLE_ID = "sheetedit-chart-style";
-function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-    .sheetedit-chart-resize { position:absolute; right:-3px; bottom:-3px; width:12px; height:12px; cursor:nwse-resize; z-index:2;
-      background:var(--sheetedit-accent, #6e7bff); border:2px solid #fff; border-radius:3px; opacity:0; }
-    .sheetedit-chartbox.sel .sheetedit-chart-resize { opacity:1; }
-    .sheetedit-chartbox { cursor:move; }
-    .sheetedit-chart-modal { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); padding:16px; }
-    .sheetedit-chart-card { display:flex; flex-direction:column; width:min(860px,100%); max-height:90vh; background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e6e6e6);
-      border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.5); font:13px system-ui,sans-serif; overflow:hidden; }
-    .sheetedit-chart-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
-    .sheetedit-chart-head h3 { margin:0; font-size:15px; }
-    .sheetedit-chart-x { font:inherit; font-size:18px; line-height:1; width:28px; height:28px; border:none; border-radius:6px; background:transparent; color:var(--sheetedit-muted, #aab2bf); cursor:pointer; }
-    .sheetedit-chart-x:hover { background:var(--sheetedit-btn, #3a3f47); color:inherit; }
-    .sheetedit-chart-body { display:flex; gap:18px; padding:16px; overflow:hidden; min-height:0; }
-    .sheetedit-chart-opts { flex:1 1 auto; min-width:0; overflow-y:auto; padding-right:4px; }
-    .sheetedit-chart-side { flex:0 0 340px; display:flex; flex-direction:column; }
-    .sheetedit-chart-sec { margin-bottom:14px; }
-    .sheetedit-chart-sec[hidden] { display:none; }
-    .sheetedit-chart-card h4 { margin:0 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--sheetedit-muted, #aab2bf); border-bottom:1px solid var(--sheetedit-border, #1c1f24); padding-bottom:4px; }
-    .sheetedit-chart-types { display:flex; flex-wrap:wrap; gap:6px; }
-    .sheetedit-chart-type { font:inherit; font-size:12px; padding:6px 11px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px;
-      background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); cursor:pointer; }
-    .sheetedit-chart-type.sel { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
-    .sheetedit-chart-field { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
-    .sheetedit-chart-field[hidden] { display:none; }
-    .sheetedit-chart-field > span { color:var(--sheetedit-muted, #aab2bf); font-size:12px; }
-    .sheetedit-chart-field input[type=text], .sheetedit-chart-field select, .sheetedit-chart-row select, .sheetedit-chart-row input[type=number] {
-      font:inherit; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); padding:6px 8px; }
-    .sheetedit-chart-checks { display:flex; flex-wrap:wrap; gap:12px 16px; font-size:13px; }
-    .sheetedit-chart-checks label { display:flex; align-items:center; gap:6px; }
-    .sheetedit-chart-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px 16px; margin-top:8px; }
-    .sheetedit-chart-row label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--sheetedit-muted, #aab2bf); }
-    .sheetedit-chart-row input[type=number] { width:64px; }
-    .sheetedit-chart-two { display:flex; gap:12px; }
-    .sheetedit-chart-two > * { flex:1; }
-    .sheetedit-chart-swatches { display:flex; flex-wrap:wrap; gap:10px 14px; }
-    .sheetedit-chart-swatch { display:flex; align-items:center; gap:6px; font-size:12px; }
-    .sheetedit-chart-swatch input[type=color] { width:26px; height:22px; padding:0; border:1px solid var(--sheetedit-btn, #3a4047); border-radius:4px; background:none; cursor:pointer; }
-    .sheetedit-chart-fill { display:flex; align-items:center; gap:6px; }
-    .sheetedit-chart-preview { flex:1 1 auto; min-height:240px; background:#fff; border-radius:6px; padding:8px; }
-    .sheetedit-chart-foot { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--sheetedit-border, #1c1f24); }
-    .sheetedit-chart-btn { font:inherit; font-size:13px; padding:7px 16px; border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:6px;
-      background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); cursor:pointer; }
-    .sheetedit-chart-btn.primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:#fff; }
-    @media (max-width:720px) {
-      .sheetedit-chart-body { flex-direction:column; overflow-y:auto; }
-      .sheetedit-chart-side { flex-basis:auto; order:-1; }
-      .sheetedit-chart-preview { min-height:170px; height:170px; }
-      .sheetedit-chart-opts { overflow:visible; }
-    }
-    .sheetedit-chart-editbar { position:fixed; z-index:30; display:flex; align-items:center; gap:6px; padding:5px 7px;
-      background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
-    .sheetedit-chart-editbar[hidden] { display:none; }
-    .sheetedit-chart-editbar button { font:inherit; font-size:12px; background:var(--sheetedit-btn, #3a3f47);
-      color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; padding:4px 10px; cursor:pointer; }
-  `;
-  document.head.appendChild(s);
-}
 
 function parseRange(text: string, fallbackSheet: string): { sheet: string; rect: Rect } | null {
   const m = /^(?:'([^']+)'|([^!]+))!(.+)$/.exec(text.trim());
@@ -130,7 +68,6 @@ function deriveRange(model: ChartModel, fallbackSheet: string): { text: string; 
 }
 
 export function setupChartUi(deps: ChartUiDeps): { openInsert(rect: Rect): void; showEdit(model: ChartModel): void; hideEdit(): void; teardown(): void } {
-  injectStyles();
 
   // ---- Create/edit dialog (editModel omitted -> create) ----
   function openDialog(sel: Rect | null, editModel?: ChartModel): void {
@@ -470,18 +407,18 @@ function fillControl(label: string, initial: string, onChange: (v: string) => vo
   const wrap = document.createElement("label");
   wrap.className = "sheetedit-chart-fill";
   const sp = document.createElement("span");
-  sp.style.cssText = "font-size:12px;color:var(--sheetedit-muted,#aab2bf)";
+  sp.className = "sheetedit-swatch-label";
   sp.textContent = label;
   const inp = document.createElement("input");
   inp.type = "color";
-  inp.style.cssText = "width:26px;height:22px;padding:0;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:4px;background:none;cursor:pointer";
+  inp.className = "sheetedit-swatch";
   if (initial) inp.value = initial;
   inp.addEventListener("input", () => onChange(inp.value));
   const clear = document.createElement("button");
   clear.type = "button";
   clear.textContent = "×";
   clear.title = t("chartNone");
-  clear.style.cssText = "font:inherit;font-size:13px;line-height:1;padding:2px 6px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:4px;background:var(--sheetedit-btn,#3a3f47);color:inherit;cursor:pointer";
+  clear.className = "sheetedit-smallbtn";
   clear.addEventListener("click", () => onChange(""));
   wrap.append(sp, inp, clear);
   return wrap;

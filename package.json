@@ -17,14 +17,16 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run css && tsc -p tsconfig.json",
     "build:demo": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "npm run build:demo && start-server-and-test 'vite preview --port 5173 --strictPort' http://localhost:5173 'cypress run --browser chrome'",
-    "prepare": "tsc -p tsconfig.json"
+    "prepare": "npm run css && tsc -p tsconfig.json",
+    "css": "node scripts/build-css.mjs",
+    "css:check": "node scripts/build-css.mjs --check"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

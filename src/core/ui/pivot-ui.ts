@@ -152,12 +152,15 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     const host = activeSheet();
     const menu = document.createElement("div");
     menu.className = "sheetedit-pivot-menu";
-    menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:80;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:4px;font:13px system-ui,sans-serif;min-width:150px`;
+    menu.className = "sheetedit-pivot-menu";
+    // Position is the only thing that cannot be a class: it follows the click.
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
     const item = (label: string, onClick: (() => void) | null): HTMLElement => {
       const b = document.createElement("button");
       b.textContent = label;
-      b.style.cssText = `display:block;width:100%;text-align:left;padding:6px 10px;border:0;border-radius:5px;background:none;color:inherit;font:inherit;cursor:${onClick ? "pointer" : "default"};${onClick ? "" : "opacity:.6"}`;
-      if (onClick) { b.addEventListener("mouseenter", () => (b.style.background = "var(--sheetedit-btn,#3a3f47)")); b.addEventListener("mouseleave", () => (b.style.background = "none")); b.addEventListener("click", () => { closePivotMenu(); onClick(); }); }
+      if (!onClick) b.classList.add("is-inert");
+      if (onClick) b.addEventListener("click", () => { closePivotMenu(); onClick(); }); // hover is a CSS rule
       return b;
     };
     const items: HTMLElement[] = [];
@@ -221,25 +224,24 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
 
     const modal = document.createElement("div");
     modal.className = "sheetedit-form-modal sheetedit-pivot-modal";
-    modal.style.cssText = "position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)";
+    modal.classList.add("sheetedit-modal");
     const card = document.createElement("div");
-    card.style.cssText = "width:min(840px,96%);max-height:88vh;overflow:auto;background:var(--sheetedit-chrome,#2b2f36);color:var(--sheetedit-text,#e6e6e6);border:1px solid var(--sheetedit-border,#1c1f24);border-radius:10px;box-shadow:0 14px 44px rgba(0,0,0,.5);padding:16px;font:13px system-ui,sans-serif";
-    const h = document.createElement("h3"); h.textContent = t("pivotInsert"); h.style.cssText = "margin:0 0 4px;font-size:15px"; card.appendChild(h);
+    card.classList.add("sheetedit-card", "is-wide");
+    const h = document.createElement("h3"); h.textContent = t("pivotInsert"); card.appendChild(h);
     const srcLine = document.createElement("div");
     srcLine.textContent = `${t("pivotSource")}: ${sheet.name}!${colToLetters(range.c1)}${range.r1}:${colToLetters(range.c2)}${range.r2}`;
-    srcLine.style.cssText = "color:var(--sheetedit-muted,#aab2bf);margin-bottom:12px;font-size:12px"; card.appendChild(srcLine);
-    const body = document.createElement("div"); body.style.cssText = "display:flex;gap:16px;flex-wrap:wrap"; card.appendChild(body);
-    const left = document.createElement("div"); left.style.cssText = "flex:1 1 360px;min-width:340px"; body.appendChild(left);
-    const right = document.createElement("div"); right.style.cssText = "flex:1 1 300px;min-width:280px;overflow:hidden"; body.appendChild(right);
-    const previewLbl = document.createElement("div"); previewLbl.textContent = t("pivotPreview"); previewLbl.style.cssText = "color:var(--sheetedit-muted,#aab2bf);font-size:12px;margin-bottom:6px"; right.appendChild(previewLbl);
-    const preview = document.createElement("div"); preview.style.cssText = "border:1px solid var(--sheetedit-btn,#3a4047);border-radius:6px;padding:8px;overflow:auto;max-height:260px;font-size:12px"; right.appendChild(preview);
-    const selStyle = "font:inherit;background:var(--sheetedit-border,#1c1f24);border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;color:var(--sheetedit-text,#e7eaf0);padding:4px 6px";
+    srcLine.className = "sheetedit-note sheetedit-subtle"; card.appendChild(srcLine);
+    const body = document.createElement("div"); body.className = "sheetedit-pivot-body"; card.appendChild(body);
+    const left = document.createElement("div"); left.className = "sheetedit-pivot-left"; body.appendChild(left);
+    const right = document.createElement("div"); right.className = "sheetedit-pivot-right"; body.appendChild(right);
+    const previewLbl = document.createElement("div"); previewLbl.textContent = t("pivotPreview"); previewLbl.className = "sheetedit-subtle"; right.appendChild(previewLbl);
+    const preview = document.createElement("div"); preview.className = "sheetedit-pivot-preview"; right.appendChild(preview);
 
     const roleOpts: [string, string][] = [["unused", t("pivotUnused")], ["rows", t("pivotRows")], ["columns", t("pivotColumns")], ["values", t("pivotValues")], ["page", t("pivotPageF")]];
     const funcOpts: [string, string][] = (["sum", "count", "average", "min", "max"] as const).map((f) => [f, t(`pivotFn_${f}`)]);
     const showAsOpts: [string, string][] = (["normal", "percentOfTotal", "percentOfCol", "percentOfRow", "runningTotal"] as const).map((f) => [f, t(`pivotShow_${f}`)]);
     const mkSelect = (opts: [string, string][], value: string, onChange: (v: string) => void): HTMLSelectElement => {
-      const sel = document.createElement("select"); sel.style.cssText = selStyle;
+      const sel = document.createElement("select"); sel.className = "sheetedit-input";
       for (const [v, l] of opts) { const o = document.createElement("option"); o.value = v; o.textContent = l; sel.appendChild(o); }
       sel.value = value; sel.addEventListener("change", () => onChange(sel.value));
       return sel;
@@ -249,13 +251,14 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     const renderPreview = (): void => {
       const spec = pivotSpecFrom(range, roles, funcs, showAs, pageItems, subtotals, calcFields, calcItems);
       const valid = hasData && spec.rows.length > 0 && spec.values.length > 0;
-      if (insertBtn) { insertBtn.disabled = !valid; insertBtn.style.opacity = valid ? "1" : "0.45"; insertBtn.style.cursor = valid ? "pointer" : "not-allowed"; }
+      if (insertBtn) insertBtn.disabled = !valid;
       preview.textContent = "";
-      if (!hasData) { preview.textContent = t("pivotNoData"); preview.style.color = "var(--sheetedit-muted,#aab2bf)"; return; }
-      if (!valid) { preview.textContent = t("pivotHint"); preview.style.color = "var(--sheetedit-muted,#aab2bf)"; return; }
-      preview.style.color = "";
+      // A message in place of the preview grid reads as muted text, not as data.
+      if (!hasData) { preview.textContent = t("pivotNoData"); preview.classList.add("is-message"); return; }
+      if (!valid) { preview.textContent = t("pivotHint"); preview.classList.add("is-message"); return; }
+      preview.classList.remove("is-message");
       const computed = computePivot(sheet, spec);
-      const table = document.createElement("table"); table.style.cssText = "border-collapse:collapse";
+      const table = document.createElement("table");
       const maxR = Math.min(computed.matrix.length, 12), maxC = Math.min(computed.width, 8);
       for (let r = 0; r < maxR; r++) {
         const tr = document.createElement("tr");
@@ -263,96 +266,96 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
           const cell = computed.matrix[r]![c]!;
           const td = document.createElement("td");
           td.textContent = cell.value === "" ? "" : cell.numFmt === "0.00%" && cell.kind === "n" ? `${(Number(cell.value) * 100).toFixed(2)}%` : String(cell.value);
-          td.style.cssText = `border:1px solid var(--sheetedit-btn,#3a4047);padding:2px 6px;white-space:nowrap;${cell.kind === "n" ? "text-align:right;" : ""}${cell.bold ? "font-weight:600;" : ""}`;
+          if (cell.kind === "n") td.classList.add("num");
+          if (cell.bold) td.classList.add("bold");
           tr.appendChild(td);
         }
-        if (computed.width > maxC) { const td = document.createElement("td"); td.textContent = "…"; td.style.cssText = "padding:2px 6px"; tr.appendChild(td); }
+        if (computed.width > maxC) { const td = document.createElement("td"); td.textContent = "…"; td.className = "ellipsis"; tr.appendChild(td); }
         table.appendChild(tr);
       }
-      if (computed.matrix.length > maxR) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.textContent = "…"; td.colSpan = maxC; td.style.cssText = "padding:2px 6px"; tr.appendChild(td); table.appendChild(tr); }
+      if (computed.matrix.length > maxR) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.textContent = "…"; td.colSpan = maxC; td.className = "ellipsis"; tr.appendChild(td); table.appendChild(tr); }
       preview.appendChild(table);
     };
 
-    if (!hasData) { const p = document.createElement("div"); p.textContent = t("pivotNoData"); p.style.color = "var(--sheetedit-muted,#aab2bf)"; left.appendChild(p); }
+    if (!hasData) { const p = document.createElement("div"); p.textContent = t("pivotNoData"); p.className = "sheetedit-subtle"; left.appendChild(p); }
     for (let i = 0; i < width; i++) {
-      const row = document.createElement("div"); row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap";
+      const row = document.createElement("div"); row.className = "sheetedit-pivot-row";
       const name = document.createElement("span"); name.textContent = headers[i]!; name.title = headers[i]!;
-      name.style.cssText = "flex:1 1 84px;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"; row.appendChild(name);
+      name.className = "sheetedit-pivot-name"; row.appendChild(name);
       const funcSel = mkSelect(funcOpts, funcs[i]!, (v) => { funcs[i] = v; renderPreview(); });
       funcSel.dataset.field = `func_${i}`;
-      funcSel.style.display = roles[i] === "values" ? "" : "none";
+      funcSel.classList.toggle("sheetedit-hidden", roles[i] !== "values");
       // "Show values as" picker for a value field (% of total / running total).
       const showSel = mkSelect(showAsOpts, showAs[i]!, (v) => { showAs[i] = v; renderPreview(); });
       showSel.dataset.field = `show_${i}`;
-      showSel.style.display = roles[i] === "values" ? "" : "none";
+      showSel.classList.toggle("sheetedit-hidden", roles[i] !== "values");
       // Page-filter value picker (All + each distinct value of this column).
       const pageOpts: [string, string][] = [["", t("pivotAll")], ...colItems[i]!.map((it, k): [string, string] => [String(k), it.label])];
       const pageSel = mkSelect(pageOpts, "", (v) => { pageItems[i] = v === "" ? null : Number(v); renderPreview(); });
       pageSel.dataset.field = `page_${i}`;
-      pageSel.style.display = roles[i] === "page" ? "" : "none";
-      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; const val = v === "values"; funcSel.style.display = val ? "" : "none"; showSel.style.display = val ? "" : "none"; pageSel.style.display = v === "page" ? "" : "none"; renderPreview(); });
+      pageSel.classList.toggle("sheetedit-hidden", roles[i] !== "page");
+      const roleSel = mkSelect(roleOpts, roles[i]!, (v) => { roles[i] = v; const val = v === "values"; funcSel.classList.toggle("sheetedit-hidden", !val); showSel.classList.toggle("sheetedit-hidden", !val); pageSel.classList.toggle("sheetedit-hidden", v !== "page"); renderPreview(); });
       roleSel.dataset.field = `role_${i}`;
-      for (const sel of [roleSel, funcSel, showSel, pageSel]) sel.style.maxWidth = "128px";
       row.append(roleSel, funcSel, showSel, pageSel);
       if (hasData) left.appendChild(row);
     }
     // Calculated fields: a name + a formula over field names (e.g. "Revenue - Cost"); each becomes
     // an extra value field. Rebuilt live in the preview; rows can be removed.
-    const calcWrap = document.createElement("div"); calcWrap.style.cssText = "margin-top:8px";
+    const calcWrap = document.createElement("div"); calcWrap.className = "sheetedit-pivot-group";
     const renderCalc = (): void => {
       calcWrap.textContent = "";
       calcFields.forEach((cf, k) => {
-        const row = document.createElement("div"); row.className = "sheetedit-pivot-calc"; row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:6px";
-        const nameI = document.createElement("input"); nameI.type = "text"; nameI.placeholder = t("pivotCalcName"); nameI.value = cf.name; nameI.style.cssText = selStyle + ";flex:0 0 90px"; nameI.dataset.field = `calcname_${k}`;
+        const row = document.createElement("div"); row.className = "sheetedit-pivot-calc";
+        const nameI = document.createElement("input"); nameI.type = "text"; nameI.placeholder = t("pivotCalcName"); nameI.value = cf.name; nameI.className = "sheetedit-input name"; nameI.dataset.field = `calcname_${k}`;
         nameI.addEventListener("input", () => { cf.name = nameI.value; renderPreview(); });
-        const fI = document.createElement("input"); fI.type = "text"; fI.placeholder = t("pivotCalcFormula"); fI.value = cf.formula; fI.style.cssText = selStyle + ";flex:1 1 auto;min-width:0"; fI.dataset.field = `calcformula_${k}`;
+        const fI = document.createElement("input"); fI.type = "text"; fI.placeholder = t("pivotCalcFormula"); fI.value = cf.formula; fI.className = "sheetedit-input formula"; fI.dataset.field = `calcformula_${k}`;
         fI.addEventListener("input", () => { cf.formula = fI.value; renderPreview(); });
-        const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "✕"; rm.title = t("chartDelete"); rm.style.cssText = "font:inherit;padding:3px 7px;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:inherit;cursor:pointer";
+        const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "✕"; rm.title = t("chartDelete"); rm.className = "sheetedit-iconbtn";
         rm.addEventListener("click", () => { calcFields.splice(k, 1); renderCalc(); renderPreview(); });
         row.append(nameI, fI, rm); calcWrap.appendChild(row);
       });
-      const add = document.createElement("button"); add.type = "button"; add.dataset.role = "add-calc"; add.textContent = t("pivotCalcAdd"); add.style.cssText = "font:inherit;font-size:12px;padding:4px 9px;border:1px dashed var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:var(--sheetedit-muted,#aab2bf);cursor:pointer";
+      const add = document.createElement("button"); add.type = "button"; add.dataset.role = "add-calc"; add.textContent = t("pivotCalcAdd"); add.className = "sheetedit-addbtn";
       add.addEventListener("click", () => { calcFields.push({ name: `Calc${calcFields.length + 1}`, formula: "" }); renderCalc(); renderPreview(); });
       calcWrap.appendChild(add);
     };
     if (hasData) { renderCalc(); left.appendChild(calcWrap); }
     // Calculated items: a synthetic member of a row/column field, from a formula over that field's
     // item names (e.g. on Region: "North + South"). Shown as an extra row/column.
-    const ciWrap = document.createElement("div"); ciWrap.style.cssText = "margin-top:8px";
+    const ciWrap = document.createElement("div"); ciWrap.className = "sheetedit-pivot-group";
     const renderCalcItems = (): void => {
       ciWrap.textContent = "";
       const fieldOpts: [string, string][] = headers.map((h, i): [string, string] => [String(i), h]);
       calcItems.forEach((ci, k) => {
-        const row = document.createElement("div"); row.className = "sheetedit-pivot-calcitem"; row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap";
-        const fieldSel = mkSelect(fieldOpts, String(ci.field), (v) => { ci.field = Number(v); renderPreview(); }); fieldSel.style.maxWidth = "100px"; fieldSel.dataset.field = `citemfield_${k}`;
-        const nameI = document.createElement("input"); nameI.type = "text"; nameI.placeholder = t("pivotCalcName"); nameI.value = ci.name; nameI.style.cssText = selStyle + ";flex:0 0 80px"; nameI.dataset.field = `citemname_${k}`;
+        const row = document.createElement("div"); row.className = "sheetedit-pivot-calcitem";
+        const fieldSel = mkSelect(fieldOpts, String(ci.field), (v) => { ci.field = Number(v); renderPreview(); }); fieldSel.dataset.field = `citemfield_${k}`;
+        const nameI = document.createElement("input"); nameI.type = "text"; nameI.placeholder = t("pivotCalcName"); nameI.value = ci.name; nameI.className = "sheetedit-input name"; nameI.dataset.field = `citemname_${k}`;
         nameI.addEventListener("input", () => { ci.name = nameI.value; renderPreview(); });
-        const fI = document.createElement("input"); fI.type = "text"; fI.placeholder = t("pivotItemFormula"); fI.value = ci.formula; fI.style.cssText = selStyle + ";flex:1 1 auto;min-width:0"; fI.dataset.field = `citemformula_${k}`;
+        const fI = document.createElement("input"); fI.type = "text"; fI.placeholder = t("pivotItemFormula"); fI.value = ci.formula; fI.className = "sheetedit-input formula"; fI.dataset.field = `citemformula_${k}`;
         fI.addEventListener("input", () => { ci.formula = fI.value; renderPreview(); });
-        const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "✕"; rm.style.cssText = "font:inherit;padding:3px 7px;border:1px solid var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:inherit;cursor:pointer";
+        const rm = document.createElement("button"); rm.type = "button"; rm.textContent = "✕"; rm.className = "sheetedit-iconbtn";
         rm.addEventListener("click", () => { calcItems.splice(k, 1); renderCalcItems(); renderPreview(); });
         row.append(fieldSel, nameI, fI, rm); ciWrap.appendChild(row);
       });
-      const add = document.createElement("button"); add.type = "button"; add.dataset.role = "add-calcitem"; add.textContent = t("pivotItemAdd"); add.style.cssText = "font:inherit;font-size:12px;padding:4px 9px;border:1px dashed var(--sheetedit-btn,#3a4047);border-radius:5px;background:none;color:var(--sheetedit-muted,#aab2bf);cursor:pointer";
+      const add = document.createElement("button"); add.type = "button"; add.dataset.role = "add-calcitem"; add.textContent = t("pivotItemAdd"); add.className = "sheetedit-addbtn";
       add.addEventListener("click", () => { const f = [...roles.keys()].find((i) => roles[i] === "rows" || roles[i] === "columns") ?? 0; calcItems.push({ field: f, name: `Item${calcItems.length + 1}`, formula: "" }); renderCalcItems(); renderPreview(); });
       ciWrap.appendChild(add);
     };
     if (hasData) { renderCalcItems(); left.appendChild(ciWrap); }
     // Subtotals toggle (meaningful once there are nested row/column fields).
     if (hasData) {
-      const stRow = document.createElement("label"); stRow.style.cssText = "display:flex;align-items:center;gap:7px;margin-top:6px;color:var(--sheetedit-muted,#aab2bf)";
+      const stRow = document.createElement("label"); stRow.className = "sheetedit-checkline";
       const cb = document.createElement("input"); cb.type = "checkbox"; cb.dataset.field = "subtotals"; cb.checked = subtotals;
       cb.addEventListener("change", () => { subtotals = cb.checked; renderPreview(); });
       const sp = document.createElement("span"); sp.textContent = t("pivotSubtotals");
       stRow.append(cb, sp); left.appendChild(stRow);
     }
 
-    const actions = document.createElement("div"); actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:14px";
+    const actions = document.createElement("div"); actions.className = "sheetedit-actions is-plain";
     const close = (): void => modal.remove();
     const cancel = document.createElement("button"); cancel.textContent = t("chartCancel"); cancel.dataset.role = "cancel";
-    cancel.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-btn-border,#4a4f57);border-radius:6px;cursor:pointer;background:var(--sheetedit-btn,#3a3f47);color:var(--sheetedit-text,#e6e6e6)";
+    cancel.className = "sheetedit-dlg-btn";
     insertBtn = document.createElement("button"); insertBtn.textContent = t("pivotCreate"); insertBtn.dataset.role = "ok";
-    insertBtn.style.cssText = "font:inherit;font-size:13px;padding:6px 14px;border:1px solid var(--sheetedit-accent,#6e7bff);border-radius:6px;cursor:pointer;background:var(--sheetedit-accent,#6e7bff);color:#fff";
+    insertBtn.className = "sheetedit-dlg-btn is-primary";
     cancel.addEventListener("click", close);
     insertBtn.addEventListener("click", () => { const spec = pivotSpecFrom(range, roles, funcs, showAs, pageItems, subtotals, calcFields, calcItems); if (!spec.rows.length || !spec.values.length) return; close(); onApply(spec); });
     actions.append(cancel, insertBtn); card.appendChild(actions);
