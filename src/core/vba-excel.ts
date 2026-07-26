@@ -3,11 +3,14 @@ import {
   type Sheet, type StyleChange, type Workbook,
 } from "./model";
 import { setXlsxCellStyle } from "../adapters/xlsx/styles";
+import { setXlsxRowHidden } from "../adapters/xlsx/write";
 import { setOdsCellStyle } from "../adapters/ods/styles";
 import { setCellInput } from "./workbook";
 import { makeFormulaEvaluator } from "./recalc";
 import { canEditCell } from "./protection";
-import { EMPTY, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "./vba-value";
+import { filterHiddenRows, sortedPositions, sortRange, sortText, type SortKey } from "./range-ops";
+import { addSheet, deleteSheet, sheetsEditable } from "./sheet-ops";
+import { EMPTY, NOTHING, toNumber, toStr, VbaArray, VbaError, type VbaObject, type VbaValue } from "./vba-value";
 
 // ---------------------------------------------------------------------------
 // The Excel object model for VBA (Stage 3 of _plans/VBA_PLAN.md)
@@ -33,6 +36,11 @@ export interface ExcelHost {
   onBeforeWrite?: (sheetIndex: number, row: number, col: number) => void;
   /** Called when something other than a cell changed (sheet added, row hidden, protection). */
   onStructureChange?: () => void;
+  /**
+   * What Copy / Cut put down and PasteSpecial picks up. It lives on the host rather than on a
+   * Range so a macro can copy from one sheet and paste into another, as Excel does.
+   */
+  clipboard?: { values: string[][]; cut?: { sheetIndex: number; rect: Rect } };
 }
 
 const MAX_ROW = 1048576;
@@ -143,6 +151,21 @@ class InteriorObject implements VbaObject {
 /** VBA's Boolean-ish: True is -1, so a plain truthiness test is not enough on its own. */
 const truthy = (v: VbaValue): boolean => (typeof v === "boolean" ? v : toNumber(v) !== 0);
 
+/**
+ * Read an argument by name or by position. Real macros pass Sort and Find arguments by name
+ * (Key1:=, Order1:=, LookIn:=) far more often than positionally, so both have to work.
+ */
+function namedArg(args: VbaValue[], names: (string | undefined)[] | undefined, name: string, position: number): VbaValue | undefined {
+  if (names) {
+    const at = names.findIndex((n) => n?.toLowerCase() === name.toLowerCase());
+    if (at >= 0) return args[at];
+    // A call that names ANY argument may still pass earlier ones positionally, so fall through.
+    if (names[position] !== undefined) return undefined;
+  }
+  const v = args[position];
+  return v === EMPTY ? undefined : v;
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -238,7 +261,7 @@ export class RangeObject implements VbaObject {
     setCellInput(this.sheet, r, c, toStr(v));
   }
 
-  get(name: string, args: VbaValue[]): VbaValue {
+  get(name: string, args: VbaValue[], argNames?: (string | undefined)[]): VbaValue {
     const lower = name.toLowerCase();
     switch (lower) {
       case "item":
@@ -340,8 +363,12 @@ export class RangeObject implements VbaObject {
         return EMPTY;
       }
       case "merge": case "unmerge": return this.setMerged(lower === "merge");
-      case "copy": case "cut": case "pastespecial": case "sort": case "autofilter":
-      case "find": case "replace": case "removeduplicates":
+      case "sort": return this.sort(args, argNames);
+      case "autofilter": return this.autoFilter(args, argNames);
+      case "find": return this.find(args, argNames);
+      case "copy": case "cut": return this.copy(lower === "cut", args);
+      case "pastespecial": case "paste": return this.paste();
+      case "replace": case "removeduplicates": case "texttocolumns": case "advancedfilter":
         throw new VbaError(`Range.${name} is not supported by sheetedit yet`, 438);
       default:
         throw new VbaError(`Range.${name} is not supported by sheetedit`, 438);
@@ -476,6 +503,175 @@ export class RangeObject implements VbaObject {
   }
 
   /**
+   * Range.Sort. Key1/Key2 name a column, either as a Range inside this one or as a reference
+   * string; Order1/Order2 give the direction; Header says whether the first row is a title. The
+   * ordering itself is range-ops', the same one the grid's filter menu uses.
+   */
+  private sort(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const rect = this.clamped(this.first);
+    const keyCol = (v: VbaValue | undefined): number | undefined => {
+      if (v === undefined || v === EMPTY) return undefined;
+      if (v instanceof RangeObject) return v.areas[0]!.c1;
+      const refs = parseRef(this.host.wb, this.sheet, toStr(v));
+      return refs[0]?.c1;
+    };
+    const asc = (v: VbaValue | undefined): boolean => v === undefined || toNumber(v) !== 2; // xlDescending = 2
+    const keys: SortKey[] = [];
+    const k1 = keyCol(namedArg(args, names, "Key1", 0));
+    if (k1 !== undefined) keys.push({ col: k1, ascending: asc(namedArg(args, names, "Order1", 1)) });
+    const k2 = keyCol(namedArg(args, names, "Key2", 2));
+    if (k2 !== undefined) keys.push({ col: k2, ascending: asc(namedArg(args, names, "Order2", 4)) });
+    if (!keys.length) throw new VbaError("Sort needs a key column", 1004);
+    // xlYes = 1, xlNo = 2, xlGuess = 0. Excel's default for Range.Sort is xlNo.
+    const header = toNumber(namedArg(args, names, "Header", 5) ?? 2) === 1;
+    const rows = sortedPositions(rect, header);
+    for (const p of rows) {
+      this.checkWritable(p.r, p.c);
+      this.host.onBeforeWrite?.(this.sheetIndex, p.r, p.c);
+    }
+    sortRange(this.sheet, rect, keys, header);
+    return EMPTY;
+  }
+
+  /**
+   * Range.AutoFilter. With no arguments it toggles the filter over this range. With Field and
+   * Criteria1 it filters that column. Only the criteria forms that map onto sheetedit's own value
+   * filter are accepted; the rest refuse rather than filtering by something else.
+   */
+  private autoFilter(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const sheet = this.sheet;
+    const field = namedArg(args, names, "Field", 0);
+    const criteria = namedArg(args, names, "Criteria1", 1);
+    if (field === undefined) {
+      // Toggle, as Excel does when the call carries no field.
+      const rect = this.clamped(this.first);
+      sheet.autoFilter = sheet.autoFilter ? undefined : rect;
+      if (!sheet.autoFilter) { sheet.filters = undefined; sheet.filterHidden = undefined; }
+      this.applyFilter();
+      return EMPTY;
+    }
+    const af = sheet.autoFilter ?? this.clamped(this.first);
+    sheet.autoFilter = af;
+    const col = af.c1 + toNumber(field) - 1;
+    if (col < af.c1 || col > af.c2) throw new VbaError(`AutoFilter field ${toNumber(field)} is outside the range`, 1004);
+    if (criteria === undefined) {
+      // No criteria means "show all" for that column.
+      sheet.filters?.delete(col);
+      if (!sheet.filters?.size) sheet.filters = undefined;
+      this.applyFilter();
+      return EMPTY;
+    }
+    const wanted = toStr(criteria);
+    const m = /^([<>]=?|<>|=)?(.*)$/.exec(wanted)!;
+    const op = m[1] ?? "=";
+    const operand = m[2] ?? "";
+    const keep = new Set<string>();
+    for (let r = af.r1 + 1; r <= af.r2; r++) {
+      const text = sortText(sheet, r, col);
+      if (matchesCriterion(text, op, operand)) keep.add(text);
+    }
+    sheet.filters ??= new Map();
+    sheet.filters.set(col, keep);
+    this.applyFilter();
+    return EMPTY;
+  }
+
+  private applyFilter(): void {
+    const sheet = this.sheet;
+    const hidden = filterHiddenRows(sheet);
+    const af = sheet.autoFilter;
+    // filterHidden is separate from hiddenRows, and only hiddenRows goes through the outline
+    // writer, so an xlsx has to be told row by row or the filtering is lost on save.
+    if (af && this.host.wb.kind === "xlsx") {
+      for (let r = af.r1 + 1; r <= af.r2; r++) {
+        const was = sheet.filterHidden?.has(r) ?? false;
+        if (hidden.has(r) !== was) setXlsxRowHidden(sheet, r, hidden.has(r));
+      }
+    }
+    sheet.filterHidden = hidden.size ? hidden : undefined;
+    if (this.host.wb.kind === "ods") sheet.odsDirty = true;
+    this.host.onStructureChange?.();
+  }
+
+  /**
+   * Range.Find, which macros use constantly. Returns the first matching cell as a Range, or
+   * Nothing when there is none, which is exactly what `If Not c Is Nothing` tests.
+   */
+  private find(args: VbaValue[], names: (string | undefined)[] | undefined): VbaValue {
+    const what = namedArg(args, names, "What", 0);
+    if (what === undefined) throw new VbaError("Find needs something to look for", 1004);
+    const needle = toStr(what);
+    // xlPart = 2 (the default for Find), xlWhole = 1.
+    const whole = toNumber(namedArg(args, names, "LookAt", 4) ?? 2) === 1;
+    // xlValues = -4163 looks at the displayed value; xlFormulas = -4123 at what the cell holds.
+    const inFormulas = toNumber(namedArg(args, names, "LookIn", 3) ?? -4163) === -4123;
+    const caseSensitive = truthy(namedArg(args, names, "MatchCase", 6) ?? false);
+    const norm = (s: string): string => (caseSensitive ? s : s.toLowerCase());
+    const target = norm(needle);
+    for (const { r, c } of this.cells()) {
+      const cell = getCell(this.sheet, r, c);
+      const text = inFormulas
+        ? (cell?.formula != null ? `=${cell.formula}` : cell?.value ?? "")
+        : sortText(this.sheet, r, c);
+      const hay = norm(text);
+      if (whole ? hay === target : hay.includes(target)) {
+        return new RangeObject(this.host, this.sheetIndex, [{ r1: r, c1: c, r2: r, c2: c }]);
+      }
+    }
+    return NOTHING;
+  }
+
+  /** Copy / Cut: the values go on the host's clipboard. A Cut also remembers where from. */
+  private copy(cut: boolean, args: VbaValue[]): VbaValue {
+    const rect = this.clamped(this.first);
+    const values: string[][] = [];
+    for (let r = rect.r1; r <= rect.r2; r++) {
+      const row: string[] = [];
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        const cell = getCell(this.sheet, r, c);
+        row.push(cell?.formula != null ? `=${cell.formula}` : cell?.value ?? "");
+      }
+      values.push(row);
+    }
+    this.host.clipboard = { values, ...(cut ? { cut: { sheetIndex: this.sheetIndex, rect } } : {}) };
+    // `Range("A1:B2").Copy Range("D1")` pastes straight away, which is the common one-liner.
+    const dest = args[0];
+    if (dest instanceof RangeObject) dest.paste();
+    return EMPTY;
+  }
+
+  /**
+   * Paste whatever Copy or Cut put down, at this range's top-left corner. Values and formulas
+   * only: formats are not carried, and a PasteSpecial asking for them says so rather than
+   * pasting the values and calling it done.
+   */
+  paste(): VbaValue {
+    const clip = this.host.clipboard;
+    if (!clip) throw new VbaError("there is nothing to paste", 1004);
+    const a = this.first;
+    clip.values.forEach((row, dr) => row.forEach((text, dc) => {
+      const r = a.r1 + dr, c = a.c1 + dc;
+      this.checkWritable(r, c);
+      this.host.onBeforeWrite?.(this.sheetIndex, r, c);
+      setCellInput(this.sheet, r, c, text);
+    }));
+    if (clip.cut) {
+      // A Cut clears the source once it lands, which is what makes it a move.
+      const src = this.host.wb.sheets[clip.cut.sheetIndex];
+      if (src) {
+        for (let r = clip.cut.rect.r1; r <= clip.cut.rect.r2; r++) {
+          for (let c = clip.cut.rect.c1; c <= clip.cut.rect.c2; c++) {
+            this.host.onBeforeWrite?.(clip.cut.sheetIndex, r, c);
+            setCellInput(src, r, c, "");
+          }
+        }
+      }
+      this.host.clipboard = undefined;
+    }
+    return EMPTY;
+  }
+
+  /**
    * SpecialCells, restricted to the kinds a range can answer without Excel's own scan: blanks,
    * constants and formulas. Anything else refuses rather than returning a plausible wrong set.
    */
@@ -560,6 +756,11 @@ export class WorksheetObject implements VbaObject {
     return s;
   }
   private whole(): Rect { return { r1: 1, c1: 1, r2: Math.max(1, this.sheet.maxRow), c2: Math.max(1, this.sheet.maxCol) }; }
+  /** Where a bare Paste lands: the selection, or A1 when nothing is selected. */
+  private selectionOrA1(): RangeObject {
+    const sel = this.host.selection ?? { r1: 1, c1: 1, r2: 1, c2: 1 };
+    return new RangeObject(this.host, this.index, [sel]);
+  }
 
   get(name: string, args: VbaValue[]): VbaValue {
     const lower = name.toLowerCase();
@@ -606,7 +807,20 @@ export class WorksheetObject implements VbaObject {
       }
       case "protectcontents": return !!this.sheet.protection?.sheet;
       case "calculate": return EMPTY; // the run recalculates once at the end
-      case "visible": case "delete": case "copy": case "move": case "printout": case "exportasfixedformat":
+      case "paste": {
+        const at = args[0] instanceof RangeObject ? (args[0] as RangeObject) : this.selectionOrA1();
+        return at.paste();
+      }
+      case "delete": {
+        if (!sheetsEditable(this.host.wb)) throw new VbaError("sheets cannot be deleted in this format", 1004);
+        if (this.host.wb.sheets.length <= 1) throw new VbaError("a workbook needs at least one sheet", 1004);
+        deleteSheet(this.host.wb, this.index);
+        // The active sheet may have just been removed from under the run.
+        this.host.activeSheet = Math.min(this.host.activeSheet, this.host.wb.sheets.length - 1);
+        this.host.onStructureChange?.();
+        return EMPTY;
+      }
+      case "visible": case "copy": case "move": case "printout": case "exportasfixedformat":
         throw new VbaError(`Worksheet.${name} is not supported by sheetedit yet`, 438);
       default:
         throw new VbaError(`Worksheet.${name} is not supported by sheetedit`, 438);
@@ -646,7 +860,14 @@ class SheetsObject implements VbaObject {
       return this.byArg(args[0]!);
     }
     if (lower === "count") return this.host.wb.sheets.length;
-    if (lower === "add") throw new VbaError("Worksheets.Add is not supported by sheetedit yet", 438);
+    if (lower === "add") {
+      if (!sheetsEditable(this.host.wb)) throw new VbaError("sheets cannot be added in this format", 1004);
+      // Excel returns the new sheet, and macros chain straight onto it: Worksheets.Add.Name = "x".
+      const at = addSheet(this.host.wb);
+      this.host.activeSheet = at;
+      this.host.onStructureChange?.();
+      return new WorksheetObject(this.host, at);
+    }
     throw new VbaError(`Worksheets.${name} is not supported by sheetedit`, 438);
   }
   enumerate(): VbaValue[] {
@@ -821,4 +1042,26 @@ function selectionRange(host: ExcelHost): RangeObject {
 function activeCellRange(host: ExcelHost): RangeObject {
   const a = host.activeCell ?? { r: host.selection?.r1 ?? 1, c: host.selection?.c1 ?? 1 };
   return new RangeObject(host, host.activeSheet, [{ r1: a.r, c1: a.c, r2: a.r, c2: a.c }]);
+}
+
+/** One AutoFilter criterion, in the forms Excel's Criteria1 string actually takes. */
+function matchesCriterion(text: string, op: string, operand: string): boolean {
+  const n = Number(text), m = Number(operand);
+  const numeric = text !== "" && operand !== "" && !Number.isNaN(n) && !Number.isNaN(m);
+  switch (op) {
+    case "=": {
+      // "=" with * or ? is a wildcard match, which is how Criteria1 spells "starts with".
+      if (/[*?]/.test(operand)) {
+        const re = new RegExp(`^${operand.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+        return re.test(text);
+      }
+      return text.toLowerCase() === operand.toLowerCase();
+    }
+    case "<>": return text.toLowerCase() !== operand.toLowerCase();
+    case ">": return numeric ? n > m : text > operand;
+    case ">=": return numeric ? n >= m : text >= operand;
+    case "<": return numeric ? n < m : text < operand;
+    case "<=": return numeric ? n <= m : text <= operand;
+    default: throw new VbaError(`AutoFilter criterion "${op}${operand}" is not supported by sheetedit`, 1004);
+  }
 }

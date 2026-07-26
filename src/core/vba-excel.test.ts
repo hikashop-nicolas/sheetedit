@@ -313,10 +313,9 @@ describe("what is not modelled", () => {
     const wb = bareWorkbook([[1]]);
     const cases: [string, RegExp][] = [
       ['Range("A1").PivotTable', /Range.PivotTable is not supported/],
-      ['Range("A1").Sort', /Range.Sort is not supported by sheetedit yet/],
+      ['Range("A1").RemoveDuplicates', /Range.RemoveDuplicates is not supported by sheetedit yet/],
       ['Range("A1").FormulaR1C1 = "=RC[-1]"', /FormulaR1C1 is not supported/],
       ["ActiveSheet.Visible", /Worksheet.Visible is not supported by sheetedit yet/],
-      ["Worksheets.Add", /Worksheets.Add is not supported by sheetedit yet/],
       ['Range("A1").Font.Shadow = True', /Font.Shadow is not supported/],
     ];
     for (const [src, message] of cases) expect(() => run(src, wb), src).toThrow(message);
@@ -423,5 +422,182 @@ describe("the write hook", () => {
     });
     // The old value is still there when the hook fires, which is what makes one undo step possible.
     expect(seen).toEqual(["0:1:1=1", "0:1:2=2"]);
+  });
+});
+
+describe("Range.Sort", () => {
+  const data = (): Workbook => bareWorkbook([["Name", "Score"], ["Carol", 3], ["alice", 10], ["Bob", 7]]);
+
+  it("sorts by a key column, keeping each row's cells together", () => {
+    const wb = data();
+    run('Range("A1:B4").Sort Key1:=Range("A1"), Header:=xlYes', wb);
+    expect([at(wb, 2, 1), at(wb, 3, 1), at(wb, 4, 1)]).toEqual(["alice", "Bob", "Carol"]);
+    expect([at(wb, 2, 2), at(wb, 3, 2), at(wb, 4, 2)]).toEqual(["10", "7", "3"]);
+  });
+
+  it("sorts descending on xlDescending", () => {
+    const wb = data();
+    run('Range("A1:B4").Sort Key1:=Range("B1"), Order1:=xlDescending, Header:=xlYes', wb);
+    expect([at(wb, 2, 2), at(wb, 3, 2), at(wb, 4, 2)]).toEqual(["10", "7", "3"]);
+  });
+
+  it("treats the first row as data unless Header says otherwise", () => {
+    const wb = data();
+    run('Range("A1:B4").Sort Key1:=Range("A1")', wb);
+    // "Name" sorts among the values, which is what xlNo (the default) means.
+    expect(at(wb, 4, 1)).toBe("Name");
+  });
+
+  it("takes a second key for ties", () => {
+    const wb = bareWorkbook([["b", 2], ["a", 2], ["a", 1]]);
+    run('Range("A1:B3").Sort Key1:=Range("A1"), Key2:=Range("B1")', wb);
+    expect([at(wb, 1, 1), at(wb, 1, 2)]).toEqual(["a", "1"]);
+    expect([at(wb, 2, 1), at(wb, 2, 2)]).toEqual(["a", "2"]);
+  });
+
+  it("puts blanks last in both directions", () => {
+    const wb = bareWorkbook([["b"], [""], ["a"]]);
+    run('Range("A1:A3").Sort Key1:=Range("A1")', wb);
+    expect([at(wb, 1, 1), at(wb, 2, 1), at(wb, 3, 1)]).toEqual(["a", "b", ""]);
+    run('Range("A1:A3").Sort Key1:=Range("A1"), Order1:=xlDescending', wb);
+    expect([at(wb, 1, 1), at(wb, 2, 1), at(wb, 3, 1)]).toEqual(["b", "a", ""]);
+  });
+
+  it("stops when no key was given", () => {
+    expect(() => run('Range("A1:B4").Sort', data())).toThrow(/needs a key column/);
+  });
+});
+
+describe("Range.AutoFilter", () => {
+  const data = (): Workbook => bareWorkbook([["Fruit", "Qty"], ["apple", 5], ["pear", 2], ["apple", 9]]);
+
+  it("turns the filter on over the range, and off again", () => {
+    const wb = data();
+    run('Range("A1:B4").AutoFilter', wb);
+    expect(wb.sheets[0]!.autoFilter).toEqual({ r1: 1, c1: 1, r2: 4, c2: 2 });
+    run('Range("A1:B4").AutoFilter', wb);
+    expect(wb.sheets[0]!.autoFilter).toBeUndefined();
+  });
+
+  it("hides the rows a criterion excludes", () => {
+    const wb = data();
+    run('Range("A1:B4").AutoFilter Field:=1, Criteria1:="apple"', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []]).toEqual([3]); // the pear row
+  });
+
+  it("understands the comparison criteria", () => {
+    const wb = data();
+    run('Range("A1:B4").AutoFilter Field:=2, Criteria1:=">4"', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []]).toEqual([3]);
+  });
+
+  it("understands a wildcard", () => {
+    const wb = data();
+    run('Range("A1:B4").AutoFilter Field:=1, Criteria1:="=p*"', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []].sort((a, b) => a - b)).toEqual([2, 4]);
+  });
+
+  it("shows everything again when the criterion is dropped", () => {
+    const wb = data();
+    run('Range("A1:B4").AutoFilter Field:=1, Criteria1:="apple"', wb);
+    run('Range("A1:B4").AutoFilter Field:=1', wb);
+    expect(wb.sheets[0]!.filterHidden).toBeUndefined();
+  });
+
+  it("marks the hidden rows in the file, not only in the model", async () => {
+    // filterHidden lives beside hiddenRows and is not persisted by the outline writer, so the
+    // row elements have to be flagged directly or a save loses the filtering.
+    const { writeWorkbook } = await import("./workbook");
+    const { strFromU8, unzipSync } = await import("fflate");
+    const wb = readWorkbook(makeXlsx(), "book.xlsx");
+    run('Range("A1:A3").Value = "x"\nRange("A2").Value = "y"\nRange("A1:A3").AutoFilter Field:=1, Criteria1:="x"', wb);
+    expect([...wb.sheets[0]!.filterHidden ?? []]).toEqual([2]);
+    const sheetXml = strFromU8(unzipSync(writeWorkbook(wb))["xl/worksheets/sheet1.xml"]!);
+    expect(sheetXml).toMatch(/<row[^>]*r="2"[^>]*hidden="1"/);
+  });
+
+  it("stops on a field outside the range", () => {
+    expect(() => run('Range("A1:B4").AutoFilter Field:=9, Criteria1:="x"', data())).toThrow(/outside the range/);
+  });
+});
+
+describe("Range.Find", () => {
+  const data = (): Workbook => bareWorkbook([["alpha", "beta"], ["gamma", "delta"]]);
+
+  it("returns the first matching cell as a Range", () => {
+    expect(evalIn('Range("A1:B2").Find("delta").Address', data())).toBe("$B$2");
+  });
+
+  it("matches a substring by default, and the whole cell on xlWhole", () => {
+    expect(evalIn('Range("A1:B2").Find("amm").Address', data())).toBe("$A$2");
+    expect(evalIn('Range("A1:B2").Find(What:="amm", LookAt:=xlWhole) Is Nothing', data())).toBe(true);
+  });
+
+  it("ignores case unless MatchCase says not to", () => {
+    expect(evalIn('Range("A1:B2").Find("ALPHA").Address', data())).toBe("$A$1");
+    expect(evalIn('Range("A1:B2").Find(What:="ALPHA", MatchCase:=True) Is Nothing', data())).toBe(true);
+  });
+
+  it("gives Nothing when there is no match, which is what macros test for", () => {
+    expect(evalIn('Range("A1:B2").Find("nope") Is Nothing', data())).toBe(true);
+  });
+});
+
+describe("Copy, Cut and Paste", () => {
+  it("copies values and formulas to another place", () => {
+    const wb = bareWorkbook([[1, 2], [3, 4]]);
+    run('Range("A1:B2").Copy Range("D1")', wb);
+    expect([at(wb, 1, 4), at(wb, 1, 5), at(wb, 2, 4), at(wb, 2, 5)]).toEqual(["1", "2", "3", "4"]);
+    expect(at(wb, 1, 1)).toBe("1"); // the source is untouched
+  });
+
+  it("pastes in a second statement, as a macro usually writes it", () => {
+    const wb = bareWorkbook([[7]]);
+    run('Range("A1").Copy\nRange("C3").PasteSpecial', wb);
+    expect(at(wb, 3, 3)).toBe("7");
+  });
+
+  it("carries a formula across as a formula", () => {
+    const wb = bareWorkbook([[1], [2]]);
+    run('Range("B1").Formula = "=A1+A2"\nRange("B1").Copy Range("C1")', wb);
+    expect(getCell(wb.sheets[0]!, 1, 3)?.formula).toBe("A1+A2");
+  });
+
+  it("clears the source on a Cut, which is what makes it a move", () => {
+    const wb = bareWorkbook([[1, 2]]);
+    run('Range("A1:B1").Cut Range("A3")', wb);
+    expect([at(wb, 3, 1), at(wb, 3, 2)]).toEqual(["1", "2"]);
+    expect([at(wb, 1, 1), at(wb, 1, 2)]).toEqual(["", ""]);
+  });
+
+  it("copies between sheets", () => {
+    const wb = bareWorkbook([[5]]);
+    wb.sheets.push({ name: "Other", cells: new Map(), maxRow: 0, maxCol: 0 });
+    run('Range("A1").Copy\nWorksheets("Other").Range("B2").PasteSpecial', wb);
+    expect(getCell(wb.sheets[1]!, 2, 2)?.value).toBe("5");
+  });
+
+  it("says so when there is nothing on the clipboard", () => {
+    expect(() => run('Range("A1").PasteSpecial', bareWorkbook())).toThrow(/nothing to paste/);
+  });
+});
+
+describe("adding and deleting sheets", () => {
+  it("adds a sheet and hands it back for chaining", () => {
+    // Adding a sheet writes real parts, so this needs a real package rather than a bare model.
+    const wb = readWorkbook(makeXlsx(), "book.xlsx");
+    run('Worksheets.Add.Name = "Fresh"', wb);
+    expect(wb.sheets.map((s) => s.name)).toContain("Fresh");
+  });
+
+  it("deletes a sheet", () => {
+    const wb = bareWorkbook([[1]]);
+    wb.sheets.push({ name: "Doomed", cells: new Map(), maxRow: 0, maxCol: 0 });
+    run('Worksheets("Doomed").Delete', wb);
+    expect(wb.sheets.map((s) => s.name)).toEqual(["Sheet1"]);
+  });
+
+  it("refuses to delete the only sheet", () => {
+    expect(() => run("ActiveSheet.Delete", bareWorkbook([[1]]))).toThrow(/at least one sheet/);
   });
 });

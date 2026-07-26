@@ -18,6 +18,7 @@ import { makeFormulaEvaluator, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
+import { columnFilterValues, filterHiddenRows, sortedPositions, sortRange } from "./range-ops";
 import { addSheet, renameSheet, deleteSheet, moveSheet, sheetsEditable } from "./sheet-ops";
 import { SHEETEDIT_CSS } from "./ui/styles.generated";
 import { SHEET_LOCK_DEFAULTS, canEditCell, canEditRange, hasPassword, isBlocked, isProtected, isStructureLocked, type SheetLock, type SheetProtection } from "./protection";
@@ -3393,26 +3394,15 @@ export function createSheetEditor(
   }
 
   // ---- Sort & filter (autofilter) ----
-  const cellEditText = (sheet: Sheet, r: number, c: number): string => { const cell = getCell(sheet, r, c); return cell ? (cell.formula != null ? `=${cell.formula}` : cell.value) : ""; };
-  const cellText = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
-  // Distinct display values in a column's data rows (autofilter header row excluded).
-  const columnValues = (sheet: Sheet, col: number): string[] => {
-    const af = sheet.autoFilter; if (!af) return [];
-    const seen = new Set<string>();
-    for (let r = af.r1 + 1; r <= af.r2; r++) seen.add(cellText(sheet, r, col));
-    return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  };
+  const columnValues = (sheet: Sheet, col: number): string[] => columnFilterValues(sheet, col);
   // Recompute which data rows are hidden from the per-column value filters, write the row-hidden
   // state, and re-render.
   const recomputeFilter = (sheet: Sheet): void => {
     const af = sheet.autoFilter; if (!af) return;
-    const hidden = new Set<number>();
+    const hidden = filterHiddenRows(sheet);
     for (let r = af.r1 + 1; r <= af.r2; r++) {
-      let show = true;
-      if (sheet.filters) for (const [col, allowed] of sheet.filters) if (!allowed.has(cellText(sheet, r, col))) { show = false; break; }
       const wasHidden = sheet.filterHidden?.has(r) ?? false;
-      if (!show) hidden.add(r);
-      if (!show !== wasHidden && wb.kind === "xlsx") setXlsxRowHidden(sheet, r, !show);
+      if (hidden.has(r) !== wasHidden && wb.kind === "xlsx") setXlsxRowHidden(sheet, r, hidden.has(r));
     }
     sheet.filterHidden = hidden.size ? hidden : undefined;
     // ODS persists row visibility from the model on save; flag the sheet so it is re-emitted.
@@ -3420,15 +3410,8 @@ export function createSheetEditor(
     mark();
     renderGrid();
   };
-  const cmpKey = (a: string, b: string): number => {
-    const na = Number(a), nb = Number(b), aNum = a !== "" && !isNaN(na), bNum = b !== "" && !isNaN(nb);
-    if (a === "" && b !== "") return 1; // blanks last
-    if (b === "" && a !== "") return -1;
-    if (aNum && bNum) return na - nb;
-    return a.localeCompare(b, undefined, { numeric: true });
-  };
-  // Sort the autofilter data rows by a column (values move; per-cell styles stay in place, and a
-  // formula in the sorted range moves as text without reference adjustment).
+  // Sort the autofilter data rows by a column. The ordering itself lives in range-ops, shared with
+  // VBA's Range.Sort so the two cannot disagree about what "sorted" means.
   const sortByColumn = (sheet: Sheet, col: number, asc: boolean): void => {
     const af = sheet.autoFilter; if (!af) return;
     const r0 = af.r1 + 1;
@@ -3436,15 +3419,8 @@ export function createSheetEditor(
     // Sorting rewrites the data rows, so it needs both the sort permission and writable cells.
     if (!allowAction("sort")) return;
     if (!allowRangeEdit({ r1: r0, c1: af.c1, r2: af.r2, c2: af.c2 })) return;
-    const cols: number[] = []; for (let c = af.c1; c <= af.c2; c++) cols.push(c);
-    const order: { key: string; texts: Map<number, string> }[] = [];
-    for (let r = r0; r <= af.r2; r++) { const texts = new Map<number, string>(); for (const c of cols) texts.set(c, cellEditText(sheet, r, c)); order.push({ key: cellText(sheet, r, col), texts }); }
-    order.sort((a, b) => cmpKey(a.key, b.key) * (asc ? 1 : -1));
-    const positions: { r: number; c: number }[] = [];
-    for (let r = r0; r <= af.r2; r++) for (const c of cols) positions.push({ r, c });
-    recordCells(positions, () => {
-      order.forEach((row, i) => { const tr = r0 + i; for (const c of cols) setCellInput(sheet, tr, c, row.texts.get(c) ?? ""); });
-    });
+    const rect = { r1: af.r1, c1: af.c1, r2: af.r2, c2: af.c2 };
+    recordCells(sortedPositions(rect, true), () => sortRange(sheet, rect, [{ col, ascending: asc }], true));
     recalc(wb);
     sheet.filters = undefined; sheet.filterHidden = undefined; // sort invalidates the value filter
     mark();
