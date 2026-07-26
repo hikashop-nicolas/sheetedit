@@ -300,8 +300,10 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     label must be nested <div><font> in the VML textbox or LibreOffice does not find it. Both were
     caught by round-tripping a CREATED control rather than only a hand-built one.
   - VBA: sheetedit reads, runs and writes macros now, through the vbalang library plus the Excel
-    object model in `vba-excel.ts`. See `_plans/done/VBA_PLAN.md`. Note XLSX cannot hold VBA at all;
-    macros require XLSM/XLSB/XLS.
+    object model in `vba-excel.ts`. See `_plans/done/VBA_PLAN.md`. A macro compiled by our own
+    writer runs in LibreOffice from a button we created, which is the one check a parser cannot
+    make: it proves a module with no p-code cache in front of it still compiles elsewhere. Note
+    XLSX cannot hold VBA at all; macros require XLSM/XLSB/XLS.
 - **Undo covers the sheet-level settings** (protection, page setup, panes, outline grouping) and the
   workbook theme, not just cell edits. A cell edit records its own fields; these live on the sheet,
   so the step carries a before/after snapshot instead, via the history's existing undoExtra /

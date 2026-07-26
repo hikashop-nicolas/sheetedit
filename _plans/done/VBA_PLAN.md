@@ -179,6 +179,17 @@ The seam that made the split cheap was there from Stage 2: the interpreter only 
     same CLSIDs and timestamps, with only start sector and size rewritten. A vbaProject.bin holds
     parts sheetedit does not model, and inventing values for them would be worse than leaving them.
 
-  Verified against LibreOffice, an independent implementation: a rewritten `.xlsm` converted with
-  `--convert-to fods` carries the new source, both new procedures, and no trace of the old one.
-  Not verified against Excel itself, which is not available here.
+  **Verified against LibreOffice twice over, the second time behaviourally.** Headless: a rewritten
+  `.xlsm` converted with `--convert-to fods` carries the new source and no trace of the old one.
+  Interactively (2026-07-26): a workbook whose macro source was compiled by our own writer OPENS
+  CLEANLY AND RUNS in LibreOffice, driven from a button sheetedit created and wired through
+  `<x:FmlaMacro>`. The macro read two cells, multiplied them, and wrote three results back,
+  accented string included.
+
+  That is the check that mattered. Dropping the p-code cache was the riskiest decision in this
+  stage, and no parser can judge it: only an engine that COMPILES the source can say whether a
+  module with no cache in front of it still works. An implementation with nothing in common with
+  ours compiled and ran it.
+
+  Still not verified against Excel itself, which is not available here. Excel is stricter than
+  LibreOffice, so this raises the confidence rather than settling it.

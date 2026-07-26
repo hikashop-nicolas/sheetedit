@@ -269,11 +269,13 @@ with `WorksheetFunction` delegating to sheetedit's own formula engine rather tha
 implementation of `SUM`. A `Range` can cover several areas, which is what makes `SpecialCells` and
 `Union` behave.
 
-**Not verified against Excel.** There is no Excel on the machine this was built on, so the writer is
-checked against the spec, sheetedit's own round-trip, and LibreOffice, which reads a rewritten
-project and reports the new source. Dropping the compiled p-code cache when source is rewritten (so
-the workbook can never show one macro and run another) is the decision most likely to behave
-differently in real Excel.
+**Verified in LibreOffice, not in Excel.** A workbook whose macro source was compiled by sheetedit's
+own writer opens and *runs* in LibreOffice, driven from a button sheetedit created: the macro reads
+cells, computes, and writes results back, accented text included. That matters more than a parse
+check, because rewriting source means dropping the compiled p-code cache (so the workbook can never
+show one macro and run another), and only an engine that compiles the source can say whether that
+still works. There is no Excel on the machine this was built on, and Excel is stricter, so this
+raises the confidence rather than settling it.
 
 ## Hidden sheets
 
