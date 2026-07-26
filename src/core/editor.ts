@@ -29,6 +29,7 @@ import { isSigned, subNames, vbaPartOf } from "./vba";
 import { editModuleSource, findSheetHandler, findWorkbookHandler, hasEventHandlers, runWorkbookMacro, runnableSubs } from "./vba-macro";
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
+import { hasActiveX } from "../adapters/xlsx/control-read";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -1399,6 +1400,14 @@ export function createSheetEditor(
       const note = document.createElement("p");
       note.className = "sheetedit-note";
       note.textContent = t("vbaSigned");
+      card.appendChild(note);
+    }
+    // An ActiveX control draws nothing on the grid, so without this the user sees a gap where a
+    // control should be and no reason for it.
+    if (hasActiveX(wb.files)) {
+      const note = document.createElement("p");
+      note.className = "sheetedit-note";
+      note.textContent = t("vbaActiveX");
       card.appendChild(note);
     }
 

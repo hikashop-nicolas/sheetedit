@@ -13,4 +13,7 @@ end to end: the container format and the compression can each be checked in isol
 combination needs a genuine project written by Excel. They use different code pages (950 and 1252)
 on purpose, since decoding is part of what is being tested.
 
-Their macros are never executed. They are parsed, and nothing in sheetedit runs VBA.
+Their macros ARE executed by the tests now: one of them runs end to end against a stub object model
+in `vba-excel.test.ts`, and again against the real one. That is the point of having genuine files
+rather than hand-written ones, since a macro nobody wrote for this project is the only honest test
+of an interpreter.
