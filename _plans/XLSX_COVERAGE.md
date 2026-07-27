@@ -1,110 +1,157 @@
 # sheetedit xlsx coverage report
 
-Audit of what the `.xlsx` path reads, edits and preserves, as of 2026-07-24 (Power Query, charts
-and pivot tables included). Tracks the gap list and the agreed priority order for closing it.
+Audit of what the `.xlsx` path reads, edits and preserves, as of 2026-07-27. Tracks the gap list and
+the priority order for closing it. The companion documents are `ODS_COVERAGE.md` for the ODF side and
+`SHEETEDIT_GAPS_PLAN.md` for the phase-by-phase record of how each area got here.
 
 ## Fully supported (read, edit in the grid, save)
 
+### Cells and formulas
 - Cell content: text, number, boolean, error; inline and shared strings.
 - Formulas + recalc: a large fast-formula-parser subset, recomputed in dependency order across
   sheets; legacy array formulas preserved; shared-formula groups de-shared safely on edit.
-- Number formats: resolved from styles.xml and applied to the display (date, currency, percent,
-  thousands); a typed value keeps the cell's format.
-- Cell styling: bold, italic, underline (+ flavour), strikethrough, font family/size, text
-  colour, fill colour, horizontal and vertical alignment, wrap, per-side borders.
-- Furigana (Japanese phonetic ruby).
-- Structure: insert/delete rows and columns (with formula and merge reference rewriting),
-  column-width and row-height resize, merge/unmerge.
-- View: frozen panes (sticky), hidden rows/columns.
-- Multiple sheets (switch via tabs), find and replace across sheets, fill down/right, on-device
-  formula assistant.
-- Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data,
-  merge/append), refresh, and Load (existing table or new sheet); can now author the first query
-  in a query-less workbook (bootstraps the DataMashup payload).
+- The library ships many common functions as empty stubs; those are filled in `core/functions.ts`
+  and `core/financial.ts` (statistics, SUMIFS/COUNTIFS/AVERAGEIFS/MAXIFS/MINIFS, MATCH / XLOOKUP /
+  XMATCH / CHOOSE / LOOKUP, SUBTOTAL / AGGREGATE, text, SWITCH, the financial family), so INDEX+MATCH
+  and the other everyday idioms recalculate. OFFSET / INDIRECT return real references
+  (`core/reference-fns.ts`) and LET is expanded before parsing (`core/let-expand.ts`).
+- Dynamic arrays: a formula returning a 2-D result spills into its anchor + range, with a #SPILL!
+  guard on collisions. The whole shaping family is supplied, since the parser has none of it:
+  UNIQUE / SORT / SORTBY / FILTER / SEQUENCE / TRANSPOSE / RANDARRAY / TAKE / DROP / CHOOSEROWS /
+  CHOOSECOLS / EXPAND / HSTACK / VSTACK / TOROW / TOCOL / WRAPROWS / WRAPCOLS / TEXTSPLIT, plus bare
+  range refs. FILTER needs an array mask (no range=scalar broadcasting).
+- Structured (table) references: `Table1[Units]`, `[[#Headers],[Units]]`, `[@Units]`, `[[A]:[B]]`,
+  `#All` / `#Data`, and a bare `Table1`.
+- Number formats resolved from styles.xml and applied to the display; a typed value keeps its format.
+
+### Presentation
+- Cell styling: bold, italic, underline (+ flavour), strikethrough, font family/size, text colour,
+  fill colour, horizontal and vertical alignment, wrap, per-side borders. Furigana (Japanese ruby).
+- Rich text within one cell: each run's own style renders, and is authored from the UI (select part
+  of a cell's text while editing, then bold/italic/underline/strike/colour/size/font). Retyping a
+  cell's text clears its runs, since the offsets would shift.
+- Text spill: a text too long for its column runs over the empty cells beside it and stops at the
+  first that holds anything, direction following the alignment. Numbers do not spill; rich text does.
+- Conditional formatting: full authoring and rendering, every rule kind. dxf / colour scales / data
+  bars / icon sets, is-true-formula (expression) rules, `cellIs` cell-ref and formula operands, and
+  time-period rules.
+- Workbook themes read (palette + scheme fonts) and switchable.
+- Grid metrics come from the workbook rather than from constants: a column's `width` is in character
+  units of the NORMAL STYLE's font, so the conversion uses that font's maximum digit width, and
+  `<sheetFormatPr defaultRowHeight/defaultColWidth>` is honoured.
+
+### Structure and view
+- Insert/delete rows and columns (rewriting formula and merge references), column-width and
+  row-height resize, merge/unmerge, fill down/right, find and replace across sheets.
+- Sheet management: add / rename / delete / reorder; hidden sheets read, honoured and authored.
+- Frozen panes and SPLIT panes: read, rendered, authored and written. A split is two real viewports
+  (a 2x2 of quadrants when both axes are split), and every floating overlay follows the split.
+- Outline grouping (rows and columns): read, rendered as an Excel-style gutter with +/- and level
+  buttons, authored and written.
+- Hidden rows/columns, and autofilter: interactive sort and per-column value filtering, persisted.
+- Print settings: page setup, margins, header/footer, print area, repeated rows and page breaks, read,
+  authored and drawn on the grid.
+- Protection: sheet and workbook, read, enforced in the grid (locked cells become read-only), authored.
+- Undo covers the sheet-level settings (protection, page setup, panes, outline grouping) as well as
+  cell edits.
+
+### Objects on the grid
 - Charts: read, render (Chart.js + custom plugins), full create/edit dialog and write for every
-  DrawingML chart type, all option tiers (axes, labels, trendlines, error bars, stock, of-pie,
-  surface, styling), pseudo-3D, xlsx + ods round-trip.
-- Pivot tables: read, outline on the grid, and create/edit/refresh. The insert dialog assigns
-  columns to Rows / Columns / Values(+function) / Report Filter with subtotals and a live preview;
-  nested row/column fields, multiple value fields (sum/count/average/min/max) and page filters are
-  supported. Emits the native pivotCache + pivotTable parts with refreshOnLoad; edit/refresh work
-  in place, for authored and file-read pivots alike (the spec is reconstructed on read). Verified
-  through LibreOffice round-trips (xlsx + ods).
+  DrawingML chart type, all option tiers, pseudo-3D, xlsx + ods round-trip.
+- Pivot tables: read, outline on the grid, create/edit/refresh, nested row/column fields, multiple
+  value fields, page filters, subtotals, "show values as", calculated fields, calculated items, and a
+  pivot chart.
+- Images: rendered from `xl/media/*` and the drawing anchors; move (drag), resize (corner handle) and
+  replace (double-click) are authored and written back to the anchor / media part.
+- Shapes: read, rendered as an SVG overlay with fill / outline / centered text, and authored (insert,
+  move, resize, edit, delete). A shape's `<xdr:style>` theme reference resolves through the theme's
+  fill and line style lists, gradients included, rendered as real SVG gradients. A shape carrying a
+  `macro` attribute is a button and runs it.
+- Windows metafiles (WMF / EMF) render: a metafile is a recorded list of GDI drawing calls rather
+  than an image, so it is replayed onto a canvas (emf-converter, lazy-loaded, failing soft). Covers
+  sheet images and an ActiveX control's Picture.
+- Sparklines: authored and rendered.
+- Slicers: read, rendered as a real slicer panel, interactive (click / ctrl-click / clear), written
+  back, and authorable. Pivot and TABLE slicers both; OLAP slicers render read-only.
+- Timelines: read, rendered, interactive date filtering, written back.
+- Comments and notes (legacy + threaded): corner marker + hover popover, authored.
+- Hyperlinks: read, rendered, clickable, authored. Data-validation dropdowns: all rule types author,
+  read and validate; list rules show a picker.
 
-## Preserved on save, but inert in the grid (round-trips, not rendered or editable)
+### Controls and macros
+- Form controls: read, rendered and interactive; the linked cell is the point, so a checkbox writes
+  its state where the file says.
+- ActiveX (Forms 2.0): read from the binary through an [MS-OFORMS] parser, rendered as live controls
+  and WRITTEN back. Covers CommandButton, the MorphData family (checkbox, combo, text, list, option,
+  toggle), Label, Image, ScrollBar and SpinButton. Properties honoured include VariousPropertyBits
+  (Enabled, Locked, BackStyle, ColumnHeads, MatchRequired, Alignment, Editable, WordWrap, AutoSize,
+  MultiLine), DisplayStyle (the only thing separating an editable combo from a drop-list, since they
+  share a class id), the numeric family (MaxLength, PasswordChar, BorderStyle/Color, SpecialEffect,
+  ScrollBars, ListRows, ListWidth, ColumnCount, BoundColumn, TextColumn, MultiSelect, MatchEntry,
+  ListStyle, ShowDropButtonWhen, DropButtonStyle, MousePointer, Accelerator, PicturePosition,
+  SmallChange, LargeChange, Orientation, Delay, ProportionalThumb), TextProps (the font), and
+  StreamData pictures. Writing covers every string a control carries and can ADD a property the
+  control does not yet have. Multi-column lists render as a grid.
+- VBA macros: read, run and written (vbalang). `Worksheet.OLEObjects` and `ListObjects` are on the
+  object model, and `ListObjects.Add` writes the whole package.
+- Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data, merge/append),
+  refresh, and Load; can author the first query in a query-less workbook.
 
-Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized
-with its sibling elements intact:
+## Preserved on save, but inert in the grid
 
-- Other drawings not modelled above (pictures, shapes, charts and pivot tables are now read +
-  rendered + editable, see above)
-- Form controls, ActiveX (slicers are now read + interactive, see below)
-- Defined names (read for recalc, not user-editable), autofilter state, outline grouping
-  (protection, print settings and workbook themes are now read + authored, see below)
+Survive because untouched parts are kept byte-for-byte and the worksheet DOM is re-serialized with
+its sibling elements intact:
 
-Now rendered (were inert): hyperlinks (click), data-validation dropdowns, conditional
-formatting (dxf / colour scales / data bars), comments and notes. See Progress below.
+- Third-party (non Forms 2.0) ActiveX controls. Irreducible: OOXML says such a control's content
+  "shall be solely determined by the corresponding object", so the format belongs to whoever wrote it.
+- Drawing types not modelled above (SmartArt, WordArt, embedded OLE objects other than ActiveX).
+- Defined names (read for recalc, not user-editable).
+- External data connections other than Power Query.
 
 ## Gaps / not handled
 
-- Dynamic-array spill: a plain formula returning a 2-D result spills into its anchor + range (with a
-  #SPILL! guard on collisions). fast-formula-parser ships no spill producers, so the whole family is
-  supplied: UNIQUE / SORT / SORTBY / FILTER / SEQUENCE / RANDARRAY / TAKE / DROP / CHOOSEROWS /
-  CHOOSECOLS / EXPAND / HSTACK / VSTACK / TOROW / TOCOL / WRAPROWS / WRAPCOLS / TEXTSPLIT; TRANSPOSE
-  and bare range refs spill too. FILTER needs an array mask (no range=scalar broadcasting).
-- Formula coverage: the library leaves many common functions as empty stubs. Those are implemented
-  in core/functions.ts and core/financial.ts (statistics, SUMIFS/COUNTIFS/AVERAGEIFS/MAXIFS/MINIFS,
-  MATCH / XLOOKUP / XMATCH / CHOOSE / LOOKUP, SUBTOTAL / AGGREGATE, text, SWITCH, and the financial
-  family), so INDEX+MATCH and the other everyday idioms recalculate. OFFSET / INDIRECT return real
-  references (core/reference-fns.ts) and LET is expanded before parsing (core/let-expand.ts).
-- Pictures can be moved, resized and replaced (xlsx and ods; the anchor/frame is written back and
-  the media part swapped). Drawing shapes (rect / ellipse / line / ...) are read, rendered and
-  authored on both formats too. Slicers are read and interactive: clicking their items re-filters
-  the linked pivot and the selection is written back. Sheet and workbook protection is read, enforced in the grid (locked cells
-  become read-only) and authored, in both formats. Print settings (page setup, margins,
-  header/footer, print area, repeated rows, page breaks) are read, authored and drawn on the grid. Other preserved-only features above (form
-  controls) are not editable. The now-rendered features (hyperlinks, dropdowns, CF, comments) are read/followed, not
-  authored.
-- Pivot tables: nested fields, filters, subtotals, "show values as" (% of total/row/col + running
-  total), calculated fields, calculated items, and a pivot chart (over the output) are all
-  supported. Not attempted: byte-identical layout to Excel (both apps re-flow the body on open).
-  Show-values-as / calculated fields / calculated items are honoured by Excel and sheetedit's
-  display but ignored by LibreOffice's xlsx pivot rebuild; the calculated-item OOXML is emitted per
-  spec but unverified in Excel (only that the file opens cleanly in LibreOffice).
-- Conditional formatting: full authoring and rendering. Icon sets render (arrows/traffic-lights/
-  symbols/ratings, bucketed by the cfvo thresholds); is-true-formula (expression) rules and cellIs
-  cell-ref/formula operands evaluate through the workbook's formula engine; time-period rules (dates
-  occurring) author + render against today. The authoring dialog covers every rule kind; ODS keeps
-  the interoperable subset (cellIs incl. between) since the graphical/formula rules have no ODF form
-  that survives a LibreOffice round-trip.
-- Rich text within one cell renders each run's own style (bold/italic/colour/etc.) and is authored
-  from the UI: select part of a cell's text while editing and apply a style to just that run. Runs
-  are written to xlsx (`<r><rPr>`) and ods (`<text:span>`) and survive a LibreOffice round-trip.
-  Retyping a cell's text clears its runs (offsets would shift).
-- Recalc is a subset: unsupported functions or circular refs yield an error value (cached value
-  shown as fallback); exotic custom number-format codes may render slightly differently (SSF).
+- **ActiveX rgColumnInfo**: a multi-column list renders its columns evenly. The count and the bound
+  column are read, but the per-column WIDTHS live in a ColumnInfo record whose field layout is not in
+  the published MS-OFORMS index. Next step is the specification's downloadable .docx, or measuring
+  against a file Excel wrote with known widths, NOT guessing the record.
+- **ActiveX Frame / MultiPage / TabStrip**: a missing STRUCTURE rather than a missing property. The
+  control's stream holds a whole embedded form (a ClassTable, a sites array, a child stream per
+  control), which is the parent-controls half of MS-OFORMS, about the size of all the leaf-control
+  work. They only reach a worksheet through "More Controls".
+- **Caption on a CommandButton / Label that has none**: the insert-a-missing-property rebuild is
+  written for the MorphData family; these two would need the same treatment for their own layouts.
+  Nothing sets a caption from the UI yet either, so this is a UI gap before it is a format one.
+- **System-palette OLE colours** are left unset on purpose: such a colour is the desktop theme's,
+  not the document's.
+- **Pivot layout**: byte-identical layout to Excel is not attempted (both apps re-flow on open).
+- **Recalc is a subset**: unsupported functions or circular refs yield an error value (the cached
+  value is shown as a fallback); exotic custom number-format codes may render slightly differently.
 
 ## Correctness caveats
 
-- Editing a shared-string cell rewrites it as an inline string (its sharedStrings entry can
-  become unreferenced).
-- Power Query load-to-new-sheet writes plain cells, not a live refreshable ListObject, and is
-  verified only through sheetedit's own reader, not real Excel.
+- Editing a shared-string cell rewrites it as an inline string (its sharedStrings entry can become
+  unreferenced).
+- Power Query load-to-new-sheet writes plain cells, not a live refreshable ListObject, and is verified
+  only through sheetedit's own reader.
+- Show-values-as / calculated fields / calculated items are honoured by Excel and by sheetedit's own
+  display, but ignored by LibreOffice's xlsx pivot rebuild. The calculated-item OOXML is emitted per
+  spec but unverified in Excel.
+- **No Excel here.** Slicers, timelines and the ActiveX writer follow the specification and are
+  verified in-app, by round-trip, and by asserting each registration is present. LibreOffice drops
+  slicers and does not surface ActiveX from xlsx, so for those there is no outside judge: it reopening
+  a rewritten workbook proves only that the package is not corrupt.
+- LibreOffice's headless converter drops per-sheet view settings on every output it writes, so frozen
+  and split panes cannot be round-tripped through it (what an xlsx pass does prove is in the plan).
 
-## Priority order for closing the gaps
+## Priority order for closing the remaining gaps
 
-1. Sheet management UI (add/rename/delete/reorder) - high value, createWorksheet already exists.
-2. Hyperlinks (render + click) - common, low effort, data already in the sheet XML.
-3. Data validation dropdowns (render + enforce) - common, moderate effort.
-4. Shift CF/DV/hyperlink ranges on structural edits - a correctness fix.
-5. Conditional formatting rendering - high visual payoff, higher effort.
-6. Comments display - moderate.
+The original six-item list (sheet management, hyperlinks, data validation, range shifting,
+conditional formatting, comments) is DONE in full; the current order is:
 
-## Progress
-
-- (DONE) 1. Sheet management UI - add/rename/delete/reorder tabs, xlsx + ods (sheet-ops.ts)
-- (DONE) 2. Hyperlinks - read external+internal, render blue link + open button, click opens/navigates
-- (DONE) 3. Data validation dropdowns - list type: caret picker (inline + range values) + invalid-value outline
-- (DONE) 4. Shift CF/DV/hyperlink/autofilter ranges (sqref/ref) + model validations on insert/delete
-- (DONE) 5. Conditional formatting - full author + render: cellIs/text/top-bottom/average/dup dxf + colour scales + data bars + icon sets + is-true-formula + cell-ref/formula operands + time-period rules
-- (DONE) 6. Comments display - legacy + threaded comments: corner marker + hover popover (author + text)
+1. ODS parity gaps, which are now the larger asymmetry: data validation beyond list rules,
+   `is-true-formula` and text CF conditions, multi-annotation comments, part-of-cell hyperlinks.
+   See `ODS_COVERAGE.md`.
+2. ActiveX rgColumnInfo widths, once the record layout comes from the spec document rather than a guess.
+3. Power Query load-to-new-sheet as a live ListObject.
+4. ActiveX caption authoring (needs a UI first).
+5. Frame / MultiPage / TabStrip, if a real file ever needs it.
