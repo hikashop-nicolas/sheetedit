@@ -1,5 +1,6 @@
 import { parseXmlOpt, type ControlVisuals, type SheetControl, type Workbook } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
+import { isParentControlBin, readParentControl } from "./activex-form";
 import { kindOfClsid, readActiveXStream, type ActiveXControl, type ActiveXKind } from "./activex-read";
 
 // A form control is spread across three parts:
@@ -201,6 +202,14 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
 }
 
 /** How an ActiveX control's kind maps onto the model's own vocabulary. */
+/** A container's children, in the model's vocabulary. The containers themselves are not here:
+    one nested inside another is drawn as the box it is, not as a control with a value. */
+const CONTAINER_CHILD_KINDS: Partial<Record<ActiveXKind, SheetControl["kind"]>> = {
+  commandButton: "button", checkbox: "checkbox", radio: "radio", textbox: "textbox",
+  dropdown: "dropdown", list: "list", toggle: "toggle", label: "label",
+  scroll: "scroll", spin: "spin", image: "image",
+};
+
 const ACTIVEX_KINDS: Partial<Record<ActiveXKind, SheetControl["kind"]>> = {
   commandButton: "button", checkbox: "checkbox", radio: "radio", textbox: "textbox",
   dropdown: "dropdown", list: "list", toggle: "toggle", label: "label",
@@ -305,6 +314,36 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
   // An ActiveX button's handler lives in the sheet's own code module, named after the control:
   // CommandButton1 runs CommandButton1_Click. That is the convention, not a guess.
   if (ctl.kind === "button") ctl.macro ??= `${ctl.name}_Click`;
+  // A container control persists as a storage, not a stream: its own properties, the controls it
+  // holds and (for a MultiPage) a storage per page all live inside a compound file. Recognising it
+  // by the container rather than by the class id means a file whose id we do not know still reads.
+  const raw = binPath ? files[binPath] : undefined;
+  if (raw && isParentControlBin(raw)) {
+    const hint = kind === "multiPage" || kind === "tabStrip" || kind === "frame" ? kind : undefined;
+    const parent = readParentControl(raw, hint);
+    if (parent) {
+      ctl.activeXBinPath = binPath;
+      ctl.kind = "groupBox"; // a captioned box is what a container looks like on the grid
+      if (parent.caption) ctl.label = parent.caption;
+      ctl.container = {
+        kind: parent.kind === "form" ? "frame" : parent.kind,
+        ...(parent.size ? { size: parent.size } : {}),
+        children: parent.sites
+          .filter((site) => site.kind && CONTAINER_CHILD_KINDS[site.kind as ActiveXKind])
+          .map((site) => ({
+            name: site.name,
+            kind: CONTAINER_CHILD_KINDS[site.kind as ActiveXKind]!,
+            label: site.control?.caption,
+            value: site.control?.value,
+            ...(site.control?.value !== undefined ? { checked: site.control.value === "1" } : {}),
+            tooltip: site.tooltip,
+            position: site.position,
+          })),
+        ...(parent.pages?.length ? { pages: parent.pages.map((pg) => ({ name: pg.name, caption: pg.caption })) } : {}),
+      };
+    }
+    return;
+  }
   const parsed = binPath && files[binPath] ? readActiveXStream(files[binPath]) : undefined;
   if (!parsed) return;
   ctl.activeXBinPath = binPath;

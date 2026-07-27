@@ -23,7 +23,9 @@ import { metafileKind } from "../../core/metafile";
 /** What a control is, from its class id. */
 export type ActiveXKind =
   | "commandButton" | "checkbox" | "radio" | "textbox" | "dropdown" | "list"
-  | "toggle" | "label" | "scroll" | "spin" | "image" | "unknown";
+  | "toggle" | "label" | "scroll" | "spin" | "image"
+  // The container controls, whose binary is a storage rather than a stream (see activex-form.ts).
+  | "frame" | "multiPage" | "tabStrip" | "unknown";
 
 /** The Forms 2.0 class ids. Anything else is a control whose binary is its author's business. */
 const KIND_BY_CLSID: Record<string, ActiveXKind> = {
@@ -38,6 +40,13 @@ const KIND_BY_CLSID: Record<string, ActiveXKind> = {
   "DFD181E0-5E2F-11CE-A449-00AA004A803D": "scroll",
   "79176FB0-B7F2-11CE-97EF-00AA006D2776": "spin",
   "4C599241-6926-101B-9992-00000B65C6F9": "image",
+  // The containers. TabStrip's id is the specification's own (its section 3 example carries
+  // {EAE50EB0-...} with TabsAllocated and TabStripTabFlag); Frame's and MultiPage's are the
+  // published Forms 2.0 registrations. A parent control is recognised by its binary being a
+  // compound file whatever its id says, so these name the kind rather than decide it.
+  "6E182020-F460-11CE-9BCD-00AA00608E01": "frame",
+  "46E31370-3F7A-11CE-BED6-00AA00611080": "multiPage",
+  "EAE50EB0-4A62-11CE-BED6-00AA00611080": "tabStrip",
 };
 
 /**
@@ -420,14 +429,22 @@ export function readActiveXStream(bytes: Uint8Array): ActiveXControl | undefined
   return walk(bytes)?.control;
 }
 
-function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } | undefined {
-  if (bytes.length < 24) return undefined;
-  const kind = kindOfClsid(readClsid(bytes));
+/**
+ * Read a control EMBEDDED in a parent (a frame, a page): its bytes are the control structure with
+ * no class id in front, since the class comes from the parent's site table instead.
+ */
+export function readEmbeddedControl(bytes: Uint8Array, kind: ActiveXKind): ActiveXControl | undefined {
+  return kind === "unknown" ? undefined : walk(bytes, kind, 0)?.control;
+}
+
+function walk(bytes: Uint8Array, forcedKind?: ActiveXKind, from = 16): { control: ActiveXControl; layout?: Layout } | undefined {
+  if (bytes.length < from + 8) return undefined;
+  const kind = forcedKind ?? kindOfClsid(readClsid(bytes));
   if (kind === "unknown") return undefined;
   const out: ActiveXControl = { kind };
 
-  // The control structure follows the class id.
-  const at = 16;
+  // The control structure follows the class id, or begins the stream for an embedded control.
+  const at = from;
   if (bytes[at] !== 0x00 || bytes[at + 1] !== 0x02) return { control: out }; // versions the spec pins
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 

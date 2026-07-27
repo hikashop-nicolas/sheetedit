@@ -846,4 +846,33 @@ background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); border:1p
 .sheetedit-vba-runs { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; }
 .sheetedit-vba-events { margin:2px 0 0; }
 .sheetedit-vba-status { margin:8px 0 0; white-space:pre-wrap; }
-.sheetedit-vba-status.is-error { color:var(--sheetedit-error-text); }`;
+.sheetedit-vba-status.is-error { color:var(--sheetedit-error-text); }
+.sheetedit-ctrl-container {
+position: relative;
+width: 100%;
+height: 100%;
+border: 1px solid var(--sheetedit-border);
+border-radius: 4px;
+box-sizing: border-box;
+padding: 6px;
+overflow: hidden;
+}
+.sheetedit-ctrl-legend {
+font-size: 11px;
+line-height: 1.2;
+padding: 0 2px 2px;
+color: var(--sheetedit-text);
+}
+.sheetedit-ctrl-tabs { display: flex; gap: 2px; margin-bottom: 4px; }
+.sheetedit-ctrl-tab {
+font-size: 11px;
+padding: 2px 8px;
+border: 1px solid var(--sheetedit-border);
+border-bottom: none;
+border-radius: 4px 4px 0 0;
+opacity: 0.7;
+}
+.sheetedit-ctrl-tab.chosen { opacity: 1; background: var(--sheetedit-cell-bg); }
+.sheetedit-ctrl-inner { position: relative; width: 100%; height: calc(100% - 1.4em); }
+.sheetedit-ctrl-child { font-size: 12px; white-space: nowrap; }
+.sheetedit-ctrl-child input[type="checkbox"], .sheetedit-ctrl-child input[type="radio"] { margin-right: 4px; }`;

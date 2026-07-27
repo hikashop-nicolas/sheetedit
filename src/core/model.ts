@@ -540,6 +540,24 @@ export interface ControlVisuals {
 export interface SheetControl {
   /** What the control is. Anything unrecognised is rendered as a label so it is never invisible. */
   kind: "checkbox" | "radio" | "dropdown" | "list" | "spin" | "scroll" | "button" | "label" | "groupBox" | "textbox" | "toggle" | "image";
+  /** A container control (Frame / MultiPage / TabStrip) and what it holds. Its children have no
+      anchor of their own: they sit at a position INSIDE the container, in HIMETRIC. */
+  container?: {
+    kind: "frame" | "multiPage" | "tabStrip";
+    /** The container's own size, for turning a child's position into a fraction of the box. */
+    size?: { cx: number; cy: number };
+    children: {
+      name?: string;
+      kind: SheetControl["kind"];
+      label?: string;
+      value?: string;
+      checked?: boolean;
+      tooltip?: string;
+      position?: { left: number; top: number };
+    }[];
+    /** One entry per page, for a MultiPage; the tabs a TabStrip shows. */
+    pages?: { name: string; caption?: string }[];
+  };
   name: string;
   /** The text drawn on the control (from the VML textbox). */
   label?: string;

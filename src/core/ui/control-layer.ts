@@ -130,6 +130,76 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
     }
   };
 
+  /**
+   * Draw a container control and what it holds.
+   *
+   * The children are shown as they are recorded, not driven: a container's state lives in the
+   * storage this reads and does not write, so a child that took an edit and then lost it on save
+   * would be worse than one that plainly does not take edits. The same rule the leaf controls
+   * follow when their part is one the writer will not vouch for.
+   */
+  const buildContainer = (ctl: SheetControl, box: NonNullable<SheetControl["container"]>): HTMLElement => {
+    const wrap = document.createElement("div");
+    wrap.className = `sheetedit-ctrl-container kind-${box.kind}`;
+    wrap.title = deps.activeXTitle;
+    const legend = document.createElement("div");
+    legend.className = "sheetedit-ctrl-legend";
+    legend.textContent = ctl.label ?? ctl.name;
+    wrap.appendChild(legend);
+    // A MultiPage shows its pages as tabs; the first is the one drawn, since which page is
+    // selected is a runtime state rather than something the file settles.
+    if (box.pages?.length) {
+      const tabs = document.createElement("div");
+      tabs.className = "sheetedit-ctrl-tabs";
+      box.pages.forEach((pg, i) => {
+        const tab = document.createElement("span");
+        tab.className = i === 0 ? "sheetedit-ctrl-tab chosen" : "sheetedit-ctrl-tab";
+        tab.textContent = pg.caption || pg.name;
+        tabs.appendChild(tab);
+      });
+      wrap.appendChild(tabs);
+    }
+    const inner = document.createElement("div");
+    inner.className = "sheetedit-ctrl-inner";
+    for (const child of box.children) {
+      const el = document.createElement("div");
+      el.className = `sheetedit-ctrl-child kind-${child.kind}`;
+      if (child.tooltip) el.title = child.tooltip;
+      // Position is in HIMETRIC inside the container, so it only means anything against its size.
+      if (child.position && box.size?.cx && box.size?.cy) {
+        el.style.position = "absolute";
+        el.style.left = `${Math.max(0, Math.min(100, (child.position.left / box.size.cx) * 100))}%`;
+        el.style.top = `${Math.max(0, Math.min(100, (child.position.top / box.size.cy) * 100))}%`;
+      }
+      const text = child.label ?? child.name ?? "";
+      if (child.kind === "checkbox" || child.kind === "radio") {
+        const mark = document.createElement("input");
+        mark.type = child.kind === "radio" ? "radio" : "checkbox";
+        mark.checked = !!child.checked;
+        mark.disabled = true;
+        el.append(mark, document.createTextNode(text));
+      } else if (child.kind === "button" || child.kind === "toggle") {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-ctrl-button";
+        b.disabled = true;
+        b.textContent = text;
+        el.appendChild(b);
+      } else if (child.kind === "textbox" || child.kind === "dropdown" || child.kind === "list") {
+        const f = document.createElement("input");
+        f.className = "sheetedit-ctrl-text";
+        f.readOnly = true;
+        f.value = child.value ?? "";
+        el.appendChild(f);
+      } else {
+        el.textContent = text;
+      }
+      inner.appendChild(el);
+    }
+    wrap.appendChild(inner);
+    return wrap;
+  };
+
   const build = (ctl: SheetControl): HTMLElement => {
     // Excel runs a control's macro after its linked cell is written, so a macro that reads that
     // cell sees the new state. Same order here.
@@ -332,6 +402,10 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         return b;
       }
       default: {
+        // A container (Frame / MultiPage / TabStrip) is a captioned box holding other controls.
+        // Its children have no anchor of their own, only a position INSIDE it, so they are placed
+        // as a fraction of the box rather than through the grid's geometry.
+        if (ctl.container) return buildContainer(ctl, ctl.container);
         const span = document.createElement("span");
         span.className = ctl.kind === "groupBox" ? "sheetedit-ctrl-group" : "sheetedit-ctrl-label";
         span.textContent = ctl.label ?? ctl.name;
