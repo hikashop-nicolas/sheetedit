@@ -48,10 +48,16 @@ Also worth knowing: the two halves NAME THE APPLIED STYLE DIFFERENTLY. `style:ma
   gives value comparisons, `cell-content-is-between` and `is-true-formula`. A rule stated in both
   halves is counted once. The grammar came from LibreOffice's own xlsx to ods conversion of one
   Excel rule of each kind, not from a guess.
-- **Author**: highlight (cellIs) is written as a standard `<style:map>` + an applied fill style,
-  which LibreOffice and other ODF consumers honour (verified: survives a LibreOffice round-trip).
-  Colour-scale / data-bar / contains-text authoring are NOT offered for ODS (calcext-only, which
-  LibreOffice drops when externally authored); rendering them from LibreOffice files still works.
+- **Author**: EVERY rule kind. A highlight (cellIs) is written as a standard `<style:map>` plus an
+  applied fill style; everything else goes to calcext, which LibreOffice honours even though it did
+  not write it - verified by having LibreOffice re-export each authored rule to xlsx with the right
+  type, range and fill. Two placement rules decide whether that works, and both fail SILENTLY:
+    - the `<calcext:conditional-formats>` block must sit INSIDE `<table:table>`. Under
+      `<office:spreadsheet>` LibreOffice ignores it while sheetedit's own reader still finds it (it
+      scans by tag name), so a round-trip test passes and the rule is invisible in LibreOffice.
+      The colour-scale and data-bar authoring shipped that way and had never actually worked.
+    - the applied fill must be a NAMED style in `styles.xml`, referred to by its display name. As an
+      automatic style in `content.xml` the rule still imports, carrying no formatting at all.
 
 ## Pass-through preservation
 
@@ -70,19 +76,19 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
 - **Hyperlinks**: read the first `<text:a>`; author a whole-cell anchor (verified to survive
   LibreOffice, which requires the linked string cell to omit `office:string-value`). The anchor's
   other attributes (target-frame-name, show, style-name, visited-style-name) are carried across an
-  edit. STILL A GAP: a link on part of a cell's text, or several links in one cell, is preserved
-  while the cell is untouched but flattens to one whole-cell link once you edit that cell's value
-  or its link, since the text it was anchored to is rebuilt.
+  edit. A cell whose text is unchanged keeps its paragraphs verbatim, so a recalc or a re-entry of
+  the same value keeps every anchor, part-of-cell ones included.
+  STILL A GAP, but a smaller one: the grid shows and follows only the FIRST link of a cell, and
+  editing the value of a cell whose links covered only part of its text drops them (the text they
+  anchored is gone). What it no longer does is re-anchor that first link around the whole new
+  text, which invented a link the file never had.
 - **Comments**: every annotation on a cell is kept through an edit, each with its own position,
   creator and date; the grid shows and edits the first, and removing it leaves the others. A note's
   lines are written one `<text:p>` each. `dc:date` is written.
   CAVEAT: LibreOffice itself models ONE note per cell and keeps the last on re-save, so a second
   annotation survives sheetedit but not a pass through LibreOffice.
-- **CF colour scale / data bar / icon set for ODS**: read-only (from LibreOffice files); not
-  authorable (no interoperable ODF form).
-- **CF authoring** stays on the interoperable `<style:map>` cellIs subset. Reading now covers every
-  rule kind (see above), but authoring a text or graphical rule would have to write calcext, which
-  LibreOffice drops when it did not write it itself.
+- **CF `timePeriod`**: the one rule kind with no calcext spelling, so it reads (from xlsx) but is
+  not authorable for ODS.
 
 ## Pivot tables (both formats)
 
