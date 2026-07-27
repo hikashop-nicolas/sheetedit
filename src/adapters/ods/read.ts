@@ -20,6 +20,10 @@ export interface OdsStyles {
   rowH: Map<string, number>; // family table-row -> height px
   // family table-cell -> its <style:map> conditional-format entries (standard ODF CF).
   cfMap: Map<string, { cond: string; apply: string }[]>;
+  // style:display-name -> style:name. calcext names a style by its DISPLAY name while
+  // <style:map> uses the escaped style:name ("ConditionalStyle_1" vs "ConditionalStyle_5f_1"),
+  // so a calcext rule's fill is only findable through this.
+  displayName: Map<string, string>;
   text: Map<string, CellStyle>; // family text -> resolved run style (for in-cell <text:span>)
 }
 
@@ -31,6 +35,7 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
   const colW = new Map<string, number>();
   const rowH = new Map<string, number>();
   const cfMap = new Map<string, { cond: string; apply: string }[]>();
+  const displayName = new Map<string, string>();
   for (const doc of docs) {
     for (const st of Array.from(doc.getElementsByTagName("style:style"))) {
       const name = st.getAttribute("style:name");
@@ -38,6 +43,8 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       const family = st.getAttribute("style:family");
       if (family === "table-cell") {
         raw.set(name, { el: st, parent: st.getAttribute("style:parent-style-name") || undefined });
+        const disp = st.getAttribute("style:display-name");
+        if (disp) displayName.set(disp, name);
         const maps = Array.from(st.getElementsByTagName("style:map"));
         if (maps.length) cfMap.set(name, maps.map((m) => ({ cond: m.getAttribute("style:condition") ?? "", apply: m.getAttribute("style:apply-style-name") ?? "" })).filter((x) => x.cond && x.apply));
       } else if (family === "text") {
@@ -141,7 +148,7 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
     return merged;
   };
   for (const name of rawText.keys()) resolveText(name);
-  return { cell, colW, rowH, cfMap, text };
+  return { cell, colW, rowH, cfMap, displayName, text };
 }
 
 // Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
@@ -249,7 +256,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     wb.protection = { structure: true, ...(key ? { password: { hash: key, algorithmName: spreadsheetEl.getAttribute("table:protection-key-digest-algorithm") ?? undefined } } : {}) };
   }
   const validationDefs = parseOdsValidations(contentDoc);
-  const condFormats = parseOdsCondFormats(contentDoc);
+  const condFormats = parseOdsCondFormats(contentDoc, styles);
   for (const table of Array.from(contentDoc.getElementsByTagName("table:table"))) {
     const name = table.getAttribute("table:name") ?? `Sheet${wb.sheets.length + 1}`;
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table };
@@ -344,10 +351,15 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
   if (out.length) sheet.validations = out;
 }
 
-// A standard ODF <style:map> condition ("cell-content()>5", "cell-content-is-between(1,10)")
-// -> operator + operands. is-true-formula and other forms are not rendered (returned null).
-function parseStyleMapCondition(cond: string): { operator: string; formulas: string[] } | null {
+// A standard ODF <style:map> condition ("cell-content()>5", "cell-content-is-between(1,10)",
+// "is-true-formula(...)") -> the rule it describes. Forms we do not recognise return null and
+// are left to pass through untouched rather than rendered wrongly.
+function parseStyleMapCondition(cond: string): { type?: string; operator?: string; formulas: string[] } | null {
   const c = cond.trim();
+  // An arbitrary formula, which is how LibreOffice stores Excel's "expression" rules. The
+  // interoperable half of the pair: it also mirrors this into calcext as formula-is(...).
+  const formula = /^(?:of:)?is-true-formula\((.+)\)$/is.exec(c);
+  if (formula) return { type: "expression", formulas: [odfToA1(formula[1]!.trim())] };
   const btw = /^cell-content-is-between\((.+),(.+)\)$/i.exec(c);
   if (btw) return { operator: "between", formulas: [btw[1]!.trim(), btw[2]!.trim()] };
   const nbtw = /^cell-content-is-not-between\((.+),(.+)\)$/i.exec(c);
@@ -367,13 +379,28 @@ function buildOdsStyleMapCf(sheet: Sheet, styles: OdsStyles): void {
   for (const cell of sheet.cells.values())
     if (cell.style && styles.cfMap.has(cell.style)) (byStyle.get(cell.style) ?? byStyle.set(cell.style, []).get(cell.style)!).push({ r: cell.row, c: cell.col });
   const out: NonNullable<Sheet["condFormats"]> = sheet.condFormats ? [...sheet.condFormats] : [];
+  // Rules already read from calcext, with the cells they cover: a file that states the same rule
+  // in both halves (which is what LibreOffice writes) must not end up with it twice.
+  const seen = new Map<string, { r1: number; c1: number; r2: number; c2: number }[]>();
+  for (const cf of out)
+    for (const r of cf.rules) {
+      const k = ruleKey(r);
+      seen.set(k, [...(seen.get(k) ?? []), ...cf.ranges]);
+    }
+  const coveredBySeen = (k: string, cells: { r: number; c: number }[]): boolean => {
+    const ranges = seen.get(k);
+    return !!ranges && cells.every((p) => ranges.some((g) => p.r >= g.r1 && p.r <= g.r2 && p.c >= g.c1 && p.c <= g.c2));
+  };
   for (const [styleName, cells] of byStyle) {
     const rules: CondFormat["rules"] = [];
     let priority = 1;
     for (const m of styles.cfMap.get(styleName)!) {
       const parsed = parseStyleMapCondition(m.cond);
       const cs = styles.cell.get(m.apply);
-      if (parsed && cs) rules.push({ type: "cellIs", priority: priority++, operator: parsed.operator, formulas: parsed.formulas, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
+      // A formula rule carries no operator; everything else is a value comparison (cellIs).
+      if (!parsed || !cs) continue;
+      const rule = { type: parsed.type ?? "cellIs", priority: priority++, ...(parsed.operator ? { operator: parsed.operator } : {}), formulas: parsed.formulas, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } };
+      if (!coveredBySeen(ruleKey(rule), cells)) rules.push(rule);
     }
     if (rules.length) out.push({ ranges: cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c })), rules });
   }
@@ -387,9 +414,62 @@ const attrByLocal = (el: Element, local: string): string | null => {
 };
 const kidsByLocal = (el: Element, local: string): Element[] => Array.from(el.children).filter((c) => c.localName === local);
 
+/** A quoted calcext operand; "" is an escaped quote inside it. */
+function unquote(arg: string): string {
+  const a = arg.trim();
+  return a.startsWith('"') && a.endsWith('"') ? a.slice(1, -1).replace(/""/g, '"') : a;
+}
+
+/**
+ * A calcext:condition value -> the rule it states.
+ *
+ * This is the ONLY place a LibreOffice file says which cells a conditional format covers.
+ * The <style:map> half names an automatic style that LibreOffice never applies to any cell, so
+ * looking for cells carrying that style (which is what the interoperable path does, correctly,
+ * for files that DO apply it) finds nothing at all in a LibreOffice-written file. Reading only
+ * the standard half therefore dropped every rule such a file carries.
+ *
+ * The grammar is LibreOffice's own, taken from its xlsx -> ods conversion of one Excel rule of
+ * each kind rather than guessed: `>20`, `between(15,35)`, `contains-text("ap")`,
+ * `formula-is(MOD(ROW();2)=0)`, `duplicate`, `top-elements(2)`, `above-average`.
+ */
+function parseCalcextCondition(value: string): { type: string; operator?: string; formulas?: string[]; text?: string; rank?: number; percent?: boolean; bottom?: boolean; aboveAverage?: boolean } | null {
+  const v = value.trim();
+  const textual = /^(contains-text|not-contains-text|begins-with|ends-with)\((.*)\)$/is.exec(v);
+  if (textual) {
+    const TYPE: Record<string, string> = {
+      "contains-text": "containsText",
+      "not-contains-text": "notContainsText",
+      "begins-with": "beginsWith",
+      "ends-with": "endsWith",
+    };
+    return { type: TYPE[textual[1]!.toLowerCase()]!, text: unquote(textual[2]!) };
+  }
+  const formula = /^formula-is\((.*)\)$/is.exec(v);
+  if (formula) return { type: "expression", formulas: [odfToA1(formula[1]!.trim())] };
+  const between = /^(not-)?between\((.+),(.+)\)$/is.exec(v);
+  if (between) return { type: "cellIs", operator: between[1] ? "notBetween" : "between", formulas: [unquote(between[2]!), unquote(between[3]!)] };
+  const cmp = /^(<=|>=|!=|<>|<|>|=)\s*(.+)$/.exec(v);
+  if (cmp) {
+    const OPS: Record<string, string> = { "<": "lessThan", ">": "greaterThan", "<=": "lessThanOrEqual", ">=": "greaterThanOrEqual", "=": "equal", "!=": "notEqual", "<>": "notEqual" };
+    return { type: "cellIs", operator: OPS[cmp[1]!]!, formulas: [unquote(cmp[2]!)] };
+  }
+  if (/^duplicate$/i.test(v)) return { type: "duplicateValues" };
+  if (/^unique$/i.test(v)) return { type: "uniqueValues" };
+  const rank = /^(top|bottom)-(elements|percent)\((\d+)\)$/i.exec(v);
+  if (rank) return { type: "top10", rank: Number(rank[3]), percent: /percent/i.test(rank[2]!), bottom: /bottom/i.test(rank[1]!) };
+  if (/^above-average$/i.test(v)) return { type: "aboveAverage", aboveAverage: true };
+  if (/^below-average$/i.test(v)) return { type: "aboveAverage", aboveAverage: false };
+  return null;
+}
+
+/** Identity of a rule, so the same one read from both halves of a file is not counted twice. */
+const ruleKey = (r: CondFormat["rules"][number]): string =>
+  [r.type, r.operator ?? "", JSON.stringify(r.formulas ?? []), r.text ?? "", r.rank ?? "", r.aboveAverage ?? ""].join("|");
+
 // Parse <calcext:conditional-formats> into per-sheet CondFormat lists, resolving a condition's
 // apply-style-name to a dxf via the cell-style map, and reading colour scales / data bars / icons.
-function parseOdsCondFormats(doc: Document): Map<string, CondFormat[]> {
+function parseOdsCondFormats(doc: Document, styles: OdsStyles): Map<string, CondFormat[]> {
   const bySheet = new Map<string, CondFormat[]>();
   // Map calcext threshold types onto the ones the renderer's stopValue understands.
   const cfvoType: Record<string, string> = { minimum: "min", maximum: "max", number: "num", value: "num", "auto-minimum": "min", "auto-maximum": "max" };
@@ -419,10 +499,18 @@ function parseOdsCondFormats(doc: Document): Map<string, CondFormat[]> {
     let priority = 1;
     for (const child of Array.from(cf.children)) {
       const l = child.localName;
-      // calcext:condition (a cellIs) is only LibreOffice's mirror of the standard <style:map>,
-      // which buildOdsStyleMapCf already reads; skip it here to avoid duplicate rules. Colour
-      // scales / data bars / icon sets have no style:map form, so they are read only from calcext.
-      if (l === "color-scale") {
+      // calcext:condition carries the rule AND, through its parent's target-range-address, the
+      // cells it covers - which the <style:map> half cannot supply in a LibreOffice file, since
+      // the style it names is applied to nothing. Read it here; buildOdsStyleMapCf then skips
+      // any rule already found, so a file stating one rule in both halves yields one rule.
+      if (l === "condition") {
+        const parsed = parseCalcextCondition(attrByLocal(child, "value") ?? "");
+        const applied = attrByLocal(child, "apply-style-name") ?? "";
+        // The two halves name the style differently: calcext by display name, style:map by the
+        // escaped style:name. Try the raw name first, then resolve it as a display name.
+        const cs = parsed ? (styles.cell.get(applied) ?? styles.cell.get(styles.displayName.get(applied) ?? "")) : undefined;
+        if (parsed && cs) rules.push({ ...parsed, priority: priority++, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
+      } else if (l === "color-scale") {
         const entries = kidsByLocal(child, "color-scale-entry");
         rules.push({ type: "colorScale", priority: priority++, colorScale: { cfvo: entries.map(cfvo), colors: entries.map(colorOf) } });
       } else if (l === "data-bar") {
