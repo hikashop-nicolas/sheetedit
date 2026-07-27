@@ -47,7 +47,7 @@ function textProps(font: { name?: string; twips?: number; effects?: number }): n
 }
 
 interface MorphOpts {
-  various?: number; displayStyle?: number; maxLength?: number; listRows?: number; columnCount?: number;
+  various?: number; displayStyle?: number; maxLength?: number; listRows?: number; columnCount?: number; boundColumn?: number;
   borderStyle?: number; specialEffect?: number; size?: [number, number];
   value?: string; caption?: string; group?: string;
   font?: { name?: string; twips?: number; effects?: number };
@@ -66,6 +66,7 @@ function morph(clsid: number[], o: MorphOpts): Uint8Array {
   add(3, 4, o.maxLength);
   add(4, 1, o.borderStyle);
   add(6, 1, o.displayStyle);
+  add(11, 2, o.boundColumn);
   add(13, 2, o.columnCount);
   add(14, 2, o.listRows);
   if (o.value !== undefined) add(22, 4, (0x80000000 | o.value.length) >>> 0);
@@ -485,5 +486,16 @@ describe("the rest of the control", () => {
     const again = setActiveXText(added, "value", "again!!!")!;
     expect(readActiveXStream(again)!.value).toBe("again!!!");
     expect(again.length).toBe(added.length);
+  });
+});
+
+describe("multi-column lists", () => {
+  it("reads ColumnCount and BoundColumn, which decide the grid and what it reports", () => {
+    const c = readActiveXStream(morph(CLSID.dropdown, {
+      displayStyle: 3, columnCount: 3, boundColumn: 2, listRows: 6, size: [100, 50], value: "b",
+    }))!;
+    expect(c.columnCount).toBe(3);
+    expect(c.boundColumn).toBe(2);
+    expect(c.value).toBe("b");
   });
 });

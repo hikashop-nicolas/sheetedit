@@ -2424,7 +2424,7 @@ export function createSheetEditor(
   /** The values a list control draws from. Shared by the control layer and by VBA's OLEObjects.
       An ActiveX listFillRange is usually a DEFINED NAME rather than a reference, which is what the
       real files use, so the name is resolved before the reference is parsed. */
-  const controlItemsFor = (ctl: SheetControl): string[] => {
+  const controlItemRowsFor = (ctl: SheetControl): string[][] => {
     const raw = ctl.sourceRange
       ? wb.definedNames?.get(ctl.sourceRange) ?? wb.definedNames?.get(ctl.sourceRange.toUpperCase()) ?? ctl.sourceRange
       : undefined;
@@ -2433,11 +2433,16 @@ export function createSheetEditor(
     const sheet = named ? wb.sheets.find((s) => s.name === named[0]!.replace(/^'|'$/g, "")) ?? wb.sheets[active] : wb.sheets[active];
     const rng = raw ? parseRangeRefLocal(named ? named[1]! : raw) : null;
     if (!sheet || !rng) return [];
-    const out: string[] = [];
-    for (let r = rng.r1; r <= rng.r2; r++)
-      for (let c = rng.c1; c <= rng.c2; c++) out.push(displayValue(sheet, r, c));
-    return out;
+    const rows: string[][] = [];
+    for (let r = rng.r1; r <= rng.r2; r++) {
+      const row: string[] = [];
+      for (let c = rng.c1; c <= rng.c2; c++) row.push(displayValue(sheet, r, c));
+      rows.push(row);
+    }
+    return rows;
   };
+  /** One item per row, which is what a single-column control lists. */
+  const controlItemsFor = (ctl: SheetControl): string[] => controlItemRowsFor(ctl).flat();
 
   /** A macro changed an ActiveX control's own state: persist it into the control's binary. The
       linked cell is written by the object model, so it is already in the run's undo step. */
@@ -2472,6 +2477,7 @@ export function createSheetEditor(
       renderGrid();
     },
     itemsFor: (ctl) => controlItemsFor(ctl),
+    itemRowsFor: (ctl) => controlItemRowsFor(ctl),
     onChange: (changed) => {
       const sheet = wb.sheets[active];
       // An ActiveX control keeps its own state in a persisted binary, so the change goes there as

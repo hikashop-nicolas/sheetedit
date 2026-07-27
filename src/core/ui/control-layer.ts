@@ -18,6 +18,8 @@ export interface ControlLayerDeps {
   geom: () => ChartGeom;
   /** The items a list control offers, resolved from its source range. */
   itemsFor: (control: SheetControl) => string[];
+  /** The same source as rows of columns, for a list whose file gives it more than one column. */
+  itemRowsFor?: (control: SheetControl) => string[][];
   /**
    * The state changed: the models are already updated and dirty set. The first is the control the
    * user touched; any others are the radios its group had to clear, which belong in the same undo
@@ -153,6 +155,44 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       }
       case "dropdown":
       case "list": {
+        // A multi-column list is a GRID in Excel, and a <select> cannot be one. The columns come
+        // from the source range, which is where the items come from anyway; what the format keeps
+        // that this does not is the per-column WIDTHS (rgColumnInfo), whose record layout is not in
+        // the published spec, so the columns share the width evenly.
+        const columns = ctl.visuals?.columnCount ?? 1;
+        if (columns > 1 && deps.itemRowsFor && ctl.activeX) {
+          const rows = deps.itemRowsFor(ctl).filter((r) => r.some((cell) => cell !== ""));
+          const grid = document.createElement("div");
+          grid.className = "sheetedit-ctrl-grid";
+          grid.setAttribute("role", "listbox");
+          // BoundColumn is 1-based and names the column whose value the control reports; 0 means
+          // the row number, which is what Excel does when no column is bound.
+          const bound = ctl.visuals?.boundColumn ?? 1;
+          const valueOf = (row: string[], i: number): string => (bound === 0 ? String(i + 1) : row[bound - 1] ?? "");
+          rows.forEach((row, i) => {
+            const line = document.createElement("div");
+            line.className = "sheetedit-ctrl-gridrow";
+            line.setAttribute("role", "option");
+            line.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+            for (let c = 0; c < columns; c++) {
+              const cell = document.createElement("span");
+              cell.textContent = row[c] ?? "";
+              line.appendChild(cell);
+            }
+            const mine = valueOf(row, i);
+            const select = (): void => {
+              ctl.activeXValue = mine;
+              for (const other of Array.from(grid.children)) other.classList.remove("chosen");
+              line.classList.add("chosen");
+              line.setAttribute("aria-selected", "true");
+              commit();
+            };
+            if (mine === ctl.activeXValue) { line.classList.add("chosen"); line.setAttribute("aria-selected", "true"); }
+            line.addEventListener("click", select);
+            grid.appendChild(line);
+          });
+          return grid;
+        }
         const select = document.createElement("select");
         select.className = "sheetedit-ctrl-select";
         // A list control's linked cell holds the 1-based index, so index 0 means "nothing chosen".

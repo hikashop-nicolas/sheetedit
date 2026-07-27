@@ -90,6 +90,18 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
 - The on/off + mutually-exclusive style buttons (bold/italic/underline/strike/align/valign/wrap)
   show a pressed state reflecting the active cell.
 
+## Named for later (nothing here is forgotten, and none of it is a mystery)
+
+Each of these is understood; what stops it is stated, so picking one up starts from a known place.
+
+| | |
+|---|---|
+| **rgColumnInfo: per-column widths** | A multi-column list renders its columns evenly. The count and the bound column are read; the per-column WIDTHS live in a ColumnInfo record whose field layout is not in the published MS-OFORMS index (only `cColumnInfo`, "the last column with a non-default width", is documented). Guessing a binary record is how the ScrollBar mask went wrong once already. Next step: find the record in the downloadable .docx of the specification rather than the HTML index, or measure it against a file Excel wrote with known widths. |
+| **Frame / MultiPage / TabStrip** | Not a missing property but a missing STRUCTURE: the control's stream holds a whole embedded form - a ClassTable, a sites array, and a child stream per control. That is the "parent controls" half of MS-OFORMS, roughly the size of everything already done for the leaf controls. They are UserForm controls that only reach a worksheet through "More Controls", so this is real work for a rare case. |
+| **Caption on a CommandButton / Label that has none** | The insert-a-missing-property rebuild is written for the MorphData family, which covers the checkbox, option button, toggle and text box. The other two would need the same emit-from-recorded-fields treatment for their own layouts. Nothing sets a caption from the UI yet either, so this is a UI gap before it is a format one. |
+| **EMF text drawn at the wrong size (upstream)** | emf-converter's EXTTEXTOUTW handler applies the font's `lfHeight` without mapping it through the window/viewport transform, so on a metafile with a non-identity map mode the text is drawn many times too large and paints over the drawing. Pinned exactly: LibreOffice's own EMF export sets MM_ANISOTROPIC with window 2540x2540 against viewport 132x132, and a font of lfHeight -635, so the text comes out ~19x oversized. Everything else in the file is drawn through the mapping helpers, which is why only text is affected. Repro file and diagnosis in hand; needs an upstream issue or PR. |
+| **Third-party ActiveX** | Irreducible. OOXML says the content of such a control "shall be solely determined by the corresponding object", so the format belongs to whoever wrote the control. |
+
 ## Remaining / not yet done (the honest backlog)
 - **Pivots**: feature-complete. "Show values as", calculated fields, calculated items and a pivot
   chart are all DONE (see done/PIVOT_AUTHORING.md). Not attempted: byte-identical layout to Excel (both
@@ -350,14 +362,9 @@ on read). Verified via LibreOffice round-trips for every shape (xlsx + ods). See
     DataBlock from the fields the read recorded (splicing would not do, since a length word has to
     land 4-aligned and inserting one shifts everything after it) and reads its own output back
     before returning it. Same-length changes still patch in place, byte for byte.
-  - Still open, and each for a stated reason: **third-party ActiveX** (the format belongs to whoever
-    wrote the control - irreducible); **rgColumnInfo**, a multi-column list's per-column widths,
-    whose record layout is not in the published index and which is not worth guessing at;
-    **Frame / MultiPage / TabStrip**, whose stream holds a whole embedded form (ClassTable, the
-    sites array) and which belong to a UserForm rather than a worksheet; and **adding a Caption to a
-    CommandButton or Label that has none**, since the rebuild path is written for the MorphData
-    family (which covers the checkbox, option button, toggle and text box; Excel always writes a
-    caption for the other two).
+  - **Multi-column lists** render as a grid, since that is what Excel draws and a `<select>` cannot
+    be one. The columns come from the source range (which is where the items come from anyway) and
+    BoundColumn decides which one the control reports - 0 means the row number, as in Excel.
 - **Windows metafiles (WMF / EMF)** render now, which they never did: an `xl/media/*.emf` came
   through as a `data:image/emf` URI and a browser drew nothing at all. A metafile is not an image -
   it is a recorded list of GDI drawing calls - so showing one means replaying them onto a canvas.

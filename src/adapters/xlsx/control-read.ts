@@ -251,6 +251,8 @@ function visualsOf(parsed: ActiveXControl): ControlVisuals | undefined {
   if (parsed.multiSelect) v.multiSelect = parsed.multiSelect !== 0;
   // DisplayStyle tells an editable combo (3) from a drop-list one (7); they share a class id.
   if (parsed.displayStyle !== undefined) v.editable = parsed.displayStyle !== 7;
+  if (parsed.columnCount !== undefined && parsed.columnCount > 1) v.columnCount = parsed.columnCount;
+  if (parsed.boundColumn !== undefined) v.boundColumn = parsed.boundColumn;
   if (parsed.wordWrap !== undefined) v.wordWrap = parsed.wordWrap;
   if (parsed.captionLeft !== undefined) v.captionLeft = parsed.captionLeft;
   const fore = oleColorToCss(parsed.foreColor);

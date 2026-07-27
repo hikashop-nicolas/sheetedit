@@ -488,6 +488,10 @@ export interface ControlVisuals {
   listRows?: number;
   multiSelect?: boolean;
   editable?: boolean;
+  /** How many columns the list shows, and which one supplies the value (1-based; 0 = the row
+      number). Excel shows a multi-column list as a grid, so a browser has to as well. */
+  columnCount?: number;
+  boundColumn?: number;
   wordWrap?: boolean;
   /** The caption sits to the left of a checkbox / option button. */
   captionLeft?: boolean;
