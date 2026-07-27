@@ -226,6 +226,11 @@ export interface ActiveXControl {
   listWidth?: number;
   listStyle?: number;
   columnCount?: number;
+  /** [MS-OFORMS] cColumnInfo: the last column with a non-default width (0 = all default). */
+  columnInfoCount?: number;
+  /** Per-column widths in CSS px, from rgColumnInfo. undefined where the column takes the
+      application's own choice (the file's -1), so the renderer shares the space out. */
+  columnWidths?: (number | undefined)[];
   boundColumn?: number;
   textColumn?: number;
   multiSelect?: number;
@@ -462,7 +467,7 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
       { bit: 9, width: 2, set: num("passwordChar") }, { bit: 10, width: 4, set: num("listWidth") },
       { bit: 11, width: 2, set: num("boundColumn") }, { bit: 12, width: 2, set: num("textColumn") },
       { bit: 13, width: 2, set: num("columnCount") }, { bit: 14, width: 2, set: num("listRows") },
-      { bit: 15, width: 2 }, { bit: 16, width: 1, set: num("matchEntry") },
+      { bit: 15, width: 2, set: num("columnInfoCount") }, { bit: 16, width: 1, set: num("matchEntry") },
       { bit: 17, width: 1, set: num("listStyle") }, { bit: 18, width: 1, set: num("showDropButtonWhen") },
       { bit: 20, width: 1, set: num("dropButtonStyle") }, { bit: 21, width: 1, set: num("multiSelect") },
     ];
@@ -625,7 +630,39 @@ function readTextProps(b: Uint8Array, at: number): { font: ActiveXFont; end: num
   return { font, end: extra.position };
 }
 
-/** Walk StreamData then TextProps, filling in whatever they carry. */
+/** HIMETRIC (0.01 mm) -> CSS px. 2540 of them make an inch, which is 96 px. */
+const himetricToPx = (v: number): number => Math.round((v / 2540) * 96);
+
+/**
+ * [MS-OFORMS] rgColumnInfo: one MorphDataColumnInfo per column, giving that column's width.
+ *
+ * Each is its own little versioned structure - 0x00 0x02, then cbColumnInfo covering the 4-byte
+ * PropMask and the DataBlock - and the single mask bit says whether a width follows at all. A
+ * column with no width, or the file's -1, is the application's own choice rather than a size.
+ *
+ * The array has exactly cColumnInfo entries, and cColumnInfo is "the last column with a
+ * non-default width", so it can be SHORTER than the column count: the columns past it are all
+ * default. Read from the specification's own tables (2.2.5.6 - 2.2.5.8), not guessed.
+ */
+function readColumnInfo(b: Uint8Array, at: number, count: number): (number | undefined)[] | undefined {
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const out: (number | undefined)[] = [];
+  let p = at;
+  for (let i = 0; i < count; i++) {
+    if (p + 8 > b.length || b[p] !== 0x00 || b[p + 1] !== 0x02) return undefined;
+    const cb = dv.getUint16(p + 2, true);
+    const maskAt = p + 4;
+    if (maskAt + cb > b.length || cb < 4) return undefined;
+    const hasWidth = (dv.getUint32(maskAt, true) & 1) !== 0;
+    const width = hasWidth && cb >= 8 ? dv.getInt32(maskAt + 4, true) : undefined;
+    // -1 means "the client application decides", which is not a width we can honour.
+    out.push(width === undefined || width < 0 ? undefined : himetricToPx(width));
+    p = maskAt + cb;
+  }
+  return out;
+}
+
+/** Walk StreamData, then TextProps, then the per-column widths, filling in whatever they carry. */
 function readTrailing(b: Uint8Array, out: ActiveXControl, from: number, pictures: number): void {
   let at = from;
   for (let i = 0; i < pictures; i++) {
@@ -637,6 +674,12 @@ function readTrailing(b: Uint8Array, out: ActiveXControl, from: number, pictures
   const text = readTextProps(b, at);
   if (text && (text.font.name || text.font.sizePt || text.font.bold || text.font.italic || text.font.underline || text.font.strike || text.font.align)) {
     out.font = text.font;
+  }
+  if (text) at = text.end;
+  const count = out.columnInfoCount ?? 0;
+  if (text && count > 0) {
+    const widths = readColumnInfo(b, at, count);
+    if (widths?.some((w) => w !== undefined)) out.columnWidths = widths;
   }
 }
 

@@ -253,6 +253,7 @@ function visualsOf(parsed: ActiveXControl): ControlVisuals | undefined {
   if (parsed.displayStyle !== undefined) v.editable = parsed.displayStyle !== 7;
   if (parsed.columnCount !== undefined && parsed.columnCount > 1) v.columnCount = parsed.columnCount;
   if (parsed.boundColumn !== undefined) v.boundColumn = parsed.boundColumn;
+  if (parsed.columnWidths?.length) v.columnWidths = parsed.columnWidths;
   if (parsed.wordWrap !== undefined) v.wordWrap = parsed.wordWrap;
   if (parsed.captionLeft !== undefined) v.captionLeft = parsed.captionLeft;
   const fore = oleColorToCss(parsed.foreColor);

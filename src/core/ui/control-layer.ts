@@ -156,10 +156,15 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       case "dropdown":
       case "list": {
         // A multi-column list is a GRID in Excel, and a <select> cannot be one. The columns come
-        // from the source range, which is where the items come from anyway; what the format keeps
-        // that this does not is the per-column WIDTHS (rgColumnInfo), whose record layout is not in
-        // the published spec, so the columns share the width evenly.
+        // from the source range, which is where the items come from anyway, and their widths from
+        // the file's rgColumnInfo. A column the file gives no width for is the application's own
+        // choice, so it shares out what the stated ones leave.
         const columns = ctl.visuals?.columnCount ?? 1;
+        const widths = ctl.visuals?.columnWidths;
+        const template = Array.from({ length: columns }, (_, i) => {
+          const w = widths?.[i];
+          return w !== undefined && w > 0 ? `${w}px` : "1fr";
+        }).join(" ");
         if (columns > 1 && deps.itemRowsFor && ctl.activeX) {
           const rows = deps.itemRowsFor(ctl).filter((r) => r.some((cell) => cell !== ""));
           const grid = document.createElement("div");
@@ -173,7 +178,7 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
             const line = document.createElement("div");
             line.className = "sheetedit-ctrl-gridrow";
             line.setAttribute("role", "option");
-            line.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+            line.style.gridTemplateColumns = template;
             for (let c = 0; c < columns; c++) {
               const cell = document.createElement("span");
               cell.textContent = row[c] ?? "";

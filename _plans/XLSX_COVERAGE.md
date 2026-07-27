@@ -91,7 +91,7 @@ the priority order for closing it. The companion documents are `ODS_COVERAGE.md`
   ListStyle, ShowDropButtonWhen, DropButtonStyle, MousePointer, Accelerator, PicturePosition,
   SmallChange, LargeChange, Orientation, Delay, ProportionalThumb), TextProps (the font), and
   StreamData pictures. Writing covers every string a control carries and can ADD a property the
-  control does not yet have. Multi-column lists render as a grid.
+  control does not yet have. Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
 - VBA macros: read, run and written (vbalang). `Worksheet.OLEObjects` and `ListObjects` are on the
   object model, and `ListObjects.Add` writes the whole package.
 - Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data, merge/append),
@@ -110,10 +110,6 @@ its sibling elements intact:
 
 ## Gaps / not handled
 
-- **ActiveX rgColumnInfo**: a multi-column list renders its columns evenly. The count and the bound
-  column are read, but the per-column WIDTHS live in a ColumnInfo record whose field layout is not in
-  the published MS-OFORMS index. Next step is the specification's downloadable .docx, or measuring
-  against a file Excel wrote with known widths, NOT guessing the record.
 - **ActiveX Frame / MultiPage / TabStrip**: a missing STRUCTURE rather than a missing property. The
   control's stream holds a whole embedded form (a ClassTable, a sites array, a child stream per
   control), which is the parent-controls half of MS-OFORMS, about the size of all the leaf-control
@@ -151,7 +147,8 @@ conditional formatting, comments) is DONE in full; the current order is:
 1. ODS parity gaps, which are now the larger asymmetry: data validation beyond list rules,
    `is-true-formula` and text CF conditions, multi-annotation comments, part-of-cell hyperlinks.
    See `ODS_COVERAGE.md`.
-2. ActiveX rgColumnInfo widths, once the record layout comes from the spec document rather than a guess.
-3. Power Query load-to-new-sheet as a live ListObject.
-4. ActiveX caption authoring (needs a UI first).
-5. Frame / MultiPage / TabStrip, if a real file ever needs it.
+2. ActiveX caption authoring (needs a UI first).
+3. Frame / MultiPage / TabStrip, if a real file ever needs it.
+
+DONE since: the ODS parity gaps, Power Query load-to-new-sheet as a real ListObject, and the
+per-column widths of a multi-column ActiveX list (rgColumnInfo).

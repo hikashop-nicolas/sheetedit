@@ -51,6 +51,15 @@ interface MorphOpts {
   borderStyle?: number; specialEffect?: number; size?: [number, number];
   value?: string; caption?: string; group?: string;
   font?: { name?: string; twips?: number; effects?: number };
+  /** Per-column widths in HIMETRIC, as rgColumnInfo states them; null = "the app decides" (-1). */
+  columnWidths?: (number | null)[];
+}
+
+/** [MS-OFORMS] MorphDataColumnInfo: version, cb over PropMask+DataBlock, then the width. */
+function columnInfo(widthHimetric: number | null): number[] {
+  const hasWidth = widthHimetric !== null;
+  const block = hasWidth ? u32(widthHimetric >>> 0) : [];
+  return [0x00, 0x02, ...u16(4 + block.length), ...u32(hasWidth ? 1 : 0), ...block];
 }
 
 /** A MorphData control with whatever properties the test asks for, in the format's own order. */
@@ -69,6 +78,7 @@ function morph(clsid: number[], o: MorphOpts): Uint8Array {
   add(11, 2, o.boundColumn);
   add(13, 2, o.columnCount);
   add(14, 2, o.listRows);
+  if (o.columnWidths) add(15, 2, o.columnWidths.length); // cColumnInfo
   if (o.value !== undefined) add(22, 4, (0x80000000 | o.value.length) >>> 0);
   if (o.caption !== undefined) add(23, 4, (0x80000000 | o.caption.length) >>> 0);
   add(26, 4, o.specialEffect);
@@ -85,6 +95,7 @@ function morph(clsid: number[], o: MorphOpts): Uint8Array {
     ...clsid, 0x00, 0x02, ...u16(8 + block.length + extra.length),
     ...u32(lo), ...u32(hi), ...block, ...extra,
     ...(o.font ? textProps(o.font) : []),
+    ...(o.columnWidths ?? []).flatMap((w) => columnInfo(w)),
   ]);
 }
 
@@ -497,5 +508,52 @@ describe("multi-column lists", () => {
     expect(c.columnCount).toBe(3);
     expect(c.boundColumn).toBe(2);
     expect(c.value).toBe("b");
+  });
+});
+
+// rgColumnInfo, the per-column widths of a multi-column list. Read from [MS-OFORMS] 2.2.5.6-2.2.5.8
+// (the downloadable specification, not the HTML index, which documents only cColumnInfo): each
+// entry is its own versioned record, and the single mask bit says whether a width follows at all.
+describe("multi-column list widths", () => {
+  // Every fixture carries a font because rgColumnInfo FOLLOWS TextProps, which the specification
+  // makes mandatory while marking rgColumnInfo optional. The reader anchors on it rather than
+  // reading widths from an offset it has not accounted for.
+  it("reads a width per column, in pixels", () => {
+    // 2540 HIMETRIC to the inch, 96 px to the inch: 2540 -> 96 px, 1270 -> 48 px.
+    const bytes = morph(CLSID.combo, { displayStyle: 7, columnCount: 3, font: { name: "Tahoma" }, columnWidths: [2540, 1270, 5080] });
+    const ctl = readActiveXStream(bytes)!;
+    expect(ctl.columnCount).toBe(3);
+    expect(ctl.columnInfoCount).toBe(3);
+    expect(ctl.columnWidths).toEqual([96, 48, 192]);
+  });
+
+  it("leaves a column the file does not size to the application", () => {
+    // -1 is the format's own default and means the client decides, which is not a width.
+    const bytes = morph(CLSID.combo, { displayStyle: 7, columnCount: 3, font: { name: "Tahoma" }, columnWidths: [2540, -1, null] });
+    const ctl = readActiveXStream(bytes)!;
+    expect(ctl.columnWidths).toEqual([96, undefined, undefined]);
+  });
+
+  it("accepts a cColumnInfo shorter than the column count", () => {
+    // cColumnInfo is the LAST column with a non-default width, so the array can stop early and
+    // every column past it is default. Reading columnCount entries would run off the end.
+    const bytes = morph(CLSID.combo, { displayStyle: 7, columnCount: 4, font: { name: "Tahoma" }, columnWidths: [2540] });
+    const ctl = readActiveXStream(bytes)!;
+    expect(ctl.columnCount).toBe(4);
+    expect(ctl.columnWidths).toEqual([96]);
+  });
+
+  it("says nothing when every column takes the default", () => {
+    const bytes = morph(CLSID.combo, { displayStyle: 7, columnCount: 2 });
+    const ctl = readActiveXStream(bytes)!;
+    expect(ctl.columnWidths).toBeUndefined();
+  });
+
+  it("does not disturb the font that precedes it", () => {
+    const bytes = morph(CLSID.combo, { displayStyle: 7, columnCount: 2, font: { name: "Verdana", twips: 200 }, columnWidths: [2540, 1270] });
+    const ctl = readActiveXStream(bytes)!;
+    expect(ctl.font?.name).toBe("Verdana");
+    expect(ctl.font?.sizePt).toBe(10);
+    expect(ctl.columnWidths).toEqual([96, 48]);
   });
 });

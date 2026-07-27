@@ -495,6 +495,9 @@ export interface ControlVisuals {
       number). Excel shows a multi-column list as a grid, so a browser has to as well. */
   columnCount?: number;
   boundColumn?: number;
+  /** Per-column widths in CSS px from the file's rgColumnInfo; an undefined entry is a column
+      whose width the application chooses, so the renderer shares the leftover space out. */
+  columnWidths?: (number | undefined)[];
   wordWrap?: boolean;
   /** The caption sits to the left of a checkbox / option button. */
   captionLeft?: boolean;
