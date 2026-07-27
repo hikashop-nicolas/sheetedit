@@ -165,3 +165,56 @@ describe("ods hyperlink + comment authoring", () => {
     expect(getCell(re.sheets[0], 1, 1)?.link).toBeUndefined();
   });
 });
+
+describe("ods notes and links: what an edit must not throw away", () => {
+  it("keeps a cell's other annotations when its note is edited", () => {
+    // A cell may carry several annotations; the grid shows the first. Editing that one used to
+    // delete every other, losing content the editor never even displayed.
+    const wb = readWorkbook(ods(
+      `<table:table-cell office:value-type="string">` +
+      `<office:annotation svg:x="1cm" svg:y="2cm"><dc:creator>Ada</dc:creator><text:p>first</text:p></office:annotation>` +
+      `<office:annotation><dc:creator>Grace</dc:creator><text:p>second</text:p></office:annotation>` +
+      `<text:p>x</text:p></table:table-cell>`,
+    ));
+    expect(getCell(wb.sheets[0], 1, 1)?.comments?.length).toBe(2);
+    setOdsComment(wb.sheets[0], 1, 1, "edited", "Ada");
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("edited");
+    expect(out).toContain("second"); // the annotation nobody touched
+    expect(out).toContain("Grace");
+    expect(out).toContain('svg:x="1cm"'); // the first one's position is still its own
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(re.sheets[0] && getCell(re.sheets[0], 1, 1)?.comments?.map((c) => c.text)).toEqual(["edited", "second"]);
+  });
+
+  it("removes only the note it was asked to remove", () => {
+    const wb = readWorkbook(ods(
+      `<table:table-cell office:value-type="string">` +
+      `<office:annotation><text:p>first</text:p></office:annotation>` +
+      `<office:annotation><text:p>second</text:p></office:annotation>` +
+      `<text:p>x</text:p></table:table-cell>`,
+    ));
+    setOdsComment(wb.sheets[0], 1, 1, null);
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(getCell(re.sheets[0], 1, 1)?.comments?.map((c) => c.text)).toEqual(["second"]);
+  });
+
+  it("keeps how a link opens and looks when its target is changed", () => {
+    // Only the href is ours to decide. target-frame-name and the style names say how the link
+    // opens and how it is drawn, and rebuilding the anchor from scratch dropped them.
+    const wb = readWorkbook(ods(
+      `<table:table-cell office:value-type="string"><text:p>` +
+      `<text:a xlink:href="https://old.test" xlink:type="simple" office:target-frame-name="_blank" ` +
+      `xlink:show="new" text:style-name="Internet_20_link" text:visited-style-name="Visited_20_link">site</text:a>` +
+      `</text:p></table:table-cell>`,
+    ));
+    setOdsHyperlink(wb.sheets[0], 1, 1, { href: "https://new.test" });
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://new.test");
+    expect(out).not.toContain("https://old.test");
+    expect(out).toContain('office:target-frame-name="_blank"');
+    expect(out).toContain('xlink:show="new"');
+    expect(out).toContain('text:style-name="Internet_20_link"');
+    expect(out).toContain('text:visited-style-name="Visited_20_link"');
+  });
+});

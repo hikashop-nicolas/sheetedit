@@ -40,6 +40,14 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
     const p = doc.createElementNS(ODS.text, "text:p");
     if (cell.link) {
       const a = doc.createElementNS(ODS.text, "text:a");
+      // Carry the original anchor's other attributes (target-frame-name, show, style-name,
+      // visited-style-name) across an edit: only the href is ours to decide, and rebuilding the
+      // element from scratch silently dropped how the link was meant to open and look.
+      const prev = cell.el?.getElementsByTagName("text:a")[0];
+      if (prev) for (const at of Array.from(prev.attributes)) {
+        if (at.localName === "href" || at.localName === "type") continue;
+        a.setAttributeNS(at.namespaceURI, at.name, at.value);
+      }
       a.setAttributeNS(ODS.xlink, "xlink:href", cell.link.internal ? `#${cell.link.href.replace("!", ".")}` : cell.link.href);
       a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
       a.textContent = text;
@@ -89,21 +97,25 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
   }
 }
 
-// Add / replace / remove a single note, preserving the first annotation's position + creator/date.
+// Write the cell's notes back, preserving each existing annotation's position, creator and date.
+// A cell may legitimately carry several: the UI edits the first, and the others must ride along
+// untouched rather than be deleted, which is what removing every annotation past the first did.
 function patchOdsAnnotations(doc: Document, c: Element, cell: Cell): void {
   const anns = Array.from(c.children).filter((x) => x.localName === "annotation");
-  if (cell.comments?.length) {
-    const cm = cell.comments[0]!;
-    let ann = anns[0];
+  const comments = cell.comments ?? [];
+  for (let i = 0; i < comments.length; i++) {
+    const cm = comments[i]!;
+    let ann = anns[i];
     if (!ann) { ann = doc.createElementNS(ODS.office, "office:annotation"); c.insertBefore(ann, c.firstChild); }
+    else if (i > 0) continue; // untouched by the editor: leave its element exactly as it was
     for (const p of Array.from(ann.children).filter((x) => x.localName === "p")) ann.removeChild(p);
     if (cm.author && !ann.getElementsByTagName("dc:creator").length) { const cr = doc.createElementNS(ODS.dc, "dc:creator"); cr.textContent = cm.author; ann.appendChild(cr); }
     if (!ann.getElementsByTagName("dc:date").length) { const dt = doc.createElementNS(ODS.dc, "dc:date"); dt.textContent = new Date().toISOString().slice(0, 19); ann.appendChild(dt); }
-    const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = cm.text; ann.appendChild(ap);
-    for (let i = 1; i < anns.length; i++) c.removeChild(anns[i]!);
-  } else {
-    for (const ann of anns) c.removeChild(ann);
+    // One paragraph per line, which is how the reader joins them back.
+    for (const line of cm.text.split("\n")) { const ap = doc.createElementNS(ODS.text, "text:p"); ap.textContent = line; ann.appendChild(ap); }
   }
+  // Only annotations with no note left behind them go.
+  for (let i = comments.length; i < anns.length; i++) c.removeChild(anns[i]!);
 }
 
 function patchOdsCell(doc: Document, cell: Cell): Element {
@@ -207,10 +219,14 @@ export function setOdsHyperlink(sheet: Sheet, r: number, c: number, link: Cell["
   cell.linkDirty = true;
 }
 
-/** Add/replace or (text === null) remove a single note on a cell. */
+/** Add/replace or (text === null) remove the cell's note. The grid shows one note per cell, so
+    this acts on the FIRST; any further annotation the file carries is left alone rather than
+    thrown away with it. */
 export function setOdsComment(sheet: Sheet, r: number, c: number, text: string | null, author = "sheetedit"): void {
   const cell = ensureCell(sheet, r, c);
-  cell.comments = text ? [{ author, text }] : undefined;
+  const rest = cell.comments?.slice(1) ?? [];
+  const next = text ? [{ author, text }, ...rest] : rest;
+  cell.comments = next.length ? next : undefined;
   cell.commentsDirty = true;
 }
 
