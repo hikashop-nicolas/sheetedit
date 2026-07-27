@@ -99,7 +99,6 @@ Each of these is understood; what stops it is stated, so picking one up starts f
 | **rgColumnInfo: per-column widths** | A multi-column list renders its columns evenly. The count and the bound column are read; the per-column WIDTHS live in a ColumnInfo record whose field layout is not in the published MS-OFORMS index (only `cColumnInfo`, "the last column with a non-default width", is documented). Guessing a binary record is how the ScrollBar mask went wrong once already. Next step: find the record in the downloadable .docx of the specification rather than the HTML index, or measure it against a file Excel wrote with known widths. |
 | **Frame / MultiPage / TabStrip** | Not a missing property but a missing STRUCTURE: the control's stream holds a whole embedded form - a ClassTable, a sites array, and a child stream per control. That is the "parent controls" half of MS-OFORMS, roughly the size of everything already done for the leaf controls. They are UserForm controls that only reach a worksheet through "More Controls", so this is real work for a rare case. |
 | **Caption on a CommandButton / Label that has none** | The insert-a-missing-property rebuild is written for the MorphData family, which covers the checkbox, option button, toggle and text box. The other two would need the same emit-from-recorded-fields treatment for their own layouts. Nothing sets a caption from the UI yet either, so this is a UI gap before it is a format one. |
-| **EMF text drawn at the wrong size (upstream)** | FIXED UPSTREAM, awaiting merge: [ChristopherVR/emf-converter#9](https://github.com/ChristopherVR/emf-converter/pull/9). The font's `lfHeight` was applied without the window/viewport mapping every coordinate goes through, so on a metafile with a non-identity map mode the text drew many times too large and painted over the picture. LibreOffice's own EMF export sets MM_ANISOTROPIC with window 2540x2540 against viewport 132x132 and a font of lfHeight -635, which comes out ~19x oversized. The PR passes the mapping factor the callers already hold (`gmh(rCtx, 1)` for EMF, `mh(1)` for WMF); upstream's 784 tests pass and three were added. Once it lands, bump the dependency and drop the caveat from the metafile note above. |
 | **Third-party ActiveX** | Irreducible. OOXML says the content of such a control "shall be solely determined by the corresponding object", so the format belongs to whoever wrote the control. |
 
 ## Remaining / not yet done (the honest backlog)
@@ -376,12 +375,10 @@ Each of these is understood; what stops it is stated, so picking one up starts f
     across. `metafileSize` reads the frame first (a WMF's placeable bounding box and units-per-inch,
     an EMF's rclFrame in hundredths of a millimetre) and passes it as an explicit cap, which puts
     both formats on the same sane size.
-  - KNOWN DEFECT, fix submitted upstream (emf-converter#9): text inside a metafile whose map mode is
-    not the identity draws at the file's LOGICAL height, so a label comes out many times too large
-    and reads as a white block punched through the drawing. Everything else is drawn through the
-    mapping helpers, which is why only text is affected. Diagnosed against LibreOffice's own
-    rasterisation of the same files; the drawing is otherwise faithful, so this shipped rather than
-    waiting. Bump the dependency and delete this note once the PR is merged and released.
+  - Text inside a metafile used to draw at the file's LOGICAL height, so a label came out many times
+    too large and read as a white block punched through the drawing. Diagnosed against LibreOffice's
+    own rasterisation of the same files, fixed upstream (emf-converter#9, in 2.0.2): the font height
+    now goes through the same window/viewport mapping as every coordinate.
 - **Grid metrics** come from the workbook, not from constants, and getting this wrong showed up as
   an ActiveX bug rather than a layout one. A column's `width` is in character units of the NORMAL
   STYLE's font, so the conversion needs THAT font's maximum digit width (7px for Calibri 11, 9px for
