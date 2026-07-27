@@ -91,7 +91,8 @@ the priority order for closing it. The companion documents are `ODS_COVERAGE.md`
   ListStyle, ShowDropButtonWhen, DropButtonStyle, MousePointer, Accelerator, PicturePosition,
   SmallChange, LargeChange, Orientation, Delay, ProportionalThumb), TextProps (the font), and
   StreamData pictures. Writing covers every string a control carries and can ADD a property the
-  control does not yet have. Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
+  control does not yet have, for the MorphData family AND the flat layouts, so an unlabelled
+  button or label can be given a caption (double-click it). Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
 - VBA macros: read, run and written (vbalang). `Worksheet.OLEObjects` and `ListObjects` are on the
   object model, and `ListObjects.Add` writes the whole package.
 - Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data, merge/append),
@@ -114,9 +115,6 @@ its sibling elements intact:
   control's stream holds a whole embedded form (a ClassTable, a sites array, a child stream per
   control), which is the parent-controls half of MS-OFORMS, about the size of all the leaf-control
   work. They only reach a worksheet through "More Controls".
-- **Caption on a CommandButton / Label that has none**: the insert-a-missing-property rebuild is
-  written for the MorphData family; these two would need the same treatment for their own layouts.
-  Nothing sets a caption from the UI yet either, so this is a UI gap before it is a format one.
 - **System-palette OLE colours** are left unset on purpose: such a colour is the desktop theme's,
   not the document's.
 - **Pivot layout**: byte-identical layout to Excel is not attempted (both apps re-flow on open).
@@ -144,11 +142,10 @@ its sibling elements intact:
 The original six-item list (sheet management, hyperlinks, data validation, range shifting,
 conditional formatting, comments) is DONE in full; the current order is:
 
-1. ODS parity gaps, which are now the larger asymmetry: data validation beyond list rules,
-   `is-true-formula` and text CF conditions, multi-annotation comments, part-of-cell hyperlinks.
-   See `ODS_COVERAGE.md`.
-2. ActiveX caption authoring (needs a UI first).
-3. Frame / MultiPage / TabStrip, if a real file ever needs it.
+1. Frame / MultiPage / TabStrip, if a real file ever needs it. This is the parent-controls half of
+   MS-OFORMS: a ClassTable, a sites array and a child stream per control, roughly the size of all
+   the leaf-control work, for controls that only reach a worksheet through "More Controls".
 
-DONE since: the ODS parity gaps, Power Query load-to-new-sheet as a real ListObject, and the
-per-column widths of a multi-column ActiveX list (rgColumnInfo).
+DONE since this list was written: the ODS parity gaps, Power Query load-to-new-sheet as a real
+ListObject, the per-column widths of a multi-column ActiveX list (rgColumnInfo), and ActiveX
+caption authoring.

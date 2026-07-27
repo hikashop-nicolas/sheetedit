@@ -38,7 +38,17 @@ export interface ControlLayerDeps {
   runMacro?: (name: string) => void;
   /** Tooltip prefix for a control that does have a macro. */
   macroTitle: string;
+  /** Double-clicked a control whose text is its own (a button, a label, a checkbox): the host
+      offers to change the caption. Absent where captions cannot be written back. */
+  onEditCaption?: (control: SheetControl) => void;
+  /** Whether THIS control's caption can be written; the affordance is offered only where it can. */
+  canEditCaption?: (control: SheetControl) => boolean;
+  /** Tooltip for the caption edit, shown on a control that offers one. */
+  editCaptionTitle?: string;
 }
+
+/** Controls whose caption is theirs to state, so changing it means rewriting the control. */
+const CAPTION_KINDS = new Set(["button", "label", "checkbox", "radio", "groupBox"]);
 
 /** The rectangle a control occupies, in cells. Absent for a control the file never placed. */
 const rectOf = (c: SheetControl): { r1: number; c1: number; r2: number; c2: number } | undefined => {
@@ -393,6 +403,17 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       const el = build(ctl);
       paintVisuals(el, ctl);
       box.appendChild(el);
+      // Double-click to name it, the way a shape is edited. An ActiveX control keeps its caption
+      // in its own binary, so this is a real rewrite rather than a label on the model.
+      if (deps.onEditCaption && CAPTION_KINDS.has(ctl.kind) && deps.canEditCaption?.(ctl) !== false) {
+        box.classList.add("captioned");
+        if (deps.editCaptionTitle && !box.title) box.title = deps.editCaptionTitle;
+        box.addEventListener("dblclick", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          deps.onEditCaption!(ctl);
+        });
+      }
       if (deps.editable?.()) {
         box.classList.add("editable");
         const grip = document.createElement("div");

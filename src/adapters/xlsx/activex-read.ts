@@ -89,6 +89,24 @@ const bool = (prop: keyof ActiveXControl): FieldSetter =>
 const various: FieldSetter = (out, v) => readVariousProperties(out, v >>> 0);
 
 const SIMPLE_LAYOUTS: Partial<Record<ActiveXKind, SimpleLayout>> = {
+  // CommandButtonPropMask: 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fCaption,
+  // 4 fPicturePosition, 5 fSize, 6 fMousePointer, 7 fPicture, 8 fAccelerator,
+  // 9 fTakeFocusOnClick, 10 fMouseIcon. Bit 9 carries no field, like the scroll bar's
+  // fPrevEnabled: it only says the value is not the default. MousePointer is ONE byte, which the
+  // hand-written reader this replaces read as two - masked until now because every field before
+  // it is 4 bytes wide, so the alignment that follows landed in the same place anyway.
+  commandButton: {
+    sizeBit: 5,
+    extraOrder: ["caption", "size"],
+    pictureBits: [7, 10], // fPicture, fMouseIcon
+    fields: [
+      { bit: 0, width: 4, set: color("foreColor") }, { bit: 1, width: 4, set: color("backColor") },
+      { bit: 2, width: 4, set: various }, { bit: 3, width: 4, caption: true },
+      { bit: 4, width: 4, set: num("picturePosition") },
+      { bit: 6, width: 1, set: num("mousePointer") }, { bit: 7, width: 2 },
+      { bit: 8, width: 2, set: num("accelerator") }, { bit: 10, width: 2 },
+    ],
+  },
   // 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fSize, 4 fMousePointer, 5 fMin, 6 fMax,
   // 7 fPosition, 8 unused, 9 fPrevEnabled, 10 fNextEnabled, 11 fSmallChange, 12 fLargeChange,
   // 13 fOrientation, 14 fProportionalThumb, 15 fDelay, 16 fMouseIcon.
@@ -350,6 +368,9 @@ interface Layout {
   /** For the MorphData family, enough to REBUILD the blocks rather than only patch them, which is
       what adding a property the control does not yet carry needs. */
   morph?: MorphRaw;
+  /** The same, for the flat layouts (command button, label, ...): the mask as read, the raw field
+      values by bit, and the table that says the order and widths to re-emit them in. */
+  simple?: { mask: number; fields: Map<number, { width: 1 | 2 | 4; value: number }>; layout: SimpleLayout };
 }
 
 /** A MorphData control's DataBlock as read: every present field's raw value, by mask bit. */
@@ -409,39 +430,6 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
   const at = 16;
   if (bytes[at] !== 0x00 || bytes[at + 1] !== 0x02) return { control: out }; // versions the spec pins
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const mask = dv.getUint32(at + 4, true);
-  const dataStart = at + 8;
-  const data = new Cursor(bytes, dataStart, dataStart);
-
-  if (kind === "commandButton") {
-    // CommandButtonPropMask: 0 fForeColor, 1 fBackColor, 2 fVariousPropertyBits, 3 fCaption,
-    // 4 fPicturePosition, 5 fSize, 6 fMousePointer, 7 fPicture, 8 fAccelerator,
-    // 9 fTakeFocusOnClick, 10 fMouseIcon.
-    const bit = (n: number): boolean => (mask & (1 << n)) !== 0;
-    if (bit(0)) out.foreColor = data.u32();
-    if (bit(1)) out.backColor = data.u32();
-    if (bit(2)) data.u32();          // VariousPropertyBits
-    let captionLenAt = -1, caption = 0;
-    if (bit(3)) { captionLenAt = data.aligned(4); caption = data.u32(); }
-    if (bit(4)) data.u32();          // PicturePosition
-    if (bit(6)) data.u16();          // MousePointer
-    if (bit(7)) data.u16();          // Picture, a placeholder here and the image in StreamData
-    if (bit(8)) data.u16();          // Accelerator
-    if (bit(10)) data.u16();         // MouseIcon, likewise
-    // The ExtraDataBlock starts on a 4-byte boundary after the DataBlock.
-    const extraStart = data.position + ((4 - (data.position % 4)) % 4);
-    const extra = new Cursor(bytes, extraStart, extraStart);
-    const strings: StringSlot[] = [];
-    if (caption) {
-      strings.push({ prop: "caption", lenAt: captionLenAt, at: extra.position, byteLen: caption & 0x7fffffff });
-      out.caption = extra.text(caption);
-    }
-    if (bit(5)) out.size = { cx: extra.i32(), cy: extra.i32() };
-    if (extra.position - (at + 4) !== dv.getUint16(at + 2, true)) return { control: out };
-    // fPicture (7) and fMouseIcon (10) each put a GuidAndPicture in StreamData, in that order.
-    readTrailing(bytes, out, extra.position, (bit(7) ? 1 : 0) + (bit(10) ? 1 : 0));
-    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 4 } };
-  }
 
   const morph = MORPH_KINDS.has(kind);
   if (morph) {
@@ -530,10 +518,12 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     const block = new Cursor(bytes, start, start);
     let captionLenAt = -1, caption = 0;
     for (const m of MASK_ONLY[kind] ?? []) m.set(out, bit(m.bit) ? 1 : 0);
+    const rawFields = new Map<number, { width: 1 | 2 | 4; value: number }>();
     for (const f of simple.fields) {
       if (!bit(f.bit)) continue;
-      if (f.caption) { captionLenAt = block.aligned(4); caption = block.u32(); continue; }
+      if (f.caption) { captionLenAt = block.aligned(4); caption = block.u32(); rawFields.set(f.bit, { width: 4, value: caption >>> 0 }); continue; }
       const v = f.width === 1 ? block.u8() : f.width === 2 ? block.u16() : block.i32();
+      rawFields.set(f.bit, { width: f.width, value: v >>> 0 });
       f.set?.(out, v);
     }
     const extraStart = block.position + ((4 - ((block.position - start) % 4)) % 4);
@@ -550,7 +540,7 @@ function walk(bytes: Uint8Array): { control: ActiveXControl; layout?: Layout } |
     // The same guard the MorphData path uses: land on cb or report nothing but the kind.
     if (extra.position - (at + 4) !== dv.getUint16(at + 2, true)) return { control: { kind } };
     readTrailing(bytes, out, extra.position, simple.pictureBits.filter(bit).length);
-    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 4 } };
+    return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 4, simple: { mask, fields: rawFields, layout: simple } } };
   }
 
   // Anything left is a Forms 2.0 kind with no layout here: its kind is still trustworthy, since
@@ -717,10 +707,14 @@ export function setActiveXText(
   const found = walk(bytes);
   const slot = found?.layout?.strings.find((x) => x.prop === prop);
   if (!found?.layout) return undefined;
-  // The control does not carry that property yet, which is what an empty text box looks like: its
-  // mask bit is clear and there is nothing to patch. Adding one means rebuilding both blocks, so
-  // that path is taken only where the whole DataBlock was recorded field by field.
-  if (!slot) return found.layout.morph ? addMorphString(bytes, found.layout, prop, text) : undefined;
+  // The control does not carry that property yet, which is what an unlabelled button looks like:
+  // its mask bit is clear and there is nothing to patch. Adding one means rebuilding both blocks,
+  // so that path is taken only where the whole DataBlock was recorded field by field.
+  if (!slot) {
+    if (found.layout.morph) return addMorphString(bytes, found.layout, prop, text);
+    if (found.layout.simple && prop === "caption") return addSimpleCaption(bytes, found.layout, text);
+    return undefined;
+  }
   const L = found.layout;
   const next = encodeText(text);
 
@@ -752,6 +746,63 @@ export function setActiveXText(
   // cb states PropMask + DataBlock + ExtraDataBlock, so it moves with the block that changed.
   ov.setUint16(L.maskAt - 2, ((L.extraStart - L.maskAt) + pieces.length) & 0xffff, true);
   return out;
+}
+
+/**
+ * Give a caption to a control of a FLAT layout (a command button, a label) that has none.
+ *
+ * The MorphData family got this first; these two needed the same treatment for their own tables,
+ * which is what stopped a button from being labelled. The block is re-emitted rather than spliced,
+ * for the same reason: the caption's length word has to land 4-aligned in the DataBlock, and
+ * inserting it shifts every field after it.
+ *
+ * Each family states its own ExtraDataBlock order, so the caption goes where that table says
+ * rather than where it sits for a MorphData control (Size first there, Caption first here).
+ * Everything past `cb` - the pictures, the font - is carried over from where it sat.
+ */
+function addSimpleCaption(bytes: Uint8Array, L: Layout, text: string): Uint8Array | undefined {
+  const S = L.simple;
+  if (!S || !text) return undefined; // adding an empty caption is what "not present" already means
+  const capField = S.layout.fields.find((f) => f.caption);
+  if (!capField) return undefined; // a family with no caption of its own
+  const next = encodeText(text);
+  const fields = new Map(S.fields);
+  fields.set(capField.bit, { width: 4, value: next.lengthAndFlag >>> 0 });
+
+  // The DataBlock, in the table's order and with the format's alignment.
+  const data: number[] = [];
+  const align = (n: number): void => { while (data.length % n) data.push(0); };
+  for (const f of S.layout.fields) {
+    const got = fields.get(f.bit);
+    if (!got) continue;
+    align(f.width);
+    const v = got.value >>> 0;
+    if (f.width === 1) data.push(v & 0xff);
+    else if (f.width === 2) data.push(v & 0xff, (v >> 8) & 0xff);
+    else data.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff);
+  }
+  while (data.length % 4) data.push(0); // the ExtraDataBlock starts aligned
+
+  // The ExtraDataBlock, in this family's own order. This path only runs for a control that had NO
+  // caption, so whatever the block held was the Size alone: it is carried over verbatim.
+  const runs: number[] = [];
+  const hadSize = (S.mask & (1 << S.layout.sizeBit)) !== 0;
+  for (const what of S.layout.extraOrder) {
+    if (what === "caption") runs.push(...padTo4(next.bytes));
+    else if (what === "size" && hadSize) runs.push(...Array.from(bytes.subarray(L.extraStart, L.extraStart + 8)));
+  }
+
+  const mask = (S.mask | (1 << capField.bit)) >>> 0;
+  const maskBytes = [mask & 0xff, (mask >> 8) & 0xff, (mask >> 16) & 0xff, (mask >> 24) & 0xff];
+  const cb = maskBytes.length + data.length + runs.length;
+  const out = new Uint8Array([
+    ...Array.from(bytes.subarray(0, L.maskAt - 2)),
+    cb & 0xff, (cb >> 8) & 0xff,
+    ...maskBytes, ...data, ...runs,
+    ...Array.from(bytes.subarray(L.extraEnd)), // StreamData, TextProps
+  ]);
+  // Read it back before handing it over: a rebuild that cannot be parsed is worse than a refusal.
+  return walk(out)?.control.caption === text ? out : undefined;
 }
 
 /** Change a control's persisted Value. A thin name over setActiveXText, which is the general one. */

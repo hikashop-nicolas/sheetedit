@@ -30,7 +30,7 @@ import { editModuleSource, findSheetHandler, findWorkbookHandler, hasEventHandle
 import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { hasActiveX } from "../adapters/xlsx/control-read";
-import { setActiveXValue } from "../adapters/xlsx/activex-read";
+import { setActiveXText, setActiveXValue } from "../adapters/xlsx/activex-read";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -2454,6 +2454,45 @@ export function createSheetEditor(
     if (sheetIndex === active) controlLayer.refresh();
   };
 
+  /**
+   * Whether this control's caption can actually be rewritten, asked by re-writing the caption it
+   * already has: the writer refuses any stream it would not vouch for, so a successful no-op write
+   * is exactly the test. Offering an edit that cannot be saved would be worse than offering none.
+   */
+  const captionWritable = (ctl: SheetControl): boolean => {
+    if (!ctl.activeX || !ctl.activeXBinPath) return false; // a form control's text is in the drawing
+    const bin = wb.files[ctl.activeXBinPath];
+    return !!bin && !!setActiveXText(bin, "caption", ctl.label ?? "x");
+  };
+
+  /**
+   * Rename a control: set the caption it shows, and write it into the control's own binary.
+   *
+   * An ActiveX control states its caption in its persisted stream, so this is a real format write
+   * and can fail - the writer refuses a stream it would not vouch for, and a control that carries
+   * no caption property yet has its blocks rebuilt to add one. A refusal leaves the file alone and
+   * says so rather than showing a caption the file does not have.
+   */
+  const editControlCaption = (ctl: SheetControl): void => {
+    const current = ctl.label ?? "";
+    formDialog(wrap, t("ctrlCaptionEdit"), [
+      { key: "caption", label: t("ctrlCaption"), type: "text", value: current },
+    ], (vals) => {
+      const next = String(vals.caption ?? "").trim();
+      if (next === current) return;
+      const bin = ctl.activeXBinPath ? wb.files[ctl.activeXBinPath] : undefined;
+      const out = bin ? setActiveXText(bin, "caption", next) : undefined;
+      // The affordance is only offered where a write is known to succeed (see captionWritable),
+      // so a refusal here means the stream changed under us: leave the file exactly as it was.
+      if (!out || !ctl.activeXBinPath) return;
+      wb.files[ctl.activeXBinPath] = out;
+      ctl.label = next;
+      ctl.dirty = true;
+      mark();
+      controlLayer.refresh();
+    });
+  };
+
   // Form controls. A control exists to drive its linked cell, so a change writes there and
   // recalculates, exactly as it would in Excel.
   // Only xlsx models controls this way; ODF keeps them in office:forms, which is preserved rather
@@ -2478,6 +2517,11 @@ export function createSheetEditor(
     },
     itemsFor: (ctl) => controlItemsFor(ctl),
     itemRowsFor: (ctl) => controlItemRowsFor(ctl),
+    // Only xlsx writes controls back, and only an ActiveX control keeps its caption where we can
+    // rewrite it; a form control's text lives in the sheet's drawing, which is another job.
+    onEditCaption: wb.kind === "xlsx" ? (ctl) => editControlCaption(ctl) : undefined,
+    canEditCaption: (ctl) => captionWritable(ctl),
+    editCaptionTitle: t("ctrlCaptionEdit"),
     onChange: (changed) => {
       const sheet = wb.sheets[active];
       // An ActiveX control keeps its own state in a persisted binary, so the change goes there as

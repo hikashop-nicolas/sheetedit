@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { strToU8, zipSync } from "fflate";
 import { kindOfClsid, readActiveXStream, setActiveXText, setActiveXValue } from "./activex-read";
 
 // The bytes here are SYNTHETIC, built from [MS-OFORMS], because the real ActiveX files available
@@ -16,6 +17,7 @@ const CLSID = {
   combo: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
   dropdown: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
   textbox: [0x10, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  label: [0x23, 0x9e, 0x8c, 0x97, 0xb0, 0xd4, 0xce, 0x11, 0xbf, 0x2d, 0x00, 0xaa, 0x00, 0x3f, 0x40, 0xd0],
   image: [0x41, 0x92, 0x59, 0x4c, 0x26, 0x69, 0x1b, 0x10, 0x99, 0x92, 0x00, 0x00, 0x0b, 0x65, 0xc6, 0xf9],
 };
 
@@ -555,5 +557,114 @@ describe("multi-column list widths", () => {
     expect(ctl.font?.name).toBe("Verdana");
     expect(ctl.font?.sizePt).toBe(10);
     expect(ctl.columnWidths).toEqual([96, 48]);
+  });
+});
+
+// Giving a caption to a control that has none. The MorphData family could already do this; the
+// flat layouts (command button, label) could not, which is what stopped a button being labelled.
+/** A command button with a Size and, when `caption` is empty, NO caption bit at all. */
+function bareButton(caption: string, font?: { name?: string }): Uint8Array {
+  let mask = (1 << 5); // fSize
+  const fields: [number, 1 | 2 | 4, number][] = [];
+  if (caption) { mask |= 1 << 3; fields.push([3, 4, (0x80000000 | caption.length) >>> 0]); }
+  const block = emitFields(fields);
+  const extra = [...(caption ? pad(caption) : []), ...u32(5609), ...u32(970)];
+  return new Uint8Array([
+    ...CLSID.commandButton, 0x00, 0x02, ...u16(4 + block.length + extra.length),
+    ...u32(mask), ...block, ...extra,
+    ...(font ? textProps(font) : []),
+  ]);
+}
+const buttonWithFont = (caption: string): Uint8Array => bareButton(caption, { name: "Verdana" });
+
+/** A label with a Size and no caption. LabelPropMask puts fSize at bit 5, caption at bit 3. */
+function labelControl(): Uint8Array {
+  const mask = 1 << 5;
+  return new Uint8Array([
+    ...CLSID.label, 0x00, 0x02, ...u16(4 + 8),
+    ...u32(mask), ...u32(2000), ...u32(400),
+  ]);
+}
+
+describe("adding a caption to a control that has none", () => {
+  it("labels a bare command button", () => {
+    const bytes = bareButton("");
+    const before = readActiveXStream(bytes)!;
+    expect(before.kind).toBe("commandButton");
+    const out = setActiveXText(bytes, "caption", "Run report")!;
+    expect(out).toBeTruthy();
+    const after = readActiveXStream(out)!;
+    expect(after.caption).toBe("Run report");
+    // The properties it already had come through the rebuild unchanged.
+    expect(after.size).toEqual(before.size);
+    expect(after.kind).toBe("commandButton");
+  });
+
+  it("labels a bare label", () => {
+    const bytes = labelControl();
+    const out = setActiveXText(bytes, "caption", "Total")!;
+    expect(readActiveXStream(out)!.caption).toBe("Total");
+  });
+
+  it("keeps the rest of the stream, including the font after cb", () => {
+    const bytes = buttonWithFont("");
+    const out = setActiveXText(bytes, "caption", "Go")!;
+    const after = readActiveXStream(out)!;
+    expect(after.caption).toBe("Go");
+    expect(after.font?.name).toBe("Verdana"); // TextProps sits past cb and must ride along
+  });
+
+  it("refuses an empty caption, which is what absent already means", () => {
+    expect(setActiveXText(bareButton(""), "caption", "")).toBeUndefined();
+  });
+
+  it("can still change a caption a button already has", () => {
+    const out = setActiveXText(bareButton("Old"), "caption", "New")!;
+    expect(readActiveXStream(out)!.caption).toBe("New");
+  });
+});
+
+// The whole chain, not just the stream: a caption written into a control's binary has to come back
+// through the package as the control's label, which is what the grid shows. The workbook is built
+// here rather than read from a fixture, so this runs everywhere instead of skipping quietly.
+function xlsxWithBareButton(): Uint8Array {
+  const rels = (body: string) => `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${body}</Relationships>`;
+  const sheet = `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
+    `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
+    `xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">` +
+    `<sheetData/><mc:AlternateContent><mc:Choice Requires="x14"><controls>` +
+    `<control shapeId="1025" r:id="rId1" name="CommandButton1"><controlPr defaultSize="0"/></control>` +
+    `</controls></mc:Choice></mc:AlternateContent></worksheet>`;
+  return zipSync({
+    "[Content_Types].xml": strToU8(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+      `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` +
+      `<Default Extension="bin" ContentType="application/vnd.ms-office.activeX"/>` +
+      `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+      `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+      `<Override PartName="/xl/activeX/activeX1.xml" ContentType="application/vnd.ms-office.activeX+xml"/></Types>`),
+    "_rels/.rels": strToU8(rels(`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>`)),
+    "xl/workbook.xml": strToU8(`<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Controls" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/_rels/workbook.xml.rels": strToU8(rels(`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>`)),
+    "xl/worksheets/sheet1.xml": strToU8(sheet),
+    "xl/worksheets/_rels/sheet1.xml.rels": strToU8(rels(`<Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2006/relationships/activeXControl" Target="../activeX/activeX1.xml"/>`)),
+    "xl/activeX/activeX1.xml": strToU8(`<?xml version="1.0"?><ax:ocx xmlns:ax="http://schemas.microsoft.com/office/2006/activeX" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ax:classid="{D7053240-CE69-11CD-A777-00DD01143C57}" ax:persistence="persistStreamInit" r:id="rId1"/>`),
+    "xl/activeX/_rels/activeX1.xml.rels": strToU8(rels(`<Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2006/relationships/activeXControlBinary" Target="activeX1.bin"/>`)),
+    "xl/activeX/activeX1.bin": bareButton(""),
+  });
+}
+
+describe("a caption written into a workbook", () => {
+  it("survives save and re-read", async () => {
+    const { readWorkbook, writeWorkbook } = await import("../../index");
+    const wb = readWorkbook(xlsxWithBareButton());
+    const ctl = wb.sheets[0].controls![0]!;
+    expect(ctl.activeX).toBe(true);
+    expect(ctl.kind).toBe("button");
+    expect(ctl.label).toBeUndefined(); // no caption to begin with
+    const out = setActiveXText(wb.files[ctl.activeXBinPath!]!, "caption", "Run report")!;
+    expect(out).toBeTruthy();
+    wb.files[ctl.activeXBinPath!] = out;
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(re.sheets[0].controls![0]!.label).toBe("Run report");
   });
 });
