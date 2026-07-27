@@ -9,7 +9,7 @@ const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", cou
 import { readOdsCharts } from "./chart-read";
 import { readOdsImages } from "./image-read";
 import { readOdsShapes } from "./shape-read";
-import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx } from "./shared";
+import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx, odsLinkIsWholeCell } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
 // ---------------------------------------------------------------------------
@@ -883,6 +883,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       kind = value === "" ? "blank" : "s";
     }
     const link = odsCellLink(cellEl);
+    const linkPartial = link ? !odsLinkIsWholeCell(cellEl) : undefined;
     const comments = odsCellComments(cellEl);
     const richRuns = kind === "s" && !phonetic ? odsCellRuns(cellEl, styles) : undefined;
     const odsValidationName = cellEl.getAttribute("table:content-validation-name") ?? undefined;
@@ -907,6 +908,7 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       el: cellEl,
       phonetic,
       link,
+      linkPartial,
       comments,
       richRuns,
       odsValidationName,

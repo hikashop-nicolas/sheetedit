@@ -223,6 +223,9 @@ export interface Cell {
       "Sheet!A1" / defined-name target. Rendered as a clickable link; preserved via the
       untouched sheet XML (sheetedit reads and follows it, it does not rewrite it). */
   link?: { href: string; internal?: boolean; tip?: string };
+  /** ods: the cell's link does NOT cover its whole text (it anchors part of it, or there are
+      several). The grid still shows the first, but a rewrite must not wrap everything in it. */
+  linkPartial?: boolean;
   /** xlsx @s style index / ods @table:style-name, preserved across edits. */
   style?: string;
   /** Resolved visual formatting (fonts/fills/borders/alignment) for the grid. */

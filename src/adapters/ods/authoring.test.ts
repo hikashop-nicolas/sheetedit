@@ -218,3 +218,55 @@ describe("ods notes and links: what an edit must not throw away", () => {
     expect(out).toContain('text:visited-style-name="Visited_20_link"');
   });
 });
+
+describe("ods part-of-cell links", () => {
+  const partial =
+    `<table:table-cell office:value-type="string"><text:p>see <text:a xlink:href="https://docs.test">docs</text:a> and ` +
+    `<text:a xlink:href="https://spec.test">spec</text:a></text:p></table:table-cell>`;
+
+  it("does not turn the whole cell into a link when the value is edited", () => {
+    // ODF can anchor a link to part of a cell; xlsx cannot, so the grid shows the first. Rebuilding
+    // the cell around that one used to make ALL of its text a link to it, inventing a link the
+    // file never had. The anchors belong to the text that is gone; the value is what survives.
+    const wb = readWorkbook(ods(partial));
+    const cell = getCell(wb.sheets[0], 1, 1)!;
+    expect(cell.link).toEqual({ href: "https://docs.test" }); // still shown in the grid
+    expect(cell.linkPartial).toBe(true);
+    setCellInput(wb.sheets[0], 1, 1, "plain text now");
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("plain text now");
+    expect(out).not.toContain("https://docs.test");
+    expect(out).not.toContain("<text:a");
+  });
+
+  it("keeps every anchor when the text is unchanged", () => {
+    // A recalc or a re-entry of the same value must not cost the cell its links.
+    const wb = readWorkbook(ods(partial));
+    const sheet = wb.sheets[0];
+    setCellInput(sheet, 1, 1, "see docs and spec"); // the text it already has
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://docs.test");
+    expect(out).toContain("https://spec.test");
+  });
+
+  it("still writes a whole-cell link the user authors on such a cell", () => {
+    const wb = readWorkbook(ods(partial));
+    setOdsHyperlink(wb.sheets[0], 1, 1, { href: "https://chosen.test" });
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://chosen.test");
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(getCell(re.sheets[0], 1, 1)?.link).toEqual({ href: "https://chosen.test" });
+    expect(getCell(re.sheets[0], 1, 1)?.linkPartial).toBeFalsy(); // now it does cover the cell
+  });
+
+  it("keeps treating a genuine whole-cell link as one", () => {
+    const wb = readWorkbook(ods(
+      `<table:table-cell office:value-type="string"><text:p><text:a xlink:href="https://whole.test">site</text:a></text:p></table:table-cell>`,
+    ));
+    expect(getCell(wb.sheets[0], 1, 1)?.linkPartial).toBe(false);
+    setCellInput(wb.sheets[0], 1, 1, "renamed");
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://whole.test"); // the link covered everything, so it follows the text
+    expect(out).toContain("renamed");
+  });
+});

@@ -38,7 +38,10 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
   const addText = (text: string) => {
     if (text === "") return;
     const p = doc.createElementNS(ODS.text, "text:p");
-    if (cell.link) {
+    // A link that only anchored PART of the old text cannot be re-anchored to new text, and
+    // wrapping the whole cell in it would make text a link that never was one. The anchors go
+    // with the text they belonged to; the value stays.
+    if (cell.link && !cell.linkPartial) {
       const a = doc.createElementNS(ODS.text, "text:a");
       // Carry the original anchor's other attributes (target-frame-name, show, style-name,
       // visited-style-name) across an edit: only the href is ours to decide, and rebuilding the
@@ -118,6 +121,10 @@ function patchOdsAnnotations(doc: Document, c: Element, cell: Cell): void {
   for (let i = comments.length; i < anns.length; i++) c.removeChild(anns[i]!);
 }
 
+/** The text a cell element currently shows, joined the way the reader joins it. */
+const odsTextOf = (c: Element): string =>
+  Array.from(c.children).filter((e) => e.localName === "p").map((p) => p.textContent ?? "").join("\n");
+
 function patchOdsCell(doc: Document, cell: Cell): Element {
   const c = cell.el!.cloneNode(true) as Element;
   c.removeAttribute("table:number-columns-repeated");
@@ -134,6 +141,12 @@ function patchOdsCell(doc: Document, cell: Cell): Element {
       if (cell.formula != null) c.setAttributeNS(ODS.table, "table:formula", a1ToOdf(cell.formula));
       else c.removeAttributeNS(ODS.table, "formula");
     }
+    // Rebuilding the text loses whatever it was made of: part-of-cell links, several links, spans.
+    // A recalc that lands on the same text, or a re-entry of the value already there, has no
+    // reason to pay that, so leave the paragraphs exactly as they are. Only when there is no
+    // structure of our own to write: furigana and rich runs ARE that structure, and authoring
+    // either leaves the text identical while still having to be emitted.
+    if (!cell.linkDirty && !cell.phonetic?.length && !cell.richRuns?.length && odsTextOf(c) === (cell.display ?? cell.value)) return c;
     applyOdsValue(doc, c, cell);
   }
   return c;
@@ -216,6 +229,8 @@ function makeRunsP(doc: Document, runs: import("../../core/model").TextRun[]): E
 export function setOdsHyperlink(sheet: Sheet, r: number, c: number, link: Cell["link"] | null): void {
   const cell = ensureCell(sheet, r, c);
   cell.link = link ?? undefined;
+  // A link the user sets covers the whole cell by definition, whatever the file had before.
+  cell.linkPartial = undefined;
   cell.linkDirty = true;
 }
 

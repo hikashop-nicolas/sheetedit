@@ -108,6 +108,22 @@ export function odsCellLink(cell: Element): Cell["link"] {
   return { href };
 }
 
+/**
+ * Whether the cell's links cover its whole text: one anchor, spanning everything.
+ *
+ * ODF can anchor a link to PART of a cell's text, or carry several in one cell; xlsx cannot, and
+ * the grid shows one link per cell. That is fine for display, but it must not be mistaken for the
+ * file's own shape when writing: rebuilding such a cell around its first link turns text that was
+ * never a link into one.
+ */
+export function odsLinkIsWholeCell(cell: Element): boolean {
+  const anchors = Array.from(cell.getElementsByTagName("text:a"));
+  if (anchors.length !== 1) return false;
+  const anchored = anchors[0]!.textContent ?? "";
+  const whole = Array.from(cell.getElementsByTagName("text:p")).map((p) => p.textContent ?? "").join("\n");
+  return anchored.length > 0 && anchored === whole;
+}
+
 // Cell notes from ODF <office:annotation> (dc:creator + text:p lines), newest last.
 export function odsCellComments(cell: Element): Cell["comments"] {
   const out: NonNullable<Cell["comments"]> = [];
