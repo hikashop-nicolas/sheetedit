@@ -3,6 +3,7 @@ import type { MValue } from "mlang";
 import { colToLetters, getCell, parseA1Ref, parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
 import { setCellInput } from "../../core/workbook";
 import { createWorksheet, uniqueSheetName } from "./sheet-create";
+import { addContentType, addRel } from "./chart-write";
 
 // Excel table (ListObject) helpers for the Power Query integration: list the workbook's
 // tables, expose one as an mlang table value (Excel.CurrentWorkbook), and write a query
@@ -225,13 +226,63 @@ export function applyQueryResult(wb: Workbook, tbl: WorkbookTable, result: MTabl
 /** Load a query result onto a brand-new sheet (header row + data), for a query with no existing
     destination table. Returns the new sheet's index. Values are written as plain cells (not a
     live ListObject); a merchant can save and reopen the workbook to see the data. */
+/**
+ * The connection that makes a loaded query REFRESHABLE rather than a copy of some values.
+ *
+ * Excel names these "Query - <Name>" and points them at the workbook's own mashup engine, which is
+ * how it knows the range came from a query and can rebuild it. sheetedit's own reader already
+ * looks for exactly this shape (see refreshOnLoadQueries), so writing it also makes a loaded
+ * query round-trip as one.
+ */
+function addQueryConnection(wb: Workbook, queryName: string): void {
+  const CONN_CT = "application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml";
+  const name = `Query - ${queryName}`;
+  const existing = wb.files["xl/connections.xml"];
+  const doc = parseXmlOpt(existing) ?? parseXmlOpt(strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><connections xmlns="${SS_MAIN}"/>`))!;
+  const conns = Array.from(doc.getElementsByTagName("connection"));
+  if (conns.some((c) => c.getAttribute("name") === name)) return; // already wired
+  const id = String(1 + Math.max(0, ...conns.map((c) => Number(c.getAttribute("id") ?? 0))));
+  const conn = doc.createElementNS(SS_MAIN, "connection");
+  conn.setAttribute("id", id);
+  conn.setAttribute("name", name);
+  conn.setAttribute("type", "5"); // OLE DB, which is what the mashup provider is
+  conn.setAttribute("refreshedVersion", "6");
+  conn.setAttribute("background", "1");
+  conn.setAttribute("refreshOnLoad", "1");
+  const db = doc.createElementNS(SS_MAIN, "dbPr");
+  db.setAttribute("connection", `Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=${queryName}`);
+  db.setAttribute("command", `SELECT * FROM [${queryName}]`);
+  conn.appendChild(db);
+  doc.documentElement.appendChild(conn);
+  wb.files["xl/connections.xml"] = serializeXml(doc);
+  if (!existing) {
+    addContentType(wb, "xl/connections.xml", CONN_CT);
+    addRel(wb, "xl/_rels/workbook.xml.rels", `${REL_NS}/connections`, "connections.xml");
+  }
+}
+
+/**
+ * Load a query's result onto a fresh sheet AS A TABLE, not as loose cells.
+ *
+ * The table is what makes the result a thing rather than a copy of some values: it carries the
+ * query's name, so structured references reach it, the next Load finds it (tableForQuery matches
+ * by name) and refreshes IN PLACE instead of adding another sheet, and Excel has something to
+ * refresh into.
+ */
 export function loadResultToNewSheet(wb: Workbook, queryName: string, result: MTable): { sheetIndex: number; rows: number } {
   const sheet = createWorksheet(wb, uniqueSheetName(wb, queryName));
   result.columns.forEach((name, c) => setCellInput(sheet, 1, c + 1, name));
   result.rows.forEach((row, r) => {
     result.columns.forEach((_, c) => setCellInput(sheet, r + 2, c + 1, rawFor(row[c] ?? { kind: "null" })));
   });
-  return { sheetIndex: wb.sheets.length - 1, rows: result.rows.length };
+  const sheetIndex = wb.sheets.length - 1;
+  if (result.columns.length) {
+    // A table needs a body row even when the query returned none, or its ref covers only headers.
+    const r2 = Math.max(2, result.rows.length + 1);
+    createTable(wb, sheetIndex, { r1: 1, c1: 1, r2, c2: result.columns.length }, { name: queryName, hasHeaders: true, style: "TableStyleMedium2" });
+    addQueryConnection(wb, queryName);
+  }
+  return { sheetIndex, rows: result.rows.length };
 }
 
 // --- creating a table ------------------------------------------------------------------------
