@@ -1,5 +1,5 @@
 import type { Cell, Phonetic, Sheet, Workbook } from "../../core/model";
-import { ensureCell, getCell, key, serializeXml } from "../../core/model";
+import { ensureCell, getCell, key, parseXmlOpt, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
 import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } from "./styles";
@@ -447,13 +447,85 @@ function styleMapCondition(operator: string, value: string, value2?: string): st
 /** Add or (spec === null) remove a conditional format over the given ranges. ODS authors cellIs
     (standard style:map, incl. between) + colour scale / data bar (LibreOffice calcext); other rule
     kinds are xlsx-only (the dialog does not offer them for ODS). */
+/**
+ * The calcext container for a sheet, which MUST be the last child of its <table:table>.
+ *
+ * Not a detail: LibreOffice ignores a conditional-formats block placed anywhere else, so writing
+ * it under <office:spreadsheet> (which this did) produced rules our own reader found - it scans by
+ * tag name - and LibreOffice silently dropped. That is what made calcext authoring look
+ * impossible; it is not, it was in the wrong place.
+ */
+function ensureOdsCfContainer(doc: Document, sheet: Sheet): Element | undefined {
+  const table = sheet.tableEl;
+  if (!table) return undefined;
+  let container = Array.from(table.children).find((e) => e.localName === "conditional-formats");
+  if (!container) {
+    container = doc.createElementNS(ODS.calcext, "calcext:conditional-formats");
+    table.appendChild(container);
+  }
+  return container;
+}
+
+/**
+ * Intern the fill a calcext rule applies, as a NAMED style in styles.xml, and return the DISPLAY
+ * name calcext refers to it by.
+ *
+ * Also not a detail: as an automatic style in content.xml the rule still imports but arrives with
+ * no formatting at all (LibreOffice's xlsx export of such a file carries no dxf), so the highlight
+ * silently loses its colour.
+ */
+function internOdsCondStyle(wb: Workbook, fill: string): string | undefined {
+  const file = wb.files["styles.xml"];
+  const doc = file ? parseXmlOpt(file) : undefined;
+  const styles = doc?.getElementsByTagName("office:styles")[0];
+  if (!doc || !styles) return undefined;
+  const used = new Set(Array.from(doc.getElementsByTagName("style:style")).map((s) => s.getAttribute("style:display-name")));
+  let n = 1;
+  while (used.has(`ConditionalStyle_${n}`)) n++;
+  const display = `ConditionalStyle_${n}`;
+  const st = doc.createElementNS(ODS.style, "style:style");
+  // ODF escapes an underscore in a style:name as _5f_, which is how LibreOffice names these.
+  st.setAttributeNS(ODS.style, "style:name", display.replace(/_/g, "_5f_"));
+  st.setAttributeNS(ODS.style, "style:display-name", display);
+  st.setAttributeNS(ODS.style, "style:family", "table-cell");
+  st.setAttributeNS(ODS.style, "style:parent-style-name", "Default");
+  const cp = doc.createElementNS(ODS.style, "style:table-cell-properties");
+  cp.setAttributeNS(ODS.fo, "fo:background-color", fill);
+  st.appendChild(cp);
+  styles.appendChild(st);
+  wb.files["styles.xml"] = serializeXml(doc);
+  return display;
+}
+
+/** The calcext condition text for a rule kind, in LibreOffice's own spelling. */
+function calcextCondition(spec: import("../xlsx/write").CfSpec): string | undefined {
+  const q = (s: string): string => `"${s.replace(/"/g, '""')}"`;
+  switch (spec.kind) {
+    case "text": {
+      const FN = { containsText: "contains-text", notContainsText: "not-contains-text", beginsWith: "begins-with", endsWith: "ends-with" };
+      return `${FN[spec.operator]}(${q(spec.text)})`;
+    }
+    case "expression":
+      return `formula-is(${a1ToOdf(spec.formula).replace(/^of:=/, "")})`;
+    case "dupUnique":
+      return spec.unique ? "unique" : "duplicate";
+    case "top":
+      return `${spec.bottom ? "bottom" : "top"}-${spec.percent ? "percent" : "elements"}(${spec.rank})`;
+    case "average":
+      return `${spec.below ? "below" : "above"}${spec.equal ? "-equal" : ""}-average`;
+    default:
+      return undefined;
+  }
+}
+
 export function setOdsCondFormat(
   wb: Workbook,
   sheet: Sheet,
   ranges: { r1: number; c1: number; r2: number; c2: number }[],
   spec: import("../xlsx/write").CfSpec | null,
 ): void {
-  if (spec && spec.kind !== "cellIs" && spec.kind !== "colorScale" && spec.kind !== "dataBar") return;
+  // timePeriod is the one kind with no calcext spelling, so it stays unauthorable here.
+  if (spec && spec.kind === "timePeriod") return;
   const doc = wb.contentDoc;
   const inRange = (r: number, c: number): boolean => ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
   const target = ranges.map((g) => a1RangeToOdfTarget(sheet.name, g)).join(" ");
@@ -510,18 +582,47 @@ export function setOdsCondFormat(
           for (let c = g.c1; c <= g.c2; c++) { const cell = ensureCell(sheet, r, c); cell.style = mkDerived(cell.style ?? ""); cell.edited = true; }
       rule.operator = spec.operator; rule.formulas = [spec.value]; rule.dxf = { bg: spec.fill };
     } else {
-      // Colour scales / data bars have no standard ODF form; write LibreOffice's calcext.
-      let container = Array.from(spreadsheet.children).find((e) => e.localName === "conditional-formats");
-      if (!container) { container = doc.createElementNS(ODS.calcext, "calcext:conditional-formats"); spreadsheet.appendChild(container); }
+      // Every other kind has no standard ODF form; write LibreOffice's calcext, in the one place
+      // LibreOffice reads it from (inside the table).
+      const container = ensureOdsCfContainer(doc, sheet);
+      if (!container) return;
       const cfEl = doc.createElementNS(ODS.calcext, "calcext:conditional-format");
       cfEl.setAttributeNS(ODS.calcext, "calcext:target-range-address", target);
-      if (spec.kind === "colorScale") {
+      const condition = calcextCondition(spec);
+      if (condition !== undefined) {
+        // A rule stated as a condition: it applies a named style, which must live in styles.xml.
+        const fill = (spec as { fill?: string }).fill;
+        const applied = fill ? internOdsCondStyle(wb, fill) : undefined;
+        const cond = doc.createElementNS(ODS.calcext, "calcext:condition");
+        cond.setAttributeNS(ODS.calcext, "calcext:value", condition);
+        if (applied) cond.setAttributeNS(ODS.calcext, "calcext:apply-style-name", applied);
+        cond.setAttributeNS(ODS.calcext, "calcext:base-cell-address", a1RangeToOdfTarget(sheet.name, ranges[0]!).split(":")[0]!);
+        cfEl.appendChild(cond);
+        if (spec.kind === "text") { rule.type = spec.operator; rule.text = spec.text; }
+        else if (spec.kind === "expression") { rule.type = "expression"; rule.formulas = [spec.formula]; }
+        else if (spec.kind === "dupUnique") rule.type = spec.unique ? "uniqueValues" : "duplicateValues";
+        else if (spec.kind === "top") { rule.type = "top10"; rule.rank = spec.rank; rule.percent = spec.percent; rule.bottom = spec.bottom; }
+        else if (spec.kind === "average") { rule.type = "aboveAverage"; rule.aboveAverage = !spec.below; rule.equalAverage = spec.equal; }
+        if (fill) rule.dxf = { bg: fill };
+      } else if (spec.kind === "iconSet") {
+        const is = doc.createElementNS(ODS.calcext, "calcext:icon-set");
+        is.setAttributeNS(ODS.calcext, "calcext:icon-set-type", spec.set);
+        const stops = Array.from({ length: spec.count }, (_, i) => Math.round((i * 100) / spec.count));
+        for (const v of stops) {
+          const e = doc.createElementNS(ODS.calcext, "calcext:formatting-entry");
+          e.setAttributeNS(ODS.calcext, "calcext:value", String(v));
+          e.setAttributeNS(ODS.calcext, "calcext:type", "percent");
+          is.appendChild(e);
+        }
+        cfEl.appendChild(is);
+        rule.iconSet = { set: spec.set, cfvo: stops.map((v) => ({ type: "percent", val: v, gte: true })) };
+      } else if (spec.kind === "colorScale") {
         const cs = doc.createElementNS(ODS.calcext, "calcext:color-scale");
         const types = spec.colors.length >= 3 ? ["minimum", "percentile", "maximum"] : ["minimum", "maximum"];
         types.forEach((ty, i) => { const e = doc.createElementNS(ODS.calcext, "calcext:color-scale-entry"); e.setAttributeNS(ODS.calcext, "calcext:type", ty); if (ty === "percentile") e.setAttributeNS(ODS.calcext, "calcext:value", "50"); e.setAttributeNS(ODS.calcext, "calcext:color", spec.colors[i]!); cs.appendChild(e); });
         cfEl.appendChild(cs);
         rule.colorScale = { cfvo: types.map((ty) => ({ type: ty === "minimum" ? "min" : ty === "maximum" ? "max" : "percentile", val: ty === "percentile" ? 50 : undefined })), colors: spec.colors };
-      } else {
+      } else if (spec.kind === "dataBar") {
         const db = doc.createElementNS(ODS.calcext, "calcext:data-bar");
         db.setAttributeNS(ODS.calcext, "calcext:positive-color", spec.color);
         for (const ty of ["minimum", "maximum"]) { const e = doc.createElementNS(ODS.calcext, "calcext:formatting-entry"); e.setAttributeNS(ODS.calcext, "calcext:type", ty); db.appendChild(e); }

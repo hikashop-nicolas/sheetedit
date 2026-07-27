@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strToU8, zipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook, writeWorkbook } from "../../index";
 import { computeCondVisuals } from "../xlsx/condformat";
 import { setOdsCondFormat } from "./write";
@@ -172,5 +172,80 @@ describe("ods conditional formatting from a LibreOffice-written file", () => {
     const rules = (wb.sheets[0].condFormats ?? []).flatMap((c) => c.rules);
     expect(rules.length).toBe(1);
     expect(rules[0]!.operator).toBe("greaterThan");
+  });
+});
+
+// Authoring the rule kinds ODF has no standard form for. These go into calcext, which is fine:
+// LibreOffice honours calcext it did not write, PROVIDED the block sits inside <table:table> and
+// the applied style is a named style in styles.xml. Both were verified by having LibreOffice
+// re-export each authored rule; both are asserted here because getting either wrong fails
+// silently (our own reader accepts the block anywhere, and a misplaced fill just goes missing).
+function plainOds(): Uint8Array {
+  const words = ["apple", "banana", "cherry", "apricot", "date"];
+  const rows = words.map((w, i) =>
+    `<table:table-row><table:table-cell office:value-type="string"><text:p>${w}</text:p></table:table-cell>` +
+    `<table:table-cell office:value-type="float" office:value="${(i + 1) * 10}"><text:p>${(i + 1) * 10}</text:p></table:table-cell></table:table-row>`).join("");
+  const content = `<?xml version="1.0"?><office:document-content ${NS}><office:body><office:spreadsheet>` +
+    `<table:table table:name="Sheet1">${rows}</table:table></office:spreadsheet></office:body></office:document-content>`;
+  const styles = `<?xml version="1.0"?><office:document-styles ${NS}><office:styles/></office:document-styles>`;
+  return zipSync({
+    mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }] as unknown as Uint8Array,
+    "content.xml": strToU8(content),
+    "styles.xml": strToU8(styles),
+    "META-INF/manifest.xml": strToU8(`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/></manifest:manifest>`),
+  });
+}
+
+describe("ods conditional formatting authoring beyond cellIs", () => {
+  it("puts the calcext block inside the table, where LibreOffice reads it from", () => {
+    const wb = readWorkbook(plainOds());
+    setOdsCondFormat(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 5, c2: 1 }], { kind: "text", operator: "containsText", text: "ap", fill: "#ffff00" });
+    const out = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]!);
+    // Inside <table:table>, not a sibling of it: LibreOffice ignores the block anywhere else.
+    const table = /<table:table\b[^>]*>[\s\S]*?<\/table:table>/.exec(out)![0];
+    expect(table).toContain("calcext:conditional-formats");
+    expect(out.slice(out.indexOf("</table:table>"))).not.toContain("calcext:conditional-format");
+  });
+
+  it("declares the applied fill as a named style in styles.xml", () => {
+    const wb = readWorkbook(plainOds());
+    setOdsCondFormat(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 5, c2: 1 }], { kind: "text", operator: "containsText", text: "ap", fill: "#ffff00" });
+    const files = unzipSync(writeWorkbook(wb));
+    const styles = strFromU8(files["styles.xml"]!);
+    // As an automatic style in content.xml the rule still imports but arrives with no fill at all.
+    expect(styles).toContain('style:display-name="ConditionalStyle_1"');
+    expect(styles).toContain("#ffff00");
+    // calcext refers to it by the DISPLAY name.
+    expect(strFromU8(files["content.xml"]!)).toContain('calcext:apply-style-name="ConditionalStyle_1"');
+  });
+
+  it("writes each kind in LibreOffice's own spelling and reads it back", () => {
+    const cases: [import("../xlsx/write").CfSpec, string, string][] = [
+      [{ kind: "text", operator: "beginsWith", text: "ba", fill: "#ffff00" }, 'begins-with("ba")', "beginsWith"],
+      [{ kind: "expression", formula: "MOD(ROW(),2)=0", fill: "#ffff00" }, "formula-is(MOD(ROW();2)=0)", "expression"],
+      [{ kind: "dupUnique", unique: true, fill: "#ffff00" }, "unique", "uniqueValues"],
+      [{ kind: "top", rank: 30, percent: true, bottom: true, fill: "#ffff00" }, "bottom-percent(30)", "top10"],
+      [{ kind: "average", below: true, fill: "#ffff00" }, "below-average", "aboveAverage"],
+      [{ kind: "average", equal: true, fill: "#ffff00" }, "above-equal-average", "aboveAverage"],
+    ];
+    for (const [spec, expected, readBack] of cases) {
+      const wb = readWorkbook(plainOds());
+      setOdsCondFormat(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 5, c2: 1 }], spec);
+      const bytes = writeWorkbook(wb);
+      const xml = strFromU8(unzipSync(bytes)["content.xml"]!);
+      expect(xml, expected).toContain(`calcext:value="${expected.replace(/"/g, "&quot;")}"`);
+      const rules = (readWorkbook(bytes).sheets[0].condFormats ?? []).flatMap((c) => c.rules);
+      expect(rules.map((r) => r.type), expected).toContain(readBack);
+    }
+  });
+
+  it("renders a text rule it just authored", () => {
+    const wb = readWorkbook(plainOds());
+    setOdsCondFormat(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 5, c2: 1 }], { kind: "text", operator: "containsText", text: "ap", fill: "#ffff00" });
+    const re = readWorkbook(writeWorkbook(wb));
+    const vis = computeCondVisuals(re.sheets[0]);
+    expect(vis.get(key(1, 1))?.bg?.toLowerCase()).toBe("#ffff00"); // apple
+    expect(vis.get(key(4, 1))?.bg?.toLowerCase()).toBe("#ffff00"); // apricot
+    expect(vis.get(key(2, 1))?.bg).toBeUndefined(); // banana
   });
 });

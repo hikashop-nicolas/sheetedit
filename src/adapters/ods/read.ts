@@ -433,7 +433,7 @@ function unquote(arg: string): string {
  * each kind rather than guessed: `>20`, `between(15,35)`, `contains-text("ap")`,
  * `formula-is(MOD(ROW();2)=0)`, `duplicate`, `top-elements(2)`, `above-average`.
  */
-function parseCalcextCondition(value: string): { type: string; operator?: string; formulas?: string[]; text?: string; rank?: number; percent?: boolean; bottom?: boolean; aboveAverage?: boolean } | null {
+function parseCalcextCondition(value: string): { type: string; operator?: string; formulas?: string[]; text?: string; rank?: number; percent?: boolean; bottom?: boolean; aboveAverage?: boolean; equalAverage?: boolean } | null {
   const v = value.trim();
   const textual = /^(contains-text|not-contains-text|begins-with|ends-with)\((.*)\)$/is.exec(v);
   if (textual) {
@@ -458,14 +458,15 @@ function parseCalcextCondition(value: string): { type: string; operator?: string
   if (/^unique$/i.test(v)) return { type: "uniqueValues" };
   const rank = /^(top|bottom)-(elements|percent)\((\d+)\)$/i.exec(v);
   if (rank) return { type: "top10", rank: Number(rank[3]), percent: /percent/i.test(rank[2]!), bottom: /bottom/i.test(rank[1]!) };
-  if (/^above-average$/i.test(v)) return { type: "aboveAverage", aboveAverage: true };
-  if (/^below-average$/i.test(v)) return { type: "aboveAverage", aboveAverage: false };
+  // LibreOffice spells the "or equal to the average" variants with -equal- in the middle.
+  const avg = /^(above|below)(-equal)?-average$/i.exec(v);
+  if (avg) return { type: "aboveAverage", aboveAverage: /above/i.test(avg[1]!), equalAverage: !!avg[2] };
   return null;
 }
 
 /** Identity of a rule, so the same one read from both halves of a file is not counted twice. */
 const ruleKey = (r: CondFormat["rules"][number]): string =>
-  [r.type, r.operator ?? "", JSON.stringify(r.formulas ?? []), r.text ?? "", r.rank ?? "", r.aboveAverage ?? ""].join("|");
+  [r.type, r.operator ?? "", JSON.stringify(r.formulas ?? []), r.text ?? "", r.rank ?? "", r.aboveAverage ?? "", r.equalAverage ?? ""].join("|");
 
 // Parse <calcext:conditional-formats> into per-sheet CondFormat lists, resolving a condition's
 // apply-style-name to a dxf via the cell-style map, and reading colour scales / data bars / icons.
