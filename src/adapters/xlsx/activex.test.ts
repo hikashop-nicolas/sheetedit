@@ -17,6 +17,7 @@ const CLSID = {
   combo: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
   dropdown: [0x30, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
   textbox: [0x10, 0x1d, 0xd2, 0x8b, 0x42, 0xec, 0xce, 0x11, 0x9e, 0x0d, 0x00, 0xaa, 0x00, 0x60, 0x02, 0xf3],
+  tabStrip: [0xb0, 0x0e, 0xe5, 0xea, 0x62, 0x4a, 0xce, 0x11, 0xbe, 0xd6, 0x00, 0xaa, 0x00, 0x61, 0x10, 0x80],
   label: [0x23, 0x9e, 0x8c, 0x97, 0xb0, 0xd4, 0xce, 0x11, 0xbf, 0x2d, 0x00, 0xaa, 0x00, 0x3f, 0x40, 0xd0],
   image: [0x41, 0x92, 0x59, 0x4c, 0x26, 0x69, 0x1b, 0x10, 0x99, 0x92, 0x00, 0x00, 0x0b, 0x65, 0xc6, 0xf9],
 };
@@ -666,5 +667,39 @@ describe("a caption written into a workbook", () => {
     wb.files[ctl.activeXBinPath!] = out;
     const re = readWorkbook(writeWorkbook(wb));
     expect(re.sheets[0].controls![0]!.label).toBe("Run report");
+  });
+});
+
+// A TabStrip is not a container: it holds tabs, not controls, so it persists as a flat stream of
+// its own shape. Its captions live in the ExtraDataBlock as an array of strings, each counted in
+// CHARACTERS with a compression flag in front of it.
+describe("TabStrip", () => {
+  function tabStrip(tabs: string[], listIndex = 0): Uint8Array {
+    const items: number[] = [];
+    for (const t of tabs) {
+      items.push(...u32(0x80000000 | t.length));           // chars, compressed
+      items.push(...[...t].map((c) => c.charCodeAt(0)));
+      while (items.length % 4) items.push(0);
+    }
+    // fListIndex(0), fSize(4), fItems(5).
+    const mask = (1 << 0) | (1 << 4) | (1 << 5);
+    const block = [...u32(listIndex), ...u32(items.length)];
+    const extra = [...u32(4000), ...u32(1200), ...items];
+    return new Uint8Array([
+      ...CLSID.tabStrip, 0x00, 0x02, ...u16(4 + block.length + extra.length),
+      ...u32(mask), ...block, ...extra,
+    ]);
+  }
+
+  it("reads its tabs in order, and which one is selected", () => {
+    const ctl = readActiveXStream(tabStrip(["Summary", "Detail", "Notes"], 1))!;
+    expect(ctl.kind).toBe("tabStrip");
+    expect(ctl.tabs).toEqual(["Summary", "Detail", "Notes"]);
+    expect(ctl.listIndex).toBe(1);
+    expect(ctl.size).toEqual({ cx: 4000, cy: 1200 });
+  });
+
+  it("reads a strip with no tabs at all without inventing any", () => {
+    expect(readActiveXStream(tabStrip([]))!.tabs).toBeUndefined();
   });
 });

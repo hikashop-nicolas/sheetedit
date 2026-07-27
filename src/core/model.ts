@@ -557,6 +557,8 @@ export interface SheetControl {
     }[];
     /** One entry per page, for a MultiPage; the tabs a TabStrip shows. */
     pages?: { name: string; caption?: string }[];
+    /** Which tab the file records as selected (0-based), when it records one. */
+    selected?: number;
   };
   name: string;
   /** The text drawn on the control (from the VML textbox). */

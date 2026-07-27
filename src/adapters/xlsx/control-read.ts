@@ -357,6 +357,17 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
     // A checkbox, an option button and a toggle all persist "0"/"1"; anything else is text.
     if (ctl.kind === "checkbox" || ctl.kind === "radio" || ctl.kind === "toggle") ctl.checked = parsed.value === "1";
   }
+  // A TabStrip has tabs rather than children: it is a leaf control with its own layout, so it is
+  // drawn as the tabbed box it is rather than as a blank label.
+  if (parsed.tabs?.length) {
+    ctl.kind = "groupBox";
+    ctl.container = {
+      kind: "tabStrip",
+      children: [],
+      pages: parsed.tabs.map((name) => ({ name, caption: name })),
+      ...(parsed.listIndex !== undefined ? { selected: parsed.listIndex } : {}),
+    };
+  }
   const visuals = visualsOf(parsed);
   if (visuals) ctl.visuals = visuals;
 }

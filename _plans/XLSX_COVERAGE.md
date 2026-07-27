@@ -92,7 +92,14 @@ the priority order for closing it. The companion documents are `ODS_COVERAGE.md`
   SmallChange, LargeChange, Orientation, Delay, ProportionalThumb), TextProps (the font), and
   StreamData pictures. Writing covers every string a control carries and can ADD a property the
   control does not yet have, for the MorphData family AND the flat layouts, so an unlabelled
-  button or label can be given a caption (double-click it). Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
+  button or label can be given a caption (double-click it).
+- ActiveX CONTAINERS: Frame and MultiPage persist as a storage rather than a stream, so their
+  binary is a compound file holding the control's own properties, a sites array naming what it
+  contains, an object stream with every child's properties, and (for a MultiPage) a storage per
+  page. All of that is read, and the container is drawn on the grid as the captioned box it is,
+  with its children at their recorded positions. A TabStrip is NOT a container - it has tabs, not
+  children - so it is read as a leaf control down to its tab captions and selected index.
+  The children are drawn as recorded and left inert: the writer does not write a storage back. Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
 - VBA macros: read, run and written (vbalang). `Worksheet.OLEObjects` and `ListObjects` are on the
   object model, and `ListObjects.Add` writes the whole package.
 - Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data, merge/append),
@@ -111,10 +118,6 @@ its sibling elements intact:
 
 ## Gaps / not handled
 
-- **ActiveX Frame / MultiPage / TabStrip**: a missing STRUCTURE rather than a missing property. The
-  control's stream holds a whole embedded form (a ClassTable, a sites array, a child stream per
-  control), which is the parent-controls half of MS-OFORMS, about the size of all the leaf-control
-  work. They only reach a worksheet through "More Controls".
 - **System-palette OLE colours** are left unset on purpose: such a colour is the desktop theme's,
   not the document's.
 - **Pivot layout**: byte-identical layout to Excel is not attempted (both apps re-flow on open).
@@ -142,10 +145,10 @@ its sibling elements intact:
 The original six-item list (sheet management, hyperlinks, data validation, range shifting,
 conditional formatting, comments) is DONE in full; the current order is:
 
-1. Frame / MultiPage / TabStrip, if a real file ever needs it. This is the parent-controls half of
-   MS-OFORMS: a ClassTable, a sites array and a child stream per control, roughly the size of all
-   the leaf-control work, for controls that only reach a worksheet through "More Controls".
+1. Writing a container back: a Frame's children are read and drawn but not editable, since the
+   writer handles a control's stream and not a whole storage. The compound-file writer exists
+   (vbalang's), so this is reachable; it was simply not needed to stop a Frame being a blank.
 
 DONE since this list was written: the ODS parity gaps, Power Query load-to-new-sheet as a real
-ListObject, the per-column widths of a multi-column ActiveX list (rgColumnInfo), and ActiveX
-caption authoring.
+ListObject, the per-column widths of a multi-column ActiveX list (rgColumnInfo), ActiveX caption
+authoring, and the container controls (Frame / MultiPage / TabStrip).

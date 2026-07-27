@@ -146,14 +146,15 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
     legend.className = "sheetedit-ctrl-legend";
     legend.textContent = ctl.label ?? ctl.name;
     wrap.appendChild(legend);
-    // A MultiPage shows its pages as tabs; the first is the one drawn, since which page is
-    // selected is a runtime state rather than something the file settles.
+    // The tabs, with the one the FILE says is selected drawn as such: a TabStrip records it as
+    // ListIndex, and defaulting to the first would show a different tab than the file does.
     if (box.pages?.length) {
+      const chosen = box.selected ?? 0;
       const tabs = document.createElement("div");
       tabs.className = "sheetedit-ctrl-tabs";
       box.pages.forEach((pg, i) => {
         const tab = document.createElement("span");
-        tab.className = i === 0 ? "sheetedit-ctrl-tab chosen" : "sheetedit-ctrl-tab";
+        tab.className = i === chosen ? "sheetedit-ctrl-tab chosen" : "sheetedit-ctrl-tab";
         tab.textContent = pg.caption || pg.name;
         tabs.appendChild(tab);
       });

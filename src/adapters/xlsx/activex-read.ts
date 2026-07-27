@@ -255,6 +255,9 @@ export interface ActiveXControl {
   columnCount?: number;
   /** [MS-OFORMS] cColumnInfo: the last column with a non-default width (0 = all default). */
   columnInfoCount?: number;
+  /** A TabStrip's tabs, in the order the file lists them, and which one is selected. */
+  tabs?: string[];
+  listIndex?: number;
   /** Per-column widths in CSS px, from rgColumnInfo. undefined where the column takes the
       application's own choice (the file's -1), so the renderer shares the space out. */
   columnWidths?: (number | undefined)[];
@@ -525,6 +528,55 @@ function walk(bytes: Uint8Array, forcedKind?: ActiveXKind, from = 16): { control
     readTrailing(bytes, out, extra.position, (bit(28) ? 1 : 0) + (bit(27) ? 1 : 0));
     const morph: MorphRaw = { lo, hi, fields: raw, dataStart: start, ...(out.size ? { size: out.size } : {}) };
     return { control: out, layout: { strings, extraStart, extraEnd: extra.position, maskAt: at + 4, maskBytes: 8, morph } };
+  }
+
+  // A TabStrip is NOT a container: it has tabs, not children, so it persists as a flat stream of
+  // its own shape rather than as a storage. [MS-OFORMS] TabStripControl: the DataBlock is sizes and
+  // numbers, and the strings live in the ExtraDataBlock as arrays, each entry a count of CHARACTERS
+  // with a compression flag directly in front of it.
+  if (kind === "tabStrip") {
+    const mask = dv.getUint32(at + 4, true);
+    const bit = (n: number): boolean => (mask & (1 << n)) !== 0;
+    const start = at + 8;
+    const block = new Cursor(bytes, start, start);
+    let itemsSize = 0;
+    if (bit(0)) out.listIndex = block.i32();
+    if (bit(1)) out.backColor = block.u32() >>> 0;
+    if (bit(2)) out.foreColor = block.u32() >>> 0;
+    if (bit(5)) itemsSize = block.u32();
+    if (bit(6)) block.u8();            // MousePointer
+    if (bit(8)) block.i32();           // TabOrientation
+    if (bit(9)) block.i32();           // TabStyle
+    if (bit(11)) block.u32();          // TabFixedWidth
+    if (bit(12)) block.u32();          // TabFixedHeight
+    if (bit(15)) block.u32();          // TipStringsSize
+    if (bit(17)) block.u32();          // NamesSize
+    if (bit(18)) readVariousProperties(out, block.u32() >>> 0);
+    if (bit(20)) block.u32();          // TabsAllocated
+    if (bit(21)) block.u32();          // TagsSize
+    if (bit(22)) block.u32();          // TabData
+    if (bit(23)) block.u32();          // AcceleratorsSize
+    if (bit(24)) block.u16();          // MouseIcon placeholder
+    const extraStart = block.position + ((4 - ((block.position - start) % 4)) % 4);
+    const extra = new Cursor(bytes, extraStart, extraStart);
+    if (bit(4)) out.size = { cx: extra.i32(), cy: extra.i32() };
+    // Items: the tabs' captions, and what gives their order.
+    if (itemsSize) {
+      const tabs: string[] = [];
+      const end = Math.min(bytes.length, extra.position + itemsSize);
+      while (extra.position + 4 <= end) {
+        const lenAndFlag = extra.u32();
+        const chars = lenAndFlag & 0x7fffffff;
+        if (!chars) continue;
+        const byteLen = (lenAndFlag & 0x80000000) !== 0 ? chars : chars * 2;
+        if (extra.position + byteLen > end) break;
+        // text() takes a length in BYTES and pads the run out itself; an ArrayString counts
+        // CHARACTERS, which is two bytes each unless the compression flag is set.
+        tabs.push(extra.text((lenAndFlag & 0x80000000) !== 0 ? ((0x80000000 | byteLen) >>> 0) : byteLen));
+      }
+      if (tabs.length) out.tabs = tabs;
+    }
+    return { control: out };
   }
 
   const simple = SIMPLE_LAYOUTS[kind];
