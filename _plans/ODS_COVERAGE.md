@@ -9,8 +9,9 @@ against the OASIS ODF 1.3 spec.
 - Cells, formulas (ODF `of:` <-> A1), number/date/time/percentage/currency types, styles
   (fonts/fills/borders/alignment/wrap), merges, frozen panes, column/row sizes, furigana (ruby).
 - Charts (read + author).
-- Hyperlinks (`<text:a>`), notes (`<office:annotation>`), list data validation
-  (`<table:content-validation>` cell-content-is-in-list), and conditional formatting.
+- Hyperlinks (`<text:a>`), notes (`<office:annotation>`), data validation
+  (`<table:content-validation>`: list, whole/decimal/date/time, text-length and formula rules), and
+  conditional formatting (every rule kind reads; see below for which half of the file states it).
 - Embedded images (`<draw:frame>`/`<draw:image>` from `Pictures/` or inline base64), rendered on
   the overlay layer and preserved verbatim.
 - Per-run rich text in a cell (`<text:span>` styles resolved to bold/italic/colour/etc.).
@@ -28,9 +29,25 @@ that additionally stores colour scales / data bars / icon sets (no standard form
 mirrors the value conditions. LibreOffice imports value CF from `style:map`; a calcext-only file is
 ignored by it.
 
-- **Read**: value conditions from `<style:map>` (the interoperable path: `cell-content()` compares
-  and `cell-content-is-between`); colour scales / data bars / icon sets from calcext. The calcext
-  value-condition mirror is skipped to avoid duplicating the style:map rule.
+**The catch, and it is the whole story for LibreOffice files.** A LibreOffice-written file puts the
+`<style:map>` on an automatic style that it then applies to NO CELL, so the standard half states the
+rule but never says which cells it covers: the only such statement is calcext's
+`target-range-address`. Reading the interoperable half alone (and skipping calcext as "a mere
+mirror") therefore found nothing at all in a real LibreOffice workbook. A file whose producer does
+apply the conditional style to its cells still reads through `style:map`, which is why both paths
+exist.
+
+Also worth knowing: the two halves NAME THE APPLIED STYLE DIFFERENTLY. `style:map` uses the escaped
+`style:name` and calcext the `style:display-name`, so `ConditionalStyle_5f_1` and
+`ConditionalStyle_1` are one style and a lookup by either alone silently resolves nothing.
+
+- **Read**: every rule kind, from whichever half states it. calcext conditions are parsed in full
+  (`>20`, `between(15,35)`, `contains-text("ap")` / `not-contains-text` / `begins-with` /
+  `ends-with`, `formula-is(...)`, `duplicate` / `unique`, `top-elements(n)` / `bottom-percent(n)`,
+  `above-average` / `below-average`), plus colour scales / data bars / icon sets. `<style:map>`
+  gives value comparisons, `cell-content-is-between` and `is-true-formula`. A rule stated in both
+  halves is counted once. The grammar came from LibreOffice's own xlsx to ods conversion of one
+  Excel rule of each kind, not from a guess.
 - **Author**: highlight (cellIs) is written as a standard `<style:map>` + an applied fill style,
   which LibreOffice and other ODF consumers honour (verified: survives a LibreOffice round-trip).
   Colour-scale / data-bar / contains-text authoring are NOT offered for ODS (calcext-only, which
@@ -45,21 +62,27 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
 
 ## Known gaps (audited vs ODF 1.3)
 
-- **Data validation**: only `cell-content-is-in-list` drives a dropdown / is authorable. Other
-  condition types (is-between, text-length, is-true-formula, ...) are preserved (the
-  `<table:content-validations>` block is untouched and the cell's content-validation-name is
-  re-emitted) but not surfaced in the UI, and authoring a new list does not add error/help messages.
+- **Data validation**: list rules drive a dropdown; whole-number, decimal, date, time, text-length
+  and is-true-formula rules read, author and drive the invalid-value outline, with every operator
+  (between / not-between / the comparisons). A condition in neither of those shapes is preserved
+  (the `<table:content-validations>` block is untouched and the cell's content-validation-name is
+  re-emitted) but surfaces no UI. Authoring does not add error/help messages.
 - **Hyperlinks**: read the first `<text:a>`; author a whole-cell anchor (verified to survive
-  LibreOffice, which requires the linked string cell to omit `office:string-value`). A link on
-  part of a cell's text, or multiple links, is preserved while the cell is untouched but flattened
-  to one whole-cell link if you edit that cell's value or link. Optional `text:a` attributes
-  (target-frame, show, style-name) are not preserved on an explicit edit.
-- **Comments**: note position/formatting and a 2nd+ annotation are preserved while untouched, and
-  are kept when you edit the cell's value; editing the note itself keeps the first annotation's
-  position/creator/date but drops extra annotations (single-note model). `dc:date` is written.
-- **CF condition grammar**: `is-true-formula(...)` and text-based conditions are not rendered.
+  LibreOffice, which requires the linked string cell to omit `office:string-value`). The anchor's
+  other attributes (target-frame-name, show, style-name, visited-style-name) are carried across an
+  edit. STILL A GAP: a link on part of a cell's text, or several links in one cell, is preserved
+  while the cell is untouched but flattens to one whole-cell link once you edit that cell's value
+  or its link, since the text it was anchored to is rebuilt.
+- **Comments**: every annotation on a cell is kept through an edit, each with its own position,
+  creator and date; the grid shows and edits the first, and removing it leaves the others. A note's
+  lines are written one `<text:p>` each. `dc:date` is written.
+  CAVEAT: LibreOffice itself models ONE note per cell and keeps the last on re-save, so a second
+  annotation survives sheetedit but not a pass through LibreOffice.
 - **CF colour scale / data bar / icon set for ODS**: read-only (from LibreOffice files); not
   authorable (no interoperable ODF form).
+- **CF authoring** stays on the interoperable `<style:map>` cellIs subset. Reading now covers every
+  rule kind (see above), but authoring a text or graphical rule would have to write calcext, which
+  LibreOffice drops when it did not write it itself.
 
 ## Pivot tables (both formats)
 
