@@ -59,6 +59,15 @@ export interface DataValidation {
   /** Operand(s): the bound(s) for a comparison, or the expression for a custom rule. */
   formula1?: string;
   formula2?: string;
+  /** What the file says when input is refused, and what it offers when the cell is selected.
+      Both carry a title of their own in either format (xlsx errorTitle/promptTitle, ODF
+      table:title), so a rule can explain itself rather than just rejecting a value. */
+  errorTitle?: string;
+  errorMessage?: string;
+  /** stop / warning / information: how hard the refusal is. */
+  errorStyle?: string;
+  promptTitle?: string;
+  promptMessage?: string;
 }
 
 /** A slicer: the interactive filter buttons Excel attaches to a pivot table. The selection lives in
@@ -115,7 +124,7 @@ export interface SheetTimeline {
 }
 
 /** A data-validation authoring spec (a DataValidation without its ranges), shared by both writers. */
-export type DvSpec = { type?: DataValidation["type"]; operator?: DataValidation["operator"]; formula1?: string; formula2?: string; values?: string[]; rangeRef?: string; allowBlank?: boolean };
+export type DvSpec = { type?: DataValidation["type"]; operator?: DataValidation["operator"]; formula1?: string; formula2?: string; values?: string[]; rangeRef?: string; allowBlank?: boolean; errorTitle?: string; errorMessage?: string; errorStyle?: string; promptTitle?: string; promptMessage?: string };
 
 /** A differential format (dxf) a conditional-formatting rule applies when it matches. */
 export interface CfDxf { bg?: string; color?: string; bold?: boolean; italic?: boolean; }

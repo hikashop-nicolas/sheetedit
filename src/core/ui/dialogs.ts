@@ -85,6 +85,8 @@ export function setupDialogs(ctx: DialogCtx): {
       { key: "v2", label: t("dvValue2"), type: "text", value: "", showFor: { key: "op", values: ["between", "notBetween"] } },
       { key: "formula", label: t("dvFormula"), type: "text", value: "", showFor: { key: "type", values: ["custom"] } },
       { key: "blank", label: t("dvAllowBlank"), type: "checkbox", value: true },
+      { key: "prompt", label: t("dvPrompt"), type: "text", value: "" },
+      { key: "error", label: t("dvError"), type: "text", value: "" },
     ], (v) => {
       const type = String(v.type) as NonNullable<import("../model").DataValidation["type"]>;
       const allowBlank = !!v.blank;
@@ -101,6 +103,13 @@ export function setupDialogs(ctx: DialogCtx): {
         const f1 = String(v.v1).trim();
         const f2 = String(v.v2).trim();
         spec = f1 || f2 ? { type, operator: op, formula1: f1 || undefined, formula2: (op === "between" || op === "notBetween") ? (f2 || undefined) : undefined, allowBlank } : null;
+      }
+      // The rule's own words travel with it, whichever kind it turned out to be.
+      const promptMessage = String(v.prompt ?? "").trim();
+      const errorMessage = String(v.error ?? "").trim();
+      if (spec && (promptMessage || errorMessage)) {
+        if (promptMessage) spec.promptMessage = promptMessage;
+        if (errorMessage) spec.errorMessage = errorMessage;
       }
       if (wb.kind === "ods") setOdsDataValidation(wb, sheet, ranges, spec);
       else setXlsxDataValidation(sheet, ranges, spec);

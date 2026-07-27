@@ -14,9 +14,9 @@ const NS =
   `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
   `xmlns:dc="http://purl.org/dc/elements/1.1/"`;
 
-function ods(cells: string): Uint8Array {
+function ods(cells: string, extra = ""): Uint8Array {
   const content = `<?xml version="1.0"?><office:document-content ${NS}><office:body><office:spreadsheet>` +
-    `<table:table table:name="Sheet1"><table:table-row>${cells}</table:table-row></table:table>` +
+    `${extra}<table:table table:name="Sheet1"><table:table-row>${cells}</table:table-row></table:table>` +
     `</office:spreadsheet></office:body></office:document-content>`;
   return zipSync({
     mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }] as unknown as Uint8Array,
@@ -268,5 +268,43 @@ describe("ods part-of-cell links", () => {
     const out = contentOf(writeWorkbook(wb));
     expect(out).toContain("https://whole.test"); // the link covered everything, so it follows the text
     expect(out).toContain("renamed");
+  });
+});
+
+describe("data-validation messages", () => {
+  it("reads the help and error messages a file carries", () => {
+    const wb = readWorkbook(ods(
+      `<table:table-cell table:content-validation-name="v1" office:value-type="float" office:value="5"><text:p>5</text:p></table:table-cell>`,
+      `<table:content-validations><table:content-validation table:name="v1" table:condition="of:cell-content-is-whole-number() and cell-content-is-between(1,10)" table:allow-empty-cell="true">` +
+      `<table:help-message table:title="Quantity" table:display="true"><text:p>How many units?</text:p></table:help-message>` +
+      `<table:error-message table:message-type="stop" table:title="Out of range" table:display="true"><text:p>Enter 1 to 10.</text:p></table:error-message>` +
+      `</table:content-validation></table:content-validations>`,
+    ));
+    const dv = wb.sheets[0].validations?.[0];
+    expect(dv?.promptTitle).toBe("Quantity");
+    expect(dv?.promptMessage).toBe("How many units?");
+    expect(dv?.errorTitle).toBe("Out of range");
+    expect(dv?.errorMessage).toBe("Enter 1 to 10.");
+    expect(dv?.errorStyle).toBe("stop");
+  });
+
+  it("writes them when a rule is authored, so it can explain itself", () => {
+    const wb = readWorkbook(ods(`<table:table-cell office:value-type="float" office:value="5"><text:p>5</text:p></table:table-cell>`));
+    setOdsDataValidation(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 1, c2: 1 }], {
+      type: "whole", operator: "between", formula1: "1", formula2: "10", allowBlank: true,
+      promptTitle: "Quantity", promptMessage: "How many units?",
+      errorTitle: "Out of range", errorMessage: "Enter 1 to 10.",
+    });
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("table:help-message");
+    expect(out).toContain('table:title="Quantity"');
+    expect(out).toContain("How many units?");
+    expect(out).toContain("table:error-message");
+    expect(out).toContain('table:message-type="stop"');
+    expect(out).toContain("Enter 1 to 10.");
+    // And they survive the round-trip.
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(re.sheets[0].validations?.[0]?.errorMessage).toBe("Enter 1 to 10.");
+    expect(re.sheets[0].validations?.[0]?.promptMessage).toBe("How many units?");
   });
 });

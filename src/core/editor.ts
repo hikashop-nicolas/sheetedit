@@ -3116,7 +3116,17 @@ export function createSheetEditor(
         const cur = cellDisplay(cell);
         const allowed = isList ? resolveDvValues(dv, sheet) : [];
         // Flag a cell whose value breaks the rule (list membership, or the typed constraint).
-        if (cur !== "" && !validateCell(dv, cell?.value ?? "", cur, allowed)) td.classList.add("sheetedit-dv-invalid");
+        if (cur !== "" && !validateCell(dv, cell?.value ?? "", cur, allowed)) {
+          td.classList.add("sheetedit-dv-invalid");
+          // The rule's own error text, when the file gives one: an outline says something is
+          // wrong, the message says what.
+          const msg = [dv.errorTitle, dv.errorMessage].filter(Boolean).join(": ");
+          if (msg) td.title = msg;
+        }
+        // The input message is guidance for a cell that is not (yet) wrong, so it goes on as a
+        // tooltip regardless of the value.
+        const prompt = [dv.promptTitle, dv.promptMessage].filter(Boolean).join(": ");
+        if (prompt && !td.title) td.title = prompt;
         // A dropdown caret only for list rules; the constraint rules just outline invalid input.
         if (isList) {
           td.classList.add("has-dv");

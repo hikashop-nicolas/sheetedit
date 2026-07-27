@@ -617,14 +617,22 @@ function readDataValidations(sheet: Sheet, doc: Document): void {
       if (p1 && p2) ranges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
     }
     if (!ranges.length) continue;
+    // The rule's own words: what it says when it refuses input, and what it offers on select.
+    const msgs = {
+      errorTitle: dv.getAttribute("errorTitle") || undefined,
+      errorMessage: dv.getAttribute("error") || undefined,
+      errorStyle: dv.getAttribute("errorStyle") || undefined,
+      promptTitle: dv.getAttribute("promptTitle") || undefined,
+      promptMessage: dv.getAttribute("prompt") || undefined,
+    };
     if (type === "list") {
       let values: string[] | undefined, rangeRef: string | undefined;
       if (f1.startsWith('"') && f1.endsWith('"')) values = f1.slice(1, -1).split(",").map((s) => s.trim());
       else if (f1) rangeRef = f1;
       else continue;
-      out.push({ ranges, values, rangeRef, allowBlank, type: "list" });
+      out.push({ ranges, values, rangeRef, allowBlank, type: "list", ...msgs });
     } else {
-      out.push({ ranges, allowBlank, type, operator: (dv.getAttribute("operator") || undefined) as import("../../core/model").DataValidation["operator"], formula1: f1 || undefined, formula2: f2 || undefined });
+      out.push({ ranges, allowBlank, type, operator: (dv.getAttribute("operator") || undefined) as import("../../core/model").DataValidation["operator"], formula1: f1 || undefined, formula2: f2 || undefined, ...msgs });
     }
   }
   if (out.length) sheet.validations = out;

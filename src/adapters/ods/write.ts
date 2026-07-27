@@ -2,6 +2,7 @@ import type { Cell, Phonetic, Sheet, Workbook } from "../../core/model";
 import { ensureCell, getCell, key, parseXmlOpt, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
 import { ODS, a1ToOdf } from "./shared";
+import { CALCEXT_DATE_PERIODS } from "./read";
 import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } from "./styles";
 import { writeOdsFreezes } from "./freeze-write";
 import { writeOdsProtections } from "./protection-write";
@@ -300,9 +301,10 @@ export function setOdsDataValidation(
   }
 
   const type = spec.type ?? "list";
+  const msgs = { errorTitle: spec.errorTitle, errorMessage: spec.errorMessage, errorStyle: spec.errorStyle, promptTitle: spec.promptTitle, promptMessage: spec.promptMessage };
   sheet.validations.push(type === "list"
-    ? { ranges, values: spec.values, rangeRef: spec.rangeRef, allowBlank: spec.allowBlank, type: "list" }
-    : { ranges, allowBlank: spec.allowBlank, type, operator: spec.operator, formula1: spec.formula1, formula2: spec.formula2 });
+    ? { ranges, values: spec.values, rangeRef: spec.rangeRef, allowBlank: spec.allowBlank, type: "list", ...msgs }
+    : { ranges, allowBlank: spec.allowBlank, type, operator: spec.operator, formula1: spec.formula1, formula2: spec.formula2, ...msgs });
   if (!doc) return;
   const spreadsheet = doc.getElementsByTagName("office:spreadsheet")[0];
   if (!spreadsheet) return;
@@ -328,6 +330,27 @@ export function setOdsDataValidation(
   cv.setAttributeNS(ODS.table, "table:condition", cond);
   cv.setAttributeNS(ODS.table, "table:allow-empty-cell", spec.allowBlank ? "true" : "false");
   cv.setAttributeNS(ODS.table, "table:display-list", "unsorted");
+  // The messages, in the order LibreOffice writes them: help first, then error. A rule that can
+  // explain itself is the difference between a refusal and an instruction.
+  if (spec.promptMessage || spec.promptTitle) {
+    const help = doc.createElementNS(ODS.table, "table:help-message");
+    if (spec.promptTitle) help.setAttributeNS(ODS.table, "table:title", spec.promptTitle);
+    help.setAttributeNS(ODS.table, "table:display", "true");
+    for (const line of (spec.promptMessage ?? "").split("\n")) {
+      const p = doc.createElementNS(ODS.text, "text:p"); p.textContent = line; help.appendChild(p);
+    }
+    cv.appendChild(help);
+  }
+  if (spec.errorMessage || spec.errorTitle) {
+    const err = doc.createElementNS(ODS.table, "table:error-message");
+    err.setAttributeNS(ODS.table, "table:message-type", spec.errorStyle || "stop");
+    if (spec.errorTitle) err.setAttributeNS(ODS.table, "table:title", spec.errorTitle);
+    err.setAttributeNS(ODS.table, "table:display", "true");
+    for (const line of (spec.errorMessage ?? "").split("\n")) {
+      const p = doc.createElementNS(ODS.text, "text:p"); p.textContent = line; err.appendChild(p);
+    }
+    cv.appendChild(err);
+  }
   container.appendChild(cv);
   // Tag every cell in the range so makeOdsCell re-emits the reference.
   for (const g of ranges)
@@ -539,8 +562,7 @@ export function setOdsCondFormat(
   ranges: { r1: number; c1: number; r2: number; c2: number }[],
   spec: import("../xlsx/write").CfSpec | null,
 ): void {
-  // timePeriod is the one kind with no calcext spelling, so it stays unauthorable here.
-  if (spec && spec.kind === "timePeriod") return;
+
   const doc = wb.contentDoc;
   const inRange = (r: number, c: number): boolean => ranges.some((g) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2);
   const target = ranges.map((g) => a1RangeToOdfTarget(sheet.name, g)).join(" ");
@@ -619,6 +641,19 @@ export function setOdsCondFormat(
         else if (spec.kind === "top") { rule.type = "top10"; rule.rank = spec.rank; rule.percent = spec.percent; rule.bottom = spec.bottom; }
         else if (spec.kind === "average") { rule.type = "aboveAverage"; rule.aboveAverage = !spec.below; rule.equalAverage = spec.equal; }
         if (fill) rule.dxf = { bg: fill };
+      } else if (spec.kind === "timePeriod") {
+        // Its own element, and it names the applied style with calcext:style rather than the
+        // apply-style-name every other rule uses.
+        const applied = internOdsCondStyle(wb, spec.fill);
+        const di = doc.createElementNS(ODS.calcext, "calcext:date-is");
+        const name = Object.entries(CALCEXT_DATE_PERIODS).find(([, xl]) => xl === spec.period)?.[0];
+        if (!name) return; // a period LibreOffice has no name for
+        di.setAttributeNS(ODS.calcext, "calcext:date", name);
+        if (applied) di.setAttributeNS(ODS.calcext, "calcext:style", applied);
+        cfEl.appendChild(di);
+        rule.type = "timePeriod";
+        rule.timePeriod = spec.period;
+        rule.dxf = { bg: spec.fill };
       } else if (spec.kind === "iconSet") {
         const is = doc.createElementNS(ODS.calcext, "calcext:icon-set");
         is.setAttributeNS(ODS.calcext, "calcext:icon-set-type", spec.set);

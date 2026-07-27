@@ -70,9 +70,11 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
 
 - **Data validation**: list rules drive a dropdown; whole-number, decimal, date, time, text-length
   and is-true-formula rules read, author and drive the invalid-value outline, with every operator
-  (between / not-between / the comparisons). A condition in neither of those shapes is preserved
-  (the `<table:content-validations>` block is untouched and the cell's content-validation-name is
-  re-emitted) but surfaces no UI. Authoring does not add error/help messages.
+  (between / not-between / the comparisons). A rule's own help and error messages
+  (`<table:help-message>` / `<table:error-message>`, title included) read, author and show in the
+  grid as the cell's tooltip. A condition in neither of those shapes is preserved (the
+  `<table:content-validations>` block is untouched and the cell's content-validation-name is
+  re-emitted) but surfaces no UI.
 - **Hyperlinks**: read the first `<text:a>`; author a whole-cell anchor (verified to survive
   LibreOffice, which requires the linked string cell to omit `office:string-value`). The anchor's
   other attributes (target-frame-name, show, style-name, visited-style-name) are carried across an
@@ -87,8 +89,9 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
   lines are written one `<text:p>` each. `dc:date` is written.
   CAVEAT: LibreOffice itself models ONE note per cell and keeps the last on re-save, so a second
   annotation survives sheetedit but not a pass through LibreOffice.
-- **CF `timePeriod`**: the one rule kind with no calcext spelling, so it reads (from xlsx) but is
-  not authorable for ODS.
+- (nothing outstanding for conditional formatting: `timePeriod` turned out to have its own
+  calcext element, `<calcext:date-is>`, and now reads and authors like the rest. It names the
+  applied style with `calcext:style` rather than the `apply-style-name` every sibling uses.)
 
 ## Pivot tables (both formats)
 

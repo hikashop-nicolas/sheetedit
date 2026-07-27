@@ -288,7 +288,25 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
 // Parse the document-level <table:content-validation> definitions (name -> spec).
 type DvType = NonNullable<import("../../core/model").DataValidation["type"]>;
 type DvOp = NonNullable<import("../../core/model").DataValidation["operator"]>;
-type OdsValidationDef = { values?: string[]; rangeRef?: string; allowBlank?: boolean; type?: DvType; operator?: DvOp; formula1?: string; formula2?: string };
+type OdsValidationDef = { values?: string[]; rangeRef?: string; allowBlank?: boolean; type?: DvType; operator?: DvOp; formula1?: string; formula2?: string; errorTitle?: string; errorMessage?: string; errorStyle?: string; promptTitle?: string; promptMessage?: string };
+
+/** The help / error messages a content-validation carries, so a rule can explain itself. */
+function odsDvMessages(cv: Element): Pick<OdsValidationDef, "errorTitle" | "errorMessage" | "errorStyle" | "promptTitle" | "promptMessage"> {
+  const out: Pick<OdsValidationDef, "errorTitle" | "errorMessage" | "errorStyle" | "promptTitle" | "promptMessage"> = {};
+  const textOf = (el: Element): string =>
+    Array.from(el.getElementsByTagName("text:p")).map((p) => p.textContent ?? "").join("\n").trim();
+  for (const child of Array.from(cv.children)) {
+    if (child.localName === "error-message") {
+      out.errorTitle = child.getAttribute("table:title") || undefined;
+      out.errorMessage = textOf(child) || undefined;
+      out.errorStyle = child.getAttribute("table:message-type") || undefined;
+    } else if (child.localName === "help-message") {
+      out.promptTitle = child.getAttribute("table:title") || undefined;
+      out.promptMessage = textOf(child) || undefined;
+    }
+  }
+  return out;
+}
 
 /** Parse a typed (non-list) ODF content-validation condition into type / operator / operands. */
 function parseTypedCond(cond: string): { type: DvType; operator?: DvOp; formula1?: string; formula2?: string } | null {
@@ -317,15 +335,16 @@ function parseOdsValidations(doc: Document): Map<string, OdsValidationDef> {
     if (!name) continue;
     const cond = cv.getAttribute("table:condition") ?? "";
     const allowBlank = cv.getAttribute("table:allow-empty-cell") !== "false";
+    const msgs = odsDvMessages(cv);
     const list = /cell-content-is-in-list\((.*)\)\s*$/.exec(cond);
     if (list) {
       const arg = list[1]!.trim();
-      if (arg.startsWith("[")) map.set(name, { rangeRef: odfAddrToA1(arg.replace(/^\[/, "").replace(/\]$/, "")), allowBlank, type: "list" });
-      else { const values = [...arg.matchAll(/"((?:[^"]|"")*)"/g)].map((q) => q[1]!.replace(/""/g, '"')); map.set(name, { values, allowBlank, type: "list" }); }
+      if (arg.startsWith("[")) map.set(name, { rangeRef: odfAddrToA1(arg.replace(/^\[/, "").replace(/\]$/, "")), allowBlank, type: "list", ...msgs });
+      else { const values = [...arg.matchAll(/"((?:[^"]|"")*)"/g)].map((q) => q[1]!.replace(/""/g, '"')); map.set(name, { values, allowBlank, type: "list", ...msgs }); }
       continue;
     }
     const typed = parseTypedCond(cond);
-    map.set(name, typed ? { ...typed, allowBlank } : { allowBlank });
+    map.set(name, { ...(typed ?? {}), allowBlank, ...msgs });
   }
   return map;
 }
@@ -345,8 +364,9 @@ function buildOdsValidations(sheet: Sheet, defs: Map<string, OdsValidationDef>):
     // not parse are preserved via the untouched block + the cell's name but surface no UI.
     if (!def || (!def.values && !def.rangeRef && !def.type)) continue;
     const ranges = cells.map((p) => ({ r1: p.r, c1: p.c, r2: p.r, c2: p.c }));
-    if (def.type && def.type !== "list") out.push({ ranges, allowBlank: def.allowBlank, type: def.type, operator: def.operator, formula1: def.formula1, formula2: def.formula2 });
-    else out.push({ ranges, values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank, type: "list" });
+    const msgs = { errorTitle: def.errorTitle, errorMessage: def.errorMessage, errorStyle: def.errorStyle, promptTitle: def.promptTitle, promptMessage: def.promptMessage };
+    if (def.type && def.type !== "list") out.push({ ranges, allowBlank: def.allowBlank, type: def.type, operator: def.operator, formula1: def.formula1, formula2: def.formula2, ...msgs });
+    else out.push({ ranges, values: def.values, rangeRef: def.rangeRef, allowBlank: def.allowBlank, type: "list", ...msgs });
   }
   if (out.length) sheet.validations = out;
 }
@@ -464,6 +484,23 @@ function parseCalcextCondition(value: string): { type: string; operator?: string
   return null;
 }
 
+/**
+ * The time periods a calcext date-is rule names, against the xlsx spelling of the same thing.
+ * Taken from LibreOffice's own xlsx -> ods conversion of one rule per period.
+ */
+export const CALCEXT_DATE_PERIODS: Record<string, string> = {
+  today: "today",
+  yesterday: "yesterday",
+  tomorrow: "tomorrow",
+  "last-7-days": "last7Days",
+  "this-week": "thisWeek",
+  "last-week": "lastWeek",
+  "next-week": "nextWeek",
+  "this-month": "thisMonth",
+  "last-month": "lastMonth",
+  "next-month": "nextMonth",
+};
+
 /** Identity of a rule, so the same one read from both halves of a file is not counted twice. */
 const ruleKey = (r: CondFormat["rules"][number]): string =>
   [r.type, r.operator ?? "", JSON.stringify(r.formulas ?? []), r.text ?? "", r.rank ?? "", r.aboveAverage ?? "", r.equalAverage ?? ""].join("|");
@@ -511,6 +548,13 @@ function parseOdsCondFormats(doc: Document, styles: OdsStyles): Map<string, Cond
         // escaped style:name. Try the raw name first, then resolve it as a display name.
         const cs = parsed ? (styles.cell.get(applied) ?? styles.cell.get(styles.displayName.get(applied) ?? "")) : undefined;
         if (parsed && cs) rules.push({ ...parsed, priority: priority++, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
+      } else if (l === "date-is") {
+        // A time-period rule, which is its own element rather than a condition - and names the
+        // style it applies with calcext:style, NOT the apply-style-name every sibling uses.
+        const period = CALCEXT_DATE_PERIODS[(attrByLocal(child, "date") ?? "").toLowerCase()];
+        const applied = attrByLocal(child, "style") ?? attrByLocal(child, "apply-style-name") ?? "";
+        const cs = styles.cell.get(applied) ?? styles.cell.get(styles.displayName.get(applied) ?? "");
+        if (period && cs) rules.push({ type: "timePeriod", priority: priority++, timePeriod: period, dxf: { bg: cs.bg, color: cs.color, bold: cs.bold, italic: cs.italic } });
       } else if (l === "color-scale") {
         const entries = kidsByLocal(child, "color-scale-entry");
         rules.push({ type: "colorScale", priority: priority++, colorScale: { cfvo: entries.map(cfvo), colors: entries.map(colorOf) } });

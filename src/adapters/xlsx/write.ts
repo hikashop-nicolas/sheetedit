@@ -510,6 +510,11 @@ export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: nu
       dv.setAttribute("allowBlank", spec.allowBlank ? "1" : "0");
       dv.setAttribute("showInputMessage", "1");
       dv.setAttribute("showErrorMessage", "1");
+      if (spec.errorStyle) dv.setAttribute("errorStyle", spec.errorStyle);
+      if (spec.errorTitle) dv.setAttribute("errorTitle", spec.errorTitle);
+      if (spec.errorMessage) dv.setAttribute("error", spec.errorMessage);
+      if (spec.promptTitle) dv.setAttribute("promptTitle", spec.promptTitle);
+      if (spec.promptMessage) dv.setAttribute("prompt", spec.promptMessage);
       dv.setAttribute("sqref", sqref);
       const addF = (local: string, text: string): void => { const f = doc.createElementNS(ns, local); f.textContent = text; dv.appendChild(f); };
       if (type === "list") addF("formula1", spec.rangeRef ? spec.rangeRef : `"${(spec.values ?? []).join(",")}"`);
@@ -527,6 +532,8 @@ export function setXlsxDataValidation(sheet: Sheet, ranges: { r1: number; c1: nu
     const v: DataValidation = { ranges, allowBlank: spec.allowBlank, type };
     if (type === "list") { if (spec.rangeRef) v.rangeRef = spec.rangeRef; else v.values = spec.values; }
     else { v.operator = spec.operator; v.formula1 = spec.formula1; v.formula2 = spec.formula2; }
+    v.errorTitle = spec.errorTitle; v.errorMessage = spec.errorMessage; v.errorStyle = spec.errorStyle;
+    v.promptTitle = spec.promptTitle; v.promptMessage = spec.promptMessage;
     sheet.validations.push(v);
   }
   sheet.layoutDirty = true;

@@ -249,3 +249,45 @@ describe("ods conditional formatting authoring beyond cellIs", () => {
     expect(vis.get(key(2, 1))?.bg).toBeUndefined(); // banana
   });
 });
+
+describe("ods time-period conditional formats", () => {
+  it("reads a date-is rule, which names its style differently from every sibling", () => {
+    // calcext:date-is is its own element and uses calcext:style, not apply-style-name. Looking
+    // for the usual attribute finds nothing and the rule silently loses its fill.
+    const cell = `<table:table-cell table:style-name="ceD" office:value-type="date" office:date-value="2026-07-28"><text:p>2026-07-28</text:p></table:table-cell>`;
+    const styles = `<office:automatic-styles>` +
+      `<style:style style:name="ConditionalStyle_5f_1" style:display-name="ConditionalStyle_1" style:family="table-cell">` +
+      `<style:table-cell-properties fo:background-color="#ffff00"/></style:style></office:automatic-styles>`;
+    const cf = `<calcext:conditional-formats><calcext:conditional-format calcext:target-range-address="Sheet1.A1:Sheet1.A1">` +
+      `<calcext:date-is calcext:style="ConditionalStyle_1" calcext:date="last-week"/></calcext:conditional-format></calcext:conditional-formats>`;
+    const content = `<?xml version="1.0"?><office:document-content ${NS}>${styles}<office:body><office:spreadsheet>` +
+      `<table:table table:name="Sheet1"><table:table-row>${cell}</table:table-row>${cf}</table:table>` +
+      `</office:spreadsheet></office:body></office:document-content>`;
+    const wb = readWorkbook(zipSync({
+      mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }] as unknown as Uint8Array,
+      "content.xml": strToU8(content),
+      "META-INF/manifest.xml": strToU8(`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`),
+    }));
+    const rule = (wb.sheets[0].condFormats ?? []).flatMap((c) => c.rules)[0];
+    expect(rule?.type).toBe("timePeriod");
+    expect(rule?.timePeriod).toBe("lastWeek"); // the xlsx spelling of last-week
+    expect(rule?.dxf?.bg?.toLowerCase()).toBe("#ffff00");
+  });
+
+  it("authors each period under LibreOffice's own name", () => {
+    const cases: [string, string][] = [
+      ["today", "today"], ["last7Days", "last-7-days"], ["thisWeek", "this-week"],
+      ["lastMonth", "last-month"], ["nextWeek", "next-week"],
+    ];
+    for (const [period, odf] of cases) {
+      const wb = readWorkbook(plainOds());
+      setOdsCondFormat(wb, wb.sheets[0], [{ r1: 1, c1: 1, r2: 5, c2: 1 }], { kind: "timePeriod", period, fill: "#ffff00" });
+      const xml = strFromU8(unzipSync(writeWorkbook(wb))["content.xml"]!);
+      expect(xml, period).toContain(`calcext:date="${odf}"`);
+      expect(xml, period).toContain("calcext:style=");
+      // And it comes back as the same rule.
+      const rules = (readWorkbook(writeWorkbook(wb)).sheets[0].condFormats ?? []).flatMap((c) => c.rules);
+      expect(rules.map((r) => r.timePeriod), period).toContain(period);
+    }
+  });
+});
