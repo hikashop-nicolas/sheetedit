@@ -88,6 +88,13 @@ other native sources can only be refreshed in Excel and are reported as such. Po
 `.xlsx`-only (OpenDocument has no equivalent payload). The editor is fully responsive: on
 narrow screens the ribbon goes icon-only and the side panels become drawers.
 
+### Loading a query's result
+
+Loading a query writes its result as a **real Excel table** named after the query, with the
+connection Excel recognises it by, rather than as loose cells. That is what makes the result a
+thing rather than a copy of some values: structured references reach it, and loading the same query
+again finds that table and refreshes it in place instead of adding another sheet.
+
 ## Charts
 
 sheetedit renders the charts already in a workbook (xlsx DrawingML and ods embedded chart
@@ -233,11 +240,27 @@ module). A control with a **linked cell** is live: an ActiveX combo lists the it
 which is where the two control families differ (a form control writes the item's position). A control's own persisted state is
 written back too, so a checkbox toggled here is still toggled when the file is reopened.
 
+A control's **caption can be set** as well as its value: double-click a button or a label to name
+it. That is offered only where the write is known to work, which is tested by rewriting the caption
+the control already has, so an affordance never appears where saving would fail. A multi-column list
+is drawn as the grid Excel draws, at **the per-column widths the file states**.
+
+**Frame, MultiPage and TabStrip are read, drawn and written too.** These are a different shape from
+the rest: a container control persists as a *storage*, so its binary is a compound file holding its
+own properties, a table of what it contains, an object stream with every child's properties, and
+(for a MultiPage) a storage per page. The container is drawn as the captioned box it is, with its
+children at their recorded positions, and changing one writes back into that storage. The option
+buttons in a container are one group, as they are in Excel, so choosing one clears the rest. A
+TabStrip is not a container at all - it has tabs, not children - and shows its tabs with the one
+the file selects.
+
 That writer is deliberately conservative. Where the new text is the same length as the old, the
 bytes are patched **in place**, so the stream stays byte-identical down to its padding; only a
 change of length rebuilds the block, carrying the parts sheetedit does not model (picture streams,
-font properties, a combo's column widths) across untouched. It refuses outright on a control whose
-layout the reader would not vouch for, since a write must not proceed where a read would not.
+font properties) across untouched. Writing into a container also corrects the container's own
+bookkeeping, since its children sit end to end and one that changes length moves the rest. It
+refuses outright on a control whose layout the reader would not vouch for, and reads its own output
+back before returning it: a write must not proceed where a read would not.
 
 **Verified by round-trip, not by a second implementation.** Writing an unchanged value back returns
 the original bytes exactly, on every real stream tested, and a changed one reads back correctly
@@ -315,11 +338,19 @@ element parses fine and LibreOffice ignores it entirely.
 
 Beyond the sections above, sheetedit also reads, renders and authors: **sort and value filters** on
 an autofilter range, **conditional formatting** (every rule kind, icon sets included),
-**data validation** (list dropdowns plus the whole/decimal/date/time/length/custom family),
+**data validation** (list dropdowns plus the whole/decimal/date/time/length/custom family, with the
+rule's own help and error messages, shown in the grid as the cell's tooltip),
 **rich text** runs within a cell, **sparklines**, **images** (move, resize, replace),
 **drawing shapes**, **slicers** and **timelines** (interactive, and written back), **hyperlinks**,
 **comments**, **furigana**, and **dynamic arrays** (the Excel 365 spilling family: `UNIQUE`, `SORT`,
 `FILTER`, `SEQUENCE`, `TEXTSPLIT` and the rest).
+
+Both formats author every conditional-format kind, which for `.ods` means writing LibreOffice's
+`calcext` extension. That works, contrary to a long-standing note here saying it did not: two
+placement rules decide it and both fail silently. The block must sit INSIDE `<table:table>`, and the
+fill it applies must be a named style in `styles.xml`. Written anywhere else, LibreOffice ignores
+the rule while sheetedit's own reader still finds it, so a round-trip test passes and the file looks
+right here and blank there.
 
 ## Workbook themes
 
@@ -460,9 +491,9 @@ OOXML export, so that flag was checked within ODF only.
   published specs, sheetedit's own round-trips, and LibreOffice, which drops slicers entirely and
   ignores calculated pivot fields on rebuild. Where a caveat matters it is stated in the section
   concerned rather than left implied.
-- Power Query editing is `.xlsx`-only, and a query result loaded onto a brand-new sheet is
-  written as plain cells (not a live, Excel-refreshable table). Loading onto an existing
-  destination table refreshes it in place.
+- Power Query editing is `.xlsx`-only. A query loaded onto a new sheet is written as a real table
+  with its connection, and loading it again refreshes that table in place; whether Excel refreshes
+  it on demand is untested here, for want of an Excel.
 
 ## Develop
 
@@ -472,8 +503,15 @@ npm run dev       # standalone demo (open a workbook, edit, download)
 npm run build     # compile the library to dist/ (tsc)
 npm test          # vitest round-trip + recalc tests (jsdom)
 npm run test:e2e  # Cypress end-to-end tests (Chrome) against the built demo
+npm run typecheck # the native TypeScript compiler, about a second on the whole project
 ```
 
 Regenerate the e2e fixtures with `node cypress/gen-fixture.mjs`.
+
+**Two TypeScripts, on purpose.** `typecheck` runs TypeScript 7, the native compiler, aliased as
+`tsgo` and called by path. `typescript` itself stays on 6 because TypeScript 7's package is a
+launcher for a binary and exposes no JS compiler API, which Cypress needs to compile its specs:
+with 7 under that name, every e2e spec fails to bundle. Keeping both gives the fast typecheck and a
+working test suite.
 
 License: MIT.
