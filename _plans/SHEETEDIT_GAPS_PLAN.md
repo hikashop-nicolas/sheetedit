@@ -393,8 +393,15 @@ verification actually goes.
 - **ODS graphical conditional formatting authoring**: colour scales, data bars and icon sets have
   no interoperable ODF form; they read from LibreOffice files and are written back as they came.
 - **No Excel here**: slicers, timelines, the ActiveX writers and authored pivots are spec-faithful
-  and verified by round-trip, by LibreOffice where it can judge, and by reading our own output
-  back. Excel itself remains the untested case, and every claim about it says so.
+  and verified by round-trip, by LibreOffice where it can judge, by reading our own output back,
+  and now by the ECMA-376 schemas themselves (`npm run check:schema`). Excel itself remains the
+  untested case, and every claim about it says so.
+
+  What the schema check adds, and what it does not: it validates the parts the schemas describe
+  (worksheets, workbook, styles, shared strings, tables, pivots, connections) and compares against
+  the input, so only a violation we introduce is reported. It does not cover the parts that live in
+  extensions - slicers, timelines, the x14/x15 registrations - which have no published XSD in that
+  set, so those stay verified by round-trip and by asserting each registration is present.
 
 ## Working notes
 - Reuse existing machinery: the chart overlay layer pattern (Phase 2), hidden-rows (Phase 1),

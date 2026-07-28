@@ -1236,3 +1236,32 @@ describe("ODS number data-styles", () => {
     expect(content).toContain("number:percentage-style");
   });
 });
+
+// xml:space="preserve" is only meaningful where whitespace could otherwise be collapsed, and the
+// ECMA schema allows no attribute on <t> at all, so writing it unconditionally added a schema
+// violation to files that had none. Found by scripts/schema-check.mjs.
+describe("xml:space on written strings", () => {
+  const roundTrip = (text: string): { xml: string; readBack: string | undefined } => {
+    const wb = readWorkbook(makeXlsx());
+    setCellInput(wb.sheets[0], 1, 1, text);
+    const bytes = writeWorkbook(wb);
+    return {
+      xml: strFromU8(unzipSync(bytes)["xl/worksheets/sheet1.xml"]),
+      readBack: getCell(readWorkbook(bytes).sheets[0], 1, 1)?.value,
+    };
+  };
+
+  it("omits it where the text has no whitespace to protect", () => {
+    const { xml, readBack } = roundTrip("plain");
+    expect(xml).not.toContain("xml:space");
+    expect(readBack).toBe("plain");
+  });
+
+  it("writes it where whitespace would otherwise be free to collapse", () => {
+    for (const text of ["  leading", "trailing  ", "   ", " both "]) {
+      const { xml, readBack } = roundTrip(text);
+      expect(xml, text).toContain('xml:space="preserve"');
+      expect(readBack, text).toBe(text); // and the spaces survive the round trip
+    }
+  });
+});

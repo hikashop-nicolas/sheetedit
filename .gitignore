@@ -8,3 +8,6 @@ cypress/videos/
 cypress/downloads/
 dist/
 test/corpus/local/
+
+# The ECMA-376 schemas that scripts/schema-check.mjs downloads. They are ECMA's, not ours.
+.cache/

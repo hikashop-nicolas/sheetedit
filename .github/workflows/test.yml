@@ -23,3 +23,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:e2e
+      # What sheetedit WRITES, checked against the official ECMA-376 schemas. It compares against
+      # the input rather than demanding a perfect file, since real workbooks are not: only a
+      # violation the original did not have is one this project introduced.
+      - run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - run: npm run check:schema

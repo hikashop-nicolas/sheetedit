@@ -20,6 +20,12 @@ import { setXlsxCellNumFmt } from "./styles";
 
 /** Build an <rPr> for a rich-text run, or null when the run has no formatting. Children follow the
     CT_RPrElt schema order (rFont, b, i, strike, color, sz, u). */
+/** xml:space="preserve" is only meaningful where the text has whitespace an XML reader would
+    otherwise be free to collapse - a leading or trailing space, or nothing but spaces. Excel
+    writes it on exactly those, and the ECMA schema does not allow the attribute on <t> at all, so
+    writing it unconditionally added a violation to files that had none. */
+const needsSpacePreserve = (text: string): boolean => text !== text.trim();
+
 function xlsxRunPr(doc: Document, ns: string, run: import("../../core/model").TextRun): Element | null {
   if (!run.bold && !run.italic && !run.underline && !run.strike && !run.size && !run.color && !run.font) return null;
   const rPr = doc.createElementNS(ns, "rPr");
@@ -96,7 +102,7 @@ export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): v
         const rPr = xlsxRunPr(doc, ns, run);
         if (rPr) r.appendChild(rPr);
         const rt = doc.createElementNS(ns, "t");
-        rt.setAttribute("xml:space", "preserve");
+        if (needsSpacePreserve(run.text)) rt.setAttribute("xml:space", "preserve");
         rt.textContent = run.text;
         r.appendChild(rt);
         is.appendChild(r);
@@ -105,7 +111,7 @@ export function writeXlsxCell(sheet: Sheet, cell: Cell, plainFormula = false): v
       return;
     }
     const t = doc.createElementNS(ns, "t");
-    t.setAttribute("xml:space", "preserve");
+    if (needsSpacePreserve(cell.value)) t.setAttribute("xml:space", "preserve");
     t.textContent = cell.value;
     is.appendChild(t);
     // Furigana: emit the phonetic guide as <rPh> runs after the base text.

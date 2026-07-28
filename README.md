@@ -504,7 +504,16 @@ npm run build     # compile the library to dist/ (tsc)
 npm test          # vitest round-trip + recalc tests (jsdom)
 npm run test:e2e  # Cypress end-to-end tests (Chrome) against the built demo
 npm run typecheck # the native TypeScript compiler, about a second on the whole project
+npm run check:schema # validate what the writer emits against the ECMA-376 schemas
 ```
+
+**What `check:schema` actually asks.** Not "is this file schema-perfect", because real workbooks
+are not: Excel writes `xml:space` on `<t>`, which the schema forbids outright, and
+`mc:AlternateContent` inside worksheets, which the worksheet schema does not mention. Run a
+validator over any genuine file and it complains. So the check reads each demo workbook, edits a
+cell, writes it back, and reports only the complaints the **original did not already draw** - the
+ones this project introduced. It needs `xmllint` and downloads the ECMA-376 Part 4 (transitional)
+schemas once into `.cache/`, which is not committed: they are ECMA's, not ours.
 
 Regenerate the e2e fixtures with `node cypress/gen-fixture.mjs`.
 
