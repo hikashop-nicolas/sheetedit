@@ -504,7 +504,8 @@ npm run build     # compile the library to dist/ (tsc)
 npm test          # vitest round-trip + recalc tests (jsdom)
 npm run test:e2e  # Cypress end-to-end tests (Chrome) against the built demo
 npm run typecheck # the native TypeScript compiler, about a second on the whole project
-npm run check:schema # validate what the writer emits against the ECMA-376 schemas
+npm run check:schema   # validate what the writer emits against the ECMA-376 schemas
+npm run check:openpyxl # have an independent reader confirm an authored workbook
 ```
 
 **What `check:schema` actually asks.** Not "is this file schema-perfect", because real workbooks
@@ -514,6 +515,18 @@ validator over any genuine file and it complains. So the check reads each demo w
 cell, writes it back, and reports only the complaints the **original did not already draw** - the
 ones this project introduced. It needs `xmllint` and downloads the ECMA-376 Part 4 (transitional)
 schemas once into `.cache/`, which is not committed: they are ECMA's, not ours.
+
+**What `check:openpyxl` adds.** Round-trips prove sheetedit agrees with itself; LibreOffice judges
+what it supports and drops slicers entirely; the schemas judge structure but not meaning. So a
+workbook is authored with a table, two conditional-format rules, a data validation with all four of
+its messages, a hyperlink, a comment, a frozen pane and a merge, and **openpyxl** - a separate
+implementation, in another language, sharing no code with this one - is asked whether it reads back
+what was meant. It needs `pip install openpyxl`.
+
+Both checks earned their place immediately: the schema one found an attribute written where it was
+not needed, and the openpyxl one found that the corpus was setting model fields directly instead of
+going through the authoring APIs, so the file it produced had neither the freeze nor the merge in
+it.
 
 Regenerate the e2e fixtures with `node cypress/gen-fixture.mjs`.
 

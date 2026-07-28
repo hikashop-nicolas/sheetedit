@@ -397,6 +397,12 @@ verification actually goes.
   and now by the ECMA-376 schemas themselves (`npm run check:schema`). Excel itself remains the
   untested case, and every claim about it says so.
 
+  A second reader judges MEANING rather than structure: `npm run check:openpyxl` authors a workbook
+  (table, conditional formats, a validation with its messages, hyperlink, comment, freeze, merge)
+  and has openpyxl - another implementation, in another language - read it back. That covers the
+  xlsx features openpyxl models; it does not model slicers, timelines or ActiveX, which stay
+  verified by round-trip and by asserting each registration is present.
+
   What the schema check adds, and what it does not: it validates the parts the schemas describe
   (worksheets, workbook, styles, shared strings, tables, pivots, connections) and compares against
   the input, so only a violation we introduce is reported. It does not cover the parts that live in

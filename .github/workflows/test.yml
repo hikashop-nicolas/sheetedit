@@ -28,3 +28,7 @@ jobs:
       # violation the original did not have is one this project introduced.
       - run: sudo apt-get update && sudo apt-get install -y libxml2-utils
       - run: npm run check:schema
+      # A second reader, in another language, sharing no code with this one: does openpyxl
+      # understand an authored workbook the way sheetedit meant it?
+      - run: pip install --quiet openpyxl
+      - run: npm run check:openpyxl
