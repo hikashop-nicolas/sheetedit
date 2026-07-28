@@ -443,7 +443,13 @@ export interface StyleChange {
 }
 
 /** A styled run within a rich-text (multi-format) cell string. */
-export interface TextRun { text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; size?: number; color?: string; font?: string; }
+export interface TextRun {
+  text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean;
+  size?: number; color?: string; font?: string;
+  /** ODF can anchor a hyperlink to PART of a cell's text, and carry several in one cell, which
+      xlsx cannot: there a hyperlink covers whole cells. A run that carries one is its own link. */
+  link?: { href: string; internal?: boolean };
+}
 
 /** An embedded picture anchored on a sheet. Rendered on an overlay; a move/resize updates `anchor`
     and sets `dirty`, which the writer flushes back (xlsx: the drawing anchor; ods: the draw:frame). */

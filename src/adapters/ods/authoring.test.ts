@@ -308,3 +308,38 @@ describe("data-validation messages", () => {
     expect(re.sheets[0].validations?.[0]?.promptMessage).toBe("How many units?");
   });
 });
+
+describe("several links in one cell", () => {
+  const twoLinks =
+    `<table:table-cell office:value-type="string"><text:p>see <text:a xlink:href="https://docs.test">docs</text:a> and ` +
+    `<text:a xlink:href="https://spec.test">spec</text:a></text:p></table:table-cell>`;
+
+  it("reads each link as the run it belongs to", () => {
+    const wb = readWorkbook(ods(twoLinks));
+    const runs = getCell(wb.sheets[0], 1, 1)?.richRuns;
+    expect(runs?.map((r) => r.text)).toEqual(["see ", "docs", " and ", "spec"]);
+    expect(runs?.map((r) => r.link?.href)).toEqual([undefined, "https://docs.test", undefined, "https://spec.test"]);
+  });
+
+  it("keeps both when the cell is written back", () => {
+    // The cell's own text is unchanged, but the writer re-emits it: before runs carried links,
+    // this rebuilt the paragraph around the FIRST anchor and the second was gone.
+    const wb = readWorkbook(ods(twoLinks));
+    const cell = getCell(wb.sheets[0], 1, 1)!;
+    cell.edited = true; // force the paragraph to be rebuilt rather than cloned
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://docs.test");
+    expect(out).toContain("https://spec.test");
+    const re = readWorkbook(writeWorkbook(wb));
+    expect(getCell(re.sheets[0], 1, 1)?.richRuns?.map((r) => r.link?.href))
+      .toEqual([undefined, "https://docs.test", undefined, "https://spec.test"]);
+  });
+
+  it("still lets the user replace them with one whole-cell link", () => {
+    const wb = readWorkbook(ods(twoLinks));
+    setOdsHyperlink(wb.sheets[0], 1, 1, { href: "https://one.test" });
+    const out = contentOf(writeWorkbook(wb));
+    expect(out).toContain("https://one.test");
+    expect(out).not.toContain("https://spec.test"); // asked for one link, got one
+  });
+});

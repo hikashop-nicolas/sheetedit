@@ -28,7 +28,8 @@
     "css": "node scripts/build-css.mjs",
     "css:check": "node scripts/build-css.mjs --check",
     "check:schema": "vitest run src/adapters/xlsx/schema-corpus.test.ts && node scripts/schema-check.mjs",
-    "check:openpyxl": "vitest run src/adapters/xlsx/openpyxl-corpus.test.ts && python3 scripts/openpyxl-check.py"
+    "check:openpyxl": "vitest run src/adapters/xlsx/openpyxl-corpus.test.ts && node scripts/run-openpyxl.mjs",
+    "check:openpyxl:setup": "python3 -m venv .cache/py && .cache/py/bin/pip install --quiet openpyxl"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

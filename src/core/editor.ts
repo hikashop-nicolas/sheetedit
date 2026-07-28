@@ -3158,17 +3158,24 @@ export function createSheetEditor(
       // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
       applyCellVisualStyle(td, input, cell);
       // Hyperlink affordance: style the text as a link and add a small open button.
-      if (cell?.link) {
+      // Every link the cell carries: the whole-cell one, or one per run for a cell whose links
+      // belong to its pieces (which is an ODF shape - xlsx links cover whole cells).
+      const runLinks = (cell?.richRuns ?? []).filter((run) => run.link).map((run) => ({ text: run.text, link: run.link! }));
+      if (cell?.link || runLinks.length) {
         td.classList.add("has-link");
         const lb = document.createElement("button");
         lb.type = "button";
         lb.className = "sheetedit-linkbtn";
         lb.tabIndex = -1;
-        lb.title = cell.link.tip || cell.link.href;
+        lb.title = runLinks.length > 1 ? runLinks.map((x) => x.link.href).join("\n") : (cell?.link?.tip || cell?.link?.href || runLinks[0]!.link.href);
         lb.setAttribute("aria-label", t("linkOpen"));
         lb.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5 13 3M9.5 3H13v3.5M12 9.5V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h2.5"/></svg>`;
         lb.addEventListener("mousedown", (e) => e.preventDefault());
-        lb.addEventListener("click", (e) => { e.stopPropagation(); openLink(cell.link!); });
+        lb.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (runLinks.length > 1) openLinkMenu(td, runLinks);
+          else openLink(cell?.link ?? runLinks[0]!.link);
+        });
         td.appendChild(lb);
       }
       // Data-validation dropdown: a caret that opens the allowed-value list; the cell is flagged
@@ -3357,7 +3364,16 @@ export function createSheetEditor(
         ov.className = "sheetedit-cellrich";
         ov.setAttribute("aria-hidden", "true");
         for (const run of cell.richRuns) {
-          const sp = document.createElement("span");
+          // A run carrying its own link is drawn as one and follows it on click. The overlay is
+          // hidden from assistive tech (the input already carries the text), so the cell's link
+          // button is what reaches these without a mouse - it offers every link the cell has.
+          const sp = document.createElement(run.link ? "a" : "span");
+          if (run.link) {
+            sp.className = "sheetedit-runlink";
+            (sp as HTMLAnchorElement).href = run.link.internal ? "#" : run.link.href;
+            sp.title = run.link.href;
+            sp.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openLink(run.link!); });
+          }
           sp.textContent = run.text;
           if (run.bold) sp.style.fontWeight = "700";
           if (run.italic) sp.style.fontStyle = "italic";
@@ -3729,6 +3745,28 @@ export function createSheetEditor(
       }
     return out;
   };
+  /** A cell can carry several links, one per run. Offer them rather than silently following the
+      first, which is what the grid used to do. */
+  function openLinkMenu(td: HTMLElement, links: { text: string; link: { href: string; internal?: boolean } }[]): void {
+    const menu = document.createElement("div");
+    menu.className = "sheetedit-pop sheetedit-dvmenu";
+    for (const { text, link } of links) {
+      const it = document.createElement("button");
+      it.type = "button";
+      it.className = "sheetedit-pop-item";
+      it.textContent = text.trim() || link.href;
+      it.title = link.href;
+      it.addEventListener("click", () => { menu.remove(); openLink(link); });
+      menu.appendChild(it);
+    }
+    wrap.appendChild(menu);
+    const rect = td.getBoundingClientRect();
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 6)}px`;
+    menu.style.top = `${rect.bottom + 2}px`;
+    const close = (e: MouseEvent): void => { if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); } };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
+
   function openDvMenu(td: HTMLElement, r: number, c: number, dv: DataValidation): void {
     const values = resolveDvValues(dv, wb.sheets[active]!);
     const menu = document.createElement("div");

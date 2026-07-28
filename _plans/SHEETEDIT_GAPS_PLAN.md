@@ -9,20 +9,29 @@ charts, pivot tables, Power Query, macros, and ActiveX down to its container con
 
 ## Still open
 
-Short, because most of what used to be here shipped. Each is stated as what a user would notice.
+Nothing of substance. The five items this section used to list were worked through on 2026-07-28:
+two were real and are fixed, three were caveats wearing a backlog's clothes and are stated as
+caveats now, each with what was actually measured.
 
-- **A part-of-cell hyperlink flattens on edit (.ods)**: ODF can anchor a link to part of a cell's
-  text, or carry several in one cell. They survive untouched and survive an edit that leaves the
-  text alone, but editing that cell's value drops them, since the text they were anchored to is
-  gone. The grid also shows and follows only the first link of such a cell.
-- **A second note per cell outlives sheetedit but not LibreOffice (.ods)**: every annotation is
-  kept through an edit, and LibreOffice keeps one per cell and drops the rest on re-save.
-- **An edited shared-string cell is rewritten inline (.xlsx)**: its `sharedStrings` entry can
-  become an unreferenced orphan. The file is valid; it is slightly larger than Excel would write.
-- **Power Query load-to-new-sheet** writes a real refreshable ListObject with its connection now,
-  but whether Excel refreshes it on demand is untested here.
-- **Pivot layout is not byte-identical to Excel's**, which neither app preserves anyway: both
-  re-flow the body on open.
+- **Part-of-cell hyperlinks (.ods)** - FIXED. A link now belongs to the run it covers, so a cell
+  carries as many as the file gives it. They survive a rewrite of the cell, the grid draws each as
+  a link and follows it, and the cell's link button offers all of them rather than silently
+  following the first. A whole-cell link the USER sets still wins, since that is what they asked
+  for. xlsx is unaffected: there a hyperlink covers whole cells and cannot do this.
+- **An edited shared-string cell is rewritten inline (.xlsx)** - NOT A DEFECT, measured. The shared
+  string table passes through untouched, so an entry can end up unreferenced and the `count`
+  attribute can overstate by one. Both are hints rather than authority: the schema check passes,
+  openpyxl loads the file and reads every value correctly, and Excel leaves stale counts itself.
+  Pruning and renumbering would mean rewriting every `<v>` index in every sheet, which trades a
+  cosmetic wart for a real risk to the byte-for-byte rule. Left alone deliberately.
+- **A second note per cell (.ods)** - NOT OURS. Every annotation survives a sheetedit edit; it is
+  LibreOffice that models one note per cell and drops the rest on re-save. Nothing to fix here.
+- **Power Query refresh in Excel** - UNTESTABLE HERE, narrowed. The table, its connection, the
+  content type and the workbook relationship are all written and are all read back by openpyxl,
+  which is as far as anything available on this machine can go. Whether Excel refreshes on demand
+  needs Excel.
+- **Pivot layout is not byte-identical to Excel's** - NOT A GOAL. Both applications re-flow the
+  body on open, so there is nothing to preserve.
 
 ## What shipped, and what it cost
 

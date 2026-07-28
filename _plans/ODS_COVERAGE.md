@@ -80,10 +80,11 @@ aspect you change is rewritten. Verified against a LibreOffice round-trip.
   other attributes (target-frame-name, show, style-name, visited-style-name) are carried across an
   edit. A cell whose text is unchanged keeps its paragraphs verbatim, so a recalc or a re-entry of
   the same value keeps every anchor, part-of-cell ones included.
-  STILL A GAP, but a smaller one: the grid shows and follows only the FIRST link of a cell, and
-  editing the value of a cell whose links covered only part of its text drops them (the text they
-  anchored is gone). What it no longer does is re-anchor that first link around the whole new
-  text, which invented a link the file never had.
+  A link on PART of a cell's text belongs to the run it covers, so a cell carries as many as the
+  file gives it: they survive a rewrite, each is drawn as a link and followed on click, and the
+  cell's link button offers all of them. A whole-cell link the user sets replaces them, which is
+  what asking for one means. Editing the cell's VALUE still drops them, since the text they were
+  anchored to is gone - the same rule rich-text runs follow.
 - **Comments**: every annotation on a cell is kept through an edit, each with its own position,
   creator and date; the grid shows and edits the first, and removing it leaves the others. A note's
   lines are written one `<text:p>` each. `dc:date` is written.

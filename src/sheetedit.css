@@ -1045,3 +1045,13 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-ctrl-inner { position: relative; width: 100%; height: calc(100% - 1.4em); }
 .sheetedit-ctrl-child { font-size: 12px; white-space: nowrap; }
 .sheetedit-ctrl-child input[type="checkbox"], .sheetedit-ctrl-child input[type="radio"] { margin-right: 4px; }
+
+/* A run carrying its own link, inside the rich-text overlay. ODF can anchor a link to part of a
+   cell's text; the cell's link button offers all of them, since the overlay is not reachable
+   without a mouse. */
+.sheetedit-cellrich a.sheetedit-runlink {
+  color: var(--sheetedit-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  pointer-events: auto;
+}

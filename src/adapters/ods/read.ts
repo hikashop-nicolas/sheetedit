@@ -838,11 +838,23 @@ function odsCellRuns(cellEl: Element, styles: OdsStyles): TextRun[] | undefined 
       if (run.bold || run.italic || run.underline || run.strike || run.color || run.size || run.font) styled++;
       if (run.text) runs.push(run);
     } else if (el.localName === "a") {
-      runs.push({ text: el.textContent ?? "" });
+      // A link on part of the text. Keeping it as a run's own property is what lets a cell carry
+      // several, and lets an edit elsewhere in the cell leave them where they were.
+      const href = el.getAttribute("xlink:href") ?? "";
+      const run: TextRun = { text: el.textContent ?? "" };
+      if (href) run.link = href.startsWith("#") ? { href: href.slice(1).replace(".", "!"), internal: true } : { href };
+      // A styled anchor carries its style on an inner span, or on itself.
+      const cs = styles.text.get(el.getAttribute("text:style-name") ?? "") ?? {};
+      if (cs.bold) run.bold = true;
+      if (cs.italic) run.italic = true;
+      if (cs.color) run.color = cs.color;
+      if (run.text) { runs.push(run); if (run.link) styled++; }
     } else if (el.localName === "s") {
       runs.push({ text: " ".repeat(Math.max(1, Number(el.getAttribute("text:c") || "1"))) });
     }
   }
+  // Runs are worth keeping when the cell is made of several pieces and at least one of them is
+  // distinctive; a single anchor covering everything is the whole-cell link the reader already has.
   return styled > 0 && runs.length > 1 ? runs : undefined;
 }
 

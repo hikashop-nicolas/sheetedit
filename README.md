@@ -506,6 +506,7 @@ npm run test:e2e  # Cypress end-to-end tests (Chrome) against the built demo
 npm run typecheck # the native TypeScript compiler, about a second on the whole project
 npm run check:schema   # validate what the writer emits against the ECMA-376 schemas
 npm run check:openpyxl # have an independent reader confirm an authored workbook
+npm run check:openpyxl:setup # once, if python3 has no openpyxl (creates .cache/py)
 ```
 
 **What `check:schema` actually asks.** Not "is this file schema-perfect", because real workbooks

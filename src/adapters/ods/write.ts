@@ -89,7 +89,10 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
     c.setAttributeNS(ODS.office, "office:value-type", "string");
     // A linked cell must NOT carry office:string-value: LibreOffice treats it as authoritative and
     // discards the rich <text:a>, so the value lives only in the text:p (the anchor text).
-    if (cell.richRuns?.length && !cell.link) {
+    // Runs win over the cell's link when any of them carries its own, because that cell's links
+    // belong to its pieces and flattening them into one anchor is what used to lose them. A link
+    // the USER just set is the exception: they asked for a whole-cell link, so they get one.
+    if (cell.richRuns?.length && (!cell.link || (!cell.linkDirty && cell.richRuns.some((r) => r.link)))) {
       // Rich text: one <text:span> per formatted run, plain text for unformatted runs.
       c.removeAttributeNS(ODS.office, "string-value"); // spans are authoritative; a string-value would flatten them
       c.appendChild(makeRunsP(doc, cell.richRuns));
@@ -198,10 +201,24 @@ function makeRubyP(doc: Document, base: string, runs: Phonetic[]): Element {
 function makeRunsP(doc: Document, runs: import("../../core/model").TextRun[]): Element {
   const p = doc.createElementNS(ODS.text, "text:p");
   const autoStyles = ensureOdsAutoStyles(doc);
+  // A run that carries a link is wrapped in its own anchor, which is how ODF puts a hyperlink on
+  // part of a cell's text. Everything else in the paragraph stays where it was, so a cell with two
+  // links keeps both.
+  const anchor = (run: import("../../core/model").TextRun, inner: Node): Element => {
+    const a = doc.createElementNS(ODS.text, "text:a");
+    a.setAttributeNS(ODS.xlink, "xlink:href", run.link!.internal ? `#${run.link!.href.replace("!", ".")}` : run.link!.href);
+    a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
+    a.appendChild(inner);
+    return a;
+  };
   for (const run of runs) {
     if (run.text === "") continue;
     const hasStyle = run.bold || run.italic || run.underline || run.strike || run.size || run.color || run.font;
-    if (!hasStyle) { p.appendChild(doc.createTextNode(run.text)); continue; }
+    if (!hasStyle) {
+      const text = doc.createTextNode(run.text);
+      p.appendChild(run.link ? anchor(run, text) : text);
+      continue;
+    }
     const st = doc.createElementNS(ODS.style, "style:style");
     const tp = doc.createElementNS(ODS.style, "style:text-properties");
     if (run.bold) tp.setAttributeNS(ODS.fo, "fo:font-weight", "bold");
@@ -216,7 +233,7 @@ function makeRunsP(doc: Document, runs: import("../../core/model").TextRun[]): E
     const span = doc.createElementNS(ODS.text, "text:span");
     span.setAttributeNS(ODS.text, "text:style-name", name);
     span.textContent = run.text;
-    p.appendChild(span);
+    p.appendChild(run.link ? anchor(run, span) : span);
   }
   return p;
 }

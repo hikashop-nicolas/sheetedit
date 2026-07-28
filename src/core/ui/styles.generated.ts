@@ -875,4 +875,10 @@ opacity: 0.7;
 .sheetedit-ctrl-tab.chosen { opacity: 1; background: var(--sheetedit-cell-bg); }
 .sheetedit-ctrl-inner { position: relative; width: 100%; height: calc(100% - 1.4em); }
 .sheetedit-ctrl-child { font-size: 12px; white-space: nowrap; }
-.sheetedit-ctrl-child input[type="checkbox"], .sheetedit-ctrl-child input[type="radio"] { margin-right: 4px; }`;
+.sheetedit-ctrl-child input[type="checkbox"], .sheetedit-ctrl-child input[type="radio"] { margin-right: 4px; }
+.sheetedit-cellrich a.sheetedit-runlink {
+color: var(--sheetedit-accent);
+text-decoration: underline;
+cursor: pointer;
+pointer-events: auto;
+}`;
