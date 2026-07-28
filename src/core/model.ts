@@ -548,6 +548,8 @@ export interface SheetControl {
     size?: { cx: number; cy: number };
     children: {
       name?: string;
+      /** Which site this is, so a write can find the child in the container's object stream. */
+      siteIndex: number;
       kind: SheetControl["kind"];
       label?: string;
       value?: string;

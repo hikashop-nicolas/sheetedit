@@ -99,7 +99,11 @@ the priority order for closing it. The companion documents are `ODS_COVERAGE.md`
   page. All of that is read, and the container is drawn on the grid as the captioned box it is,
   with its children at their recorded positions. A TabStrip is NOT a container - it has tabs, not
   children - so it is read as a leaf control down to its tab captions and selected index.
-  The children are drawn as recorded and left inert: the writer does not write a storage back. Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
+  A child's value is WRITTEN BACK into the container's storage: the child's own bytes go through
+  the same writer a standalone control uses, and the container's bookkeeping follows, since the
+  object stream is every child end to end and a child that changes length moves the ones after it
+  (the ObjectStreamSize the parent records is corrected to match). The option buttons in one
+  container are one group, as they are in Excel: choosing one clears the rest, each its own write. Multi-column lists render as a grid, at the per-column widths the file states (rgColumnInfo).
 - VBA macros: read, run and written (vbalang). `Worksheet.OLEObjects` and `ListObjects` are on the
   object model, and `ListObjects.Add` writes the whole package.
 - Power Query: read, full editor (Applied Steps, preview, transform ribbon, Get Data, merge/append),
@@ -145,10 +149,10 @@ its sibling elements intact:
 The original six-item list (sheet management, hyperlinks, data validation, range shifting,
 conditional formatting, comments) is DONE in full; the current order is:
 
-1. Writing a container back: a Frame's children are read and drawn but not editable, since the
-   writer handles a control's stream and not a whole storage. The compound-file writer exists
-   (vbalang's), so this is reachable; it was simply not needed to stop a Frame being a blank.
+1. Nothing outstanding on the ActiveX line except third-party controls, which are irreducible by
+   spec, and an Excel to judge any of it against.
 
 DONE since this list was written: the ODS parity gaps, Power Query load-to-new-sheet as a real
 ListObject, the per-column widths of a multi-column ActiveX list (rgColumnInfo), ActiveX caption
-authoring, and the container controls (Frame / MultiPage / TabStrip).
+authoring, the container controls (Frame / MultiPage / TabStrip), and writing a container's
+children back.

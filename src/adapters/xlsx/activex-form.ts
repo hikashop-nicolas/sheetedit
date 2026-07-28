@@ -1,5 +1,5 @@
-import { isCfb, readCfb } from "vbalang";
-import { readEmbeddedControl, type ActiveXControl, type ActiveXKind } from "./activex-read";
+import { isCfb, readCfb, writeCfb } from "vbalang";
+import { readEmbeddedControl, setActiveXValue, type ActiveXControl, type ActiveXKind } from "./activex-read";
 
 // ---------------------------------------------------------------------------
 // ActiveX PARENT controls: Frame, MultiPage and TabStrip, per [MS-OFORMS] 2.1.2
@@ -57,6 +57,11 @@ export interface FormSite {
   depth: number;
   /** The child's own properties, read from the "o" stream with the leaf reader. */
   control?: ActiveXControl;
+  /** Where this child's bytes sit in the "o" stream, so a write can splice rather than re-walk. */
+  objectStreamAt?: number;
+  /** Where this site's ObjectStreamSize sits in the "f" stream: a child whose stream changes
+      length moves every child after it, and the size the parent records has to follow. */
+  sizeFieldAt?: number;
 }
 
 /** A parent control: the container itself plus what it contains. */
@@ -211,7 +216,7 @@ function readSiteData(b: Uint8Array, at: number, dontSaveClassTable: boolean): F
     if (sbit(2)) { dalign(4); site.id = dv.getInt32(d, true); d += 4; }
     if (sbit(3)) { dalign(4); d += 4; }                                  // HelpContextID
     if (sbit(4)) { dalign(4); d += 4; }                                  // BitFlags
-    if (sbit(5)) { dalign(4); site.objectStreamSize = u32(dv, d); d += 4; }
+    if (sbit(5)) { dalign(4); site.sizeFieldAt = d; site.objectStreamSize = u32(dv, d); d += 4; }
     if (sbit(6)) { dalign(2); site.tabIndex = dv.getInt16(d, true); d += 2; }
     if (sbit(7)) { dalign(2); site.clsidCacheIndex = u16(dv, d); d += 2; }
     if (sbit(9)) { dalign(2); d += 2; }                                  // GroupID
@@ -278,6 +283,7 @@ export function readParentControl(bytes: Uint8Array, kindHint?: ParentControl["k
     let at = 0;
     for (const site of sites) {
       const len = site.objectStreamSize ?? 0;
+      site.objectStreamAt = at;
       if (len > 0 && at + len <= o.length) {
         const kind = site.kind;
         if (kind && kind !== "form" && kind !== "frame" && kind !== "multiPage" && kind !== "tabStrip") {
@@ -317,4 +323,71 @@ export function readParentControl(bytes: Uint8Array, kindHint?: ParentControl["k
     sites,
     ...(pages.length ? { pages } : {}),
   };
+}
+
+/**
+ * Change the persisted value of ONE control inside a container, and hand back the whole storage.
+ *
+ * The child's own bytes go through the same writer a standalone control uses, so it refuses the
+ * same streams: a container whose child the reader would not vouch for is left alone. What this
+ * adds is the container's own bookkeeping - the "o" stream is every child end to end, so a child
+ * whose stream changes length moves every child after it, and the ObjectStreamSize the parent
+ * records for it has to be corrected in the "f" stream to match.
+ *
+ * Returns undefined rather than a half-written storage on any doubt, and reads its own output back
+ * before returning it, which is the rule the leaf writer already follows.
+ */
+export function setContainerChildValue(bytes: Uint8Array, siteIndex: number, value: string): Uint8Array | undefined {
+  if (!isCfb(bytes)) return undefined;
+  let cfb;
+  try {
+    cfb = readCfb(bytes);
+  } catch {
+    return undefined;
+  }
+  const parent = readParentControl(bytes);
+  const site = parent?.sites[siteIndex];
+  const o = cfb.readPath("/o");
+  const f = cfb.readPath("/f");
+  if (!parent || !site || !o || !f) return undefined;
+  const at = site.objectStreamAt ?? 0;
+  const len = site.objectStreamSize ?? 0;
+  if (!len || at + len > o.length) return undefined;
+
+  // The child carries no class id of its own, so the writer is told what it is - the same thing
+  // the reader was told, from the site's ClsidCacheIndex.
+  const kind = site.kind;
+  if (!kind || kind === "form" || kind === "frame" || kind === "multiPage" || kind === "tabStrip") return undefined;
+  const child = setActiveXValue(o.subarray(at, at + len), value, kind as ActiveXKind);
+  if (!child) return undefined;
+
+  const nextO = new Uint8Array(o.length - len + child.length);
+  nextO.set(o.subarray(0, at), 0);
+  nextO.set(child, at);
+  nextO.set(o.subarray(at + len), at + child.length);
+
+  const overrides = new Map<number, Uint8Array>();
+  const oIndex = cfb.paths().find((p) => p.path === "/o")?.index;
+  if (oIndex === undefined) return undefined;
+  overrides.set(oIndex, nextO);
+
+  // A change of length means the parent's record of this child's size is now wrong.
+  if (child.length !== len) {
+    if (site.sizeFieldAt === undefined) return undefined; // nowhere to correct it
+    const nextF = new Uint8Array(f);
+    new DataView(nextF.buffer).setUint32(site.sizeFieldAt, child.length, true);
+    const fIndex = cfb.paths().find((p) => p.path === "/f")?.index;
+    if (fIndex === undefined) return undefined;
+    overrides.set(fIndex, nextF);
+  }
+
+  let out: Uint8Array;
+  try {
+    out = writeCfb(cfb, overrides);
+  } catch {
+    return undefined;
+  }
+  // Read it back: a storage that cannot be parsed is worse than a refusal.
+  const check = readParentControl(out);
+  return check?.sites[siteIndex]?.control?.value === value ? out : undefined;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isParentControlBin, readParentControl } from "./activex-form";
+import { isParentControlBin, readParentControl, setContainerChildValue } from "./activex-form";
 
 // A parent control persists as a STORAGE, so these fixtures are real compound files: the bytes are
 // built here from [MS-OFORMS] section 2.1.2 (the Form stream, its site data, and the "o" stream
@@ -157,6 +157,15 @@ function morphChild(value: string, displayStyle = 1): number[] {
   return [0x00, 0x02, ...u16b(cb), ...u32b(lo), ...u32b(0), ...data, ...extra];
 }
 
+/** A MorphData child with a Value, as it sits in the "o" stream: no class id in front. */
+function morphValueChild(value: string): number[] {
+  const lo = 1 << 22; // fValue
+  const data = pad4(u32b(0x80000000 | value.length));
+  const extra = pad4(strBytes(value));
+  const cb = 8 + data.length + extra.length;
+  return [0x00, 0x02, ...u16b(cb), ...u32b(lo), ...u32b(0), ...data, ...extra];
+}
+
 describe("ActiveX parent controls", () => {
   it("knows a parent control from a leaf one", () => {
     const parent = cfb({ f: formStream("Options", []), o: padTo([], 5000) });
@@ -217,5 +226,52 @@ describe("ActiveX parent controls", () => {
     expect(readParentControl(new Uint8Array([1, 2, 3, 4]))).toBeUndefined();
     // A compound file whose Form stream is nonsense is refused rather than half-read.
     expect(readParentControl(cfb({ f: padTo([9, 9, 9, 9], 5000) }))).toBeUndefined();
+  });
+});
+
+describe("writing a value into a container", () => {
+  /** A frame holding two option buttons, the first selected. */
+  function frameWithOptions(): Uint8Array {
+    const a = morphValueChild("1");
+    const b = morphValueChild("0");
+    const sites: SiteSpec[] = [
+      { name: "OptionA", cache: 27, size: a.length },
+      { name: "OptionB", cache: 27, size: b.length },
+    ];
+    return cfb({ f: formStream("Delivery", sites), o: padTo([...a, ...b], 5000) });
+  }
+
+  it("changes one child and leaves the other alone", () => {
+    const out = setContainerChildValue(frameWithOptions(), 1, "1")!;
+    expect(out).toBeTruthy();
+    const re = readParentControl(out)!;
+    expect(re.sites[1]!.control?.value).toBe("1");
+    expect(re.sites[0]!.control?.value).toBe("1"); // untouched
+    expect(re.caption).toBe("Delivery");           // and so is the container itself
+  });
+
+  it("keeps the container readable, sites and all", () => {
+    const out = setContainerChildValue(frameWithOptions(), 0, "0")!;
+    const re = readParentControl(out)!;
+    expect(re.sites.map((s) => s.name)).toEqual(["OptionA", "OptionB"]);
+    expect(re.sites.map((s) => s.kind)).toEqual(["radio", "radio"]);
+    expect(re.sites[0]!.control?.value).toBe("0");
+  });
+
+  it("corrects the size the parent records when the child grows", () => {
+    // The "o" stream is every child end to end, so a longer child moves the one after it: the
+    // ObjectStreamSize in the parent's site record has to follow, or the next child is misread.
+    const before = readParentControl(frameWithOptions())!;
+    const out = setContainerChildValue(frameWithOptions(), 0, "a much longer value than before")!;
+    const re = readParentControl(out)!;
+    expect(re.sites[0]!.control?.value).toBe("a much longer value than before");
+    expect(re.sites[0]!.objectStreamSize).toBeGreaterThan(before.sites[0]!.objectStreamSize!);
+    // The child AFTER the one that grew must still read correctly.
+    expect(re.sites[1]!.control?.value).toBe("0");
+  });
+
+  it("refuses what it cannot vouch for", () => {
+    expect(setContainerChildValue(new Uint8Array([1, 2, 3]), 0, "x")).toBeUndefined();
+    expect(setContainerChildValue(frameWithOptions(), 9, "x")).toBeUndefined(); // no such child
   });
 });

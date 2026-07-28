@@ -329,9 +329,11 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
         kind: parent.kind === "form" ? "frame" : parent.kind,
         ...(parent.size ? { size: parent.size } : {}),
         children: parent.sites
-          .filter((site) => site.kind && CONTAINER_CHILD_KINDS[site.kind as ActiveXKind])
-          .map((site) => ({
+          .map((site, siteIndex) => ({ site, siteIndex }))
+          .filter(({ site }) => site.kind && CONTAINER_CHILD_KINDS[site.kind as ActiveXKind])
+          .map(({ site, siteIndex }) => ({
             name: site.name,
+            siteIndex,
             kind: CONTAINER_CHILD_KINDS[site.kind as ActiveXKind]!,
             label: site.control?.caption,
             value: site.control?.value,

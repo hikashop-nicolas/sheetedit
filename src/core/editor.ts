@@ -31,6 +31,7 @@ import { setupControlLayer } from "./ui/control-layer";
 import { absoluteRange, absoluteRef, createXlsxControl, defaultLink, deleteXlsxControl, placementFor, updateXlsxControlLinks } from "../adapters/xlsx/control-create";
 import { hasActiveX } from "../adapters/xlsx/control-read";
 import { setActiveXText, setActiveXValue } from "../adapters/xlsx/activex-read";
+import { setContainerChildValue } from "../adapters/xlsx/activex-form";
 import { formDialog, type FormField } from "./ui/form-dialog";
 import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
@@ -2455,6 +2456,21 @@ export function createSheetEditor(
   };
 
   /**
+   * Persist a change to a control INSIDE a container, into the container's own storage.
+   *
+   * A refusal leaves the file alone: the writer will not touch a storage it could not read back,
+   * so the grid is re-rendered from the model, which puts the control back as the file has it.
+   */
+  const writeContainerChild = (ctl: SheetControl, siteIndex: number, value: string): void => {
+    const bin = ctl.activeXBinPath ? wb.files[ctl.activeXBinPath] : undefined;
+    const out = bin ? setContainerChildValue(bin, siteIndex, value) : undefined;
+    if (!out || !ctl.activeXBinPath) { controlLayer.refresh(); return; }
+    wb.files[ctl.activeXBinPath] = out;
+    ctl.dirty = true;
+    mark();
+  };
+
+  /**
    * Whether this control's caption can actually be rewritten, asked by re-writing the caption it
    * already has: the writer refuses any stream it would not vouch for, so a successful no-op write
    * is exactly the test. Offering an edit that cannot be saved would be worse than offering none.
@@ -2520,6 +2536,9 @@ export function createSheetEditor(
     // Only xlsx writes controls back, and only an ActiveX control keeps its caption where we can
     // rewrite it; a form control's text lives in the sheet's drawing, which is another job.
     onEditCaption: wb.kind === "xlsx" ? (ctl) => editControlCaption(ctl) : undefined,
+    // A control inside a Frame keeps its state in the container's storage, so the write goes
+    // there. Offered only where the storage came back writable, tested the same way a caption is.
+    onContainerChild: wb.kind === "xlsx" ? (ctl, siteIndex, value) => writeContainerChild(ctl, siteIndex, value) : undefined,
     canEditCaption: (ctl) => captionWritable(ctl),
     editCaptionTitle: t("ctrlCaptionEdit"),
     onChange: (changed) => {

@@ -772,8 +772,11 @@ export function setActiveXText(
   bytes: Uint8Array,
   prop: "value" | "caption" | "groupName",
   text: string,
+  /** An EMBEDDED control: its bytes carry no class id, so the kind has to be supplied and the
+      walk starts at the control structure itself. */
+  embedded?: ActiveXKind,
 ): Uint8Array | undefined {
-  const found = walk(bytes);
+  const found = embedded ? walk(bytes, embedded, 0) : walk(bytes);
   const slot = found?.layout?.strings.find((x) => x.prop === prop);
   if (!found?.layout) return undefined;
   // The control does not carry that property yet, which is what an unlabelled button looks like:
@@ -875,8 +878,8 @@ function addSimpleCaption(bytes: Uint8Array, L: Layout, text: string): Uint8Arra
 }
 
 /** Change a control's persisted Value. A thin name over setActiveXText, which is the general one. */
-export const setActiveXValue = (bytes: Uint8Array, value: string): Uint8Array | undefined =>
-  setActiveXText(bytes, "value", value);
+export const setActiveXValue = (bytes: Uint8Array, value: string, embedded?: ActiveXKind): Uint8Array | undefined =>
+  setActiveXText(bytes, "value", value, embedded);
 
 /** Which mask bit each MorphData string lives behind. */
 const MORPH_STRING_BIT: Record<"value" | "caption" | "groupName", number> = { value: 22, caption: 23, groupName: 32 };

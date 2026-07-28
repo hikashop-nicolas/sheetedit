@@ -45,6 +45,9 @@ export interface ControlLayerDeps {
   canEditCaption?: (control: SheetControl) => boolean;
   /** Tooltip for the caption edit, shown on a control that offers one. */
   editCaptionTitle?: string;
+  /** A control INSIDE a container changed: the host writes it into the container's storage.
+      Absent where containers cannot be written back, which leaves the children inert. */
+  onContainerChild?: (control: SheetControl, siteIndex: number, value: string) => void;
 }
 
 /** Controls whose caption is theirs to state, so changing it means rewriting the control. */
@@ -141,7 +144,7 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
   const buildContainer = (ctl: SheetControl, box: NonNullable<SheetControl["container"]>): HTMLElement => {
     const wrap = document.createElement("div");
     wrap.className = `sheetedit-ctrl-container kind-${box.kind}`;
-    wrap.title = deps.activeXTitle;
+    if (!deps.onContainerChild) wrap.title = deps.activeXTitle;
     const legend = document.createElement("div");
     legend.className = "sheetedit-ctrl-legend";
     legend.textContent = ctl.label ?? ctl.name;
@@ -177,7 +180,26 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
         const mark = document.createElement("input");
         mark.type = child.kind === "radio" ? "radio" : "checkbox";
         mark.checked = !!child.checked;
-        mark.disabled = true;
+        // The option buttons in one container are one group, which is how Excel groups them: the
+        // frame IS the group. A shared name makes the browser treat them as one.
+        if (child.kind === "radio") mark.name = `sheetedit-ctrlgroup-${ctl.name}`;
+        // Live only where the host can write it back; otherwise shown as recorded and left alone.
+        mark.disabled = !deps.onContainerChild;
+        mark.addEventListener("change", () => {
+          child.checked = mark.checked;
+          child.value = mark.checked ? "1" : "0";
+          deps.onContainerChild?.(ctl, child.siteIndex, child.value);
+          // Choosing one option button clears the rest of its group, and each of those is its own
+          // write: the state lives per control in the storage, not as one "which is selected".
+          if (child.kind === "radio" && mark.checked) {
+            for (const other of box.children) {
+              if (other === child || other.kind !== "radio" || !other.checked) continue;
+              other.checked = false;
+              other.value = "0";
+              deps.onContainerChild?.(ctl, other.siteIndex, "0");
+            }
+          }
+        });
         el.append(mark, document.createTextNode(text));
       } else if (child.kind === "button" || child.kind === "toggle") {
         const b = document.createElement("button");
@@ -189,8 +211,12 @@ export function setupControlLayer(deps: ControlLayerDeps): { refresh(): void; te
       } else if (child.kind === "textbox" || child.kind === "dropdown" || child.kind === "list") {
         const f = document.createElement("input");
         f.className = "sheetedit-ctrl-text";
-        f.readOnly = true;
+        f.readOnly = !deps.onContainerChild;
         f.value = child.value ?? "";
+        f.addEventListener("change", () => {
+          child.value = f.value;
+          deps.onContainerChild?.(ctl, child.siteIndex, f.value);
+        });
         el.appendChild(f);
       } else {
         el.textContent = text;
