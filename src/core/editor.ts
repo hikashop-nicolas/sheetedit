@@ -65,8 +65,22 @@ export interface CellInput {
   input: string;
 }
 
+/** Another person in a shared session, and the cell they are on. */
+export interface PeerCell {
+  /** Stable per peer, used only to tell one marker from another. */
+  id: string;
+  /** Any CSS colour, drawn as the cell's outline. */
+  colour: string;
+  name: string;
+  sheet: string;
+  r: number;
+  c: number;
+}
+
 export interface SheetEditorOptions {
   onChange?: () => void;
+  /** The cell this person moved to, for a shared session to publish. */
+  onSelectionChanged?: (at: { sheet: string; r: number; c: number }) => void;
   /**
    * Which cells just changed, and to what. onChange says only that something happened,
    * which is no use to a collaboration binding: it would have to re-read the whole sheet
@@ -103,6 +117,8 @@ export interface SheetEditor {
    */
   applyRemoteCells(changes: CellInput[]): void;
   sheetNames(): string[];
+  /** Show where the other people in a session are. Replaces the whole set each call. */
+  setPeerCells(peers: PeerCell[]): void;
   destroy(): void;
 }
 
@@ -162,6 +178,7 @@ export function createSheetEditor(
       cellInputs: () => [],
       applyRemoteCells: () => undefined,
       sheetNames: () => [],
+      setPeerCells: () => undefined,
       destroy() {
         errWrap.remove();
       },
@@ -326,6 +343,8 @@ export function createSheetEditor(
   let syncToolbar: () => void = () => undefined;
   // Selection rectangle (1-based, inclusive) and the anchor for shift-extend.
   let sel: { r1: number; c1: number; r2: number; c2: number } | null = null;
+  /** Where the other people in a session are, keyed by "sheet!r,c" for O(1) lookup per cell. */
+  let peerCells = new Map<string, PeerCell[]>();
   let anchor: { r: number; c: number } | null = null;
   // Grid extent of the last render (whole-line selections are made against it).
   let renderedRows = 0;
@@ -454,6 +473,10 @@ export function createSheetEditor(
     paintSel();
   };
   const selectCell = (r: number, c: number, extend: boolean) => {
+    // The one funnel both a click and keyboard navigation pass through, which is why the
+    // announcement lives here rather than in focusCell (only the keyboard reaches that).
+    const namedSheet = wb.sheets[active];
+    if (namedSheet) options.onSelectionChanged?.({ sheet: namedSheet.name, r, c });
     if (extend && anchor) setSel(anchor.r, anchor.c, r, c);
     else {
       anchor = { r, c };
@@ -1105,6 +1128,28 @@ export function createSheetEditor(
       findBar.show();
     }
   });
+
+  const peerKey = (sheet: string, r: number, c: number): string => `${sheet}!${r},${c}`;
+
+  /**
+   * Mark a cell another person is on. An outline rather than a background, so it sits on
+   * top of the cell's own selection and validation colours instead of replacing them.
+   * Called as each cell is rendered, because the grid is virtualized: painting once would
+   * lose every marker the moment someone scrolled.
+   */
+  const paintPeers = (td: HTMLElement, sheet: string, r: number, c: number): void => {
+    const here = peerCells.get(peerKey(sheet, r, c));
+    if (!here?.length) {
+      td.classList.remove("sheetedit-peer");
+      td.style.removeProperty("--sheetedit-peer-colour");
+      td.removeAttribute("data-peers");
+      return;
+    }
+    td.classList.add("sheetedit-peer");
+    td.style.setProperty("--sheetedit-peer-colour", here[0].colour);
+    td.setAttribute("data-peers", here.map((p) => p.name).join(", "));
+    td.title = here.map((p) => p.name).join(", ");
+  };
 
   const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
 
@@ -3185,6 +3230,7 @@ export function createSheetEditor(
       input.type = "text";
       input.value = cellDisplay(cell);
       input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
+      paintPeers(td, sheet.name, r, c);
       // A locked cell on a protected sheet stays selectable and copyable (Excel's default) but
       // refuses typing. readOnly does that natively, keyboard navigation included.
       if (sheetProtected && !cell?.cellStyle?.unlocked) {
@@ -4363,6 +4409,16 @@ export function createSheetEditor(
     },
     sheetNames() {
       return wb.sheets.map((s2) => s2.name);
+    },
+    setPeerCells(peers: PeerCell[]) {
+      peerCells = new Map();
+      for (const peer of peers) {
+        const k = peerKey(peer.sheet, peer.r, peer.c);
+        const at = peerCells.get(k);
+        if (at) at.push(peer);
+        else peerCells.set(k, [peer]);
+      }
+      renderGrid();
     },
     cellInputs() {
       const out: CellInput[] = [];

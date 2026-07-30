@@ -10,6 +10,7 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-btn-hover: #e2e5ea;
 --sheetedit-btn-border: #d3d7de;
 --sheetedit-accent: #4f46e5;
+--sheetedit-peer-colour: #4c8dff;
 --sheetedit-accent-fg: #ffffff;
 --sheetedit-accent-soft: #dfe3ff;
 --sheetedit-scrim: rgba(0, 0, 0, .35);
@@ -881,4 +882,16 @@ color: var(--sheetedit-accent);
 text-decoration: underline;
 cursor: pointer;
 pointer-events: auto;
+}
+.sheetedit-table td.sheetedit-peer {
+position: relative;
+box-shadow: inset 0 0 0 2px var(--sheetedit-peer-colour);
+}
+.sheetedit-table td.sheetedit-peer::before {
+content: "";
+position: absolute; top: 0; right: 0;
+border: 4px solid transparent;
+border-top-color: var(--sheetedit-peer-colour);
+border-right-color: var(--sheetedit-peer-colour);
+pointer-events: none;
 }`;

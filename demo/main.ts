@@ -28,6 +28,9 @@ function loadBytes(bytes: Uint8Array, name: string): void {
       onCellsChanged: (changes) => {
         (win.seCellChanges as unknown[]).push(...changes);
       },
+      onSelectionChanged: (at) => {
+        win.seSelection = at;
+      },
     });
     win.seHandle = editor; // handy in the console, and how a host would drive it
     saveBtn.disabled = false;

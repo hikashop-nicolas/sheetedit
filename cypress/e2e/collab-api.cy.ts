@@ -16,6 +16,7 @@ type Handle = {
   applyRemoteCells(changes: CellInput[]): void;
   sheetNames(): string[];
   getCellValue(ref: string): string;
+  setPeerCells(peers: { id: string; colour: string; name: string; sheet: string; r: number; c: number }[]): void;
 };
 
 const win = (): Cypress.Chainable<Record<string, unknown>> =>
@@ -121,5 +122,74 @@ describe("the collaboration API", () => {
       h.applyRemoteCells([{ sheet: "NoSuchSheet", r: 1, c: 1, input: "boom" }]);
       expect(h.getCellValue("A1")).to.equal("item"); // untouched
     });
+  });
+});
+
+// Seeing where the other people are. Entirely visual, so this is the only place to test it.
+describe("peer presence", () => {
+  it("reports which cell this person moved to", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="C3"]').focus();
+    win().then((w) => {
+      expect(w.seSelection).to.deep.equal({ sheet: "Budget", r: 3, c: 3 });
+    });
+  });
+
+  it("marks the cell another person is on, in their colour", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
+    });
+
+    cy.get('input[aria-label="B2"]').parent().should("have.class", "sheetedit-peer");
+    cy.get('input[aria-label="B2"]').parent().should("have.attr", "data-peers", "Ada");
+    cy.get('input[aria-label="B2"]')
+      .parent()
+      .should("have.css", "box-shadow")
+      .and("contain", "rgb(255, 0, 0)");
+    cy.get('input[aria-label="B3"]').parent().should("not.have.class", "sheetedit-peer");
+  });
+
+  it("moves the marker when they move, and clears it when they leave", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
+      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: "Budget", r: 4, c: 2 }]);
+    });
+    cy.get('input[aria-label="B2"]').parent().should("not.have.class", "sheetedit-peer");
+    cy.get('input[aria-label="B4"]').parent().should("have.class", "sheetedit-peer");
+
+    handle().then((h) => h.setPeerCells([]));
+    cy.get('input[aria-label="B4"]').parent().should("not.have.class", "sheetedit-peer");
+  });
+
+  it("names everyone sitting on the same cell", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 2, c: 2 },
+      ]);
+    });
+    cy.get('input[aria-label="B2"]').parent().should("have.attr", "data-peers", "Ada, Grace");
+  });
+
+  // The grid is virtualized, so a marker applied once would vanish on the next render.
+  it("keeps the marker when a remote edit re-renders the grid", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
+      h.applyRemoteCells([{ sheet: "Budget", r: 3, c: 2, input: "77" }]);
+    });
+    cy.get('input[aria-label="B3"]').should("have.value", "77");
+    cy.get('input[aria-label="B2"]').parent().should("have.class", "sheetedit-peer");
+  });
+
+  it("does not mark a cell on a sheet nobody is looking at", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "NoSuchSheet", r: 2, c: 2 }]);
+    });
+    cy.get('input[aria-label="B2"]').parent().should("not.have.class", "sheetedit-peer");
   });
 });
