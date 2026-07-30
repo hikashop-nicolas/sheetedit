@@ -117,6 +117,9 @@ export interface SheetEditor {
    */
   applyRemoteCells(changes: CellInput[]): void;
   sheetNames(): string[];
+  /** The cell this person is on. A session publishes it on binding, so a peer is visible
+   *  straight away instead of only once they next move. */
+  selectedCell(): { sheet: string; r: number; c: number } | null;
   /** Show where the other people in a session are. Replaces the whole set each call. */
   setPeerCells(peers: PeerCell[]): void;
   destroy(): void;
@@ -178,6 +181,7 @@ export function createSheetEditor(
       cellInputs: () => [],
       applyRemoteCells: () => undefined,
       sheetNames: () => [],
+      selectedCell: () => null,
       setPeerCells: () => undefined,
       destroy() {
         errWrap.remove();
@@ -4409,6 +4413,11 @@ export function createSheetEditor(
     },
     sheetNames() {
       return wb.sheets.map((s2) => s2.name);
+    },
+    selectedCell() {
+      const sheet = wb.sheets[active];
+      if (!sheet || !sel) return null;
+      return { sheet: sheet.name, r: sel.r1, c: sel.c1 };
     },
     setPeerCells(peers: PeerCell[]) {
       peerCells = new Map();
