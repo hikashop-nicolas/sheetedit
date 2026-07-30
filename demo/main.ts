@@ -16,12 +16,20 @@ function loadBytes(bytes: Uint8Array, name: string): void {
   editor?.destroy();
   editorEl.innerHTML = "";
   try {
+    const win = window as unknown as Record<string, unknown>;
+    win.seChangeCount = 0; // lets a host (and the e2e suite) see that onChange really fired
+    win.seCellChanges = [];
     editor = createSheetEditor(editorEl, bytes, {
       onChange: () => {
+        win.seChangeCount = (win.seChangeCount as number) + 1;
         saveBtn.disabled = false;
         statusEl.textContent = "edited";
       },
+      onCellsChanged: (changes) => {
+        (win.seCellChanges as unknown[]).push(...changes);
+      },
     });
+    win.seHandle = editor; // handy in the console, and how a host would drive it
     saveBtn.disabled = false;
     statusEl.textContent = "loaded";
   } catch (e) {

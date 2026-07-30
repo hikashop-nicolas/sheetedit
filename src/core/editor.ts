@@ -55,8 +55,24 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // Editor
 // ---------------------------------------------------------------------------
 
+/** One cell's editable input: what the formula bar would show, on a named sheet. */
+export interface CellInput {
+  sheet: string;
+  /** 1-based, as the model counts them. */
+  r: number;
+  c: number;
+  /** "=A1+1" for a formula, else the literal. Empty string means the cell was cleared. */
+  input: string;
+}
+
 export interface SheetEditorOptions {
   onChange?: () => void;
+  /**
+   * Which cells just changed, and to what. onChange says only that something happened,
+   * which is no use to a collaboration binding: it would have to re-read the whole sheet
+   * on every keystroke to find out what to send.
+   */
+  onCellsChanged?: (changes: CellInput[]) => void;
   /** Route plain-text input explicitly (the host knows the .csv/.tsv extension). */
   formatHint?: "csv" | "tsv";
   /** The document's file name; used to name a converted workbook. */
@@ -75,6 +91,18 @@ export interface SheetEditor {
   getCellValue(ref: string): string;
   /** Set a cell's value by A1 reference on the active sheet (recalculates and marks dirty). */
   setCellValue(ref: string, value: string): void;
+  /** Every non-empty cell's input, across all sheets. Used to seed a shared session. */
+  cellInputs(): CellInput[];
+  /**
+   * Apply cell inputs from somewhere other than this editor: a collaboration peer.
+   *
+   * Recalculates and re-renders, and deliberately does not fire onChange or onCellsChanged
+   * (which would echo the edit back to its sender) or push an undo step (which would put
+   * someone else's typing into your undo stack). Cells on sheets this workbook does not
+   * have are ignored rather than guessed at.
+   */
+  applyRemoteCells(changes: CellInput[]): void;
+  sheetNames(): string[];
   destroy(): void;
 }
 
@@ -131,6 +159,9 @@ export function createSheetEditor(
       markClean: () => undefined,
       getCellValue: () => "",
       setCellValue: () => undefined,
+      cellInputs: () => [],
+      applyRemoteCells: () => undefined,
+      sheetNames: () => [],
       destroy() {
         errWrap.remove();
       },
@@ -1092,6 +1123,13 @@ export function createSheetEditor(
 
   // --- undo / redo ------------------------------------------------------------
   const history = new UndoHistory();
+  /** A cell's editable input, which is what the formula bar shows and setCellInput takes. */
+  const inputOf = (sheet: Sheet, r: number, c: number): string => {
+    const cell = getCell(sheet, r, c);
+    if (!cell) return "";
+    return cell.formula != null ? `=${cell.formula}` : cell.value;
+  };
+
   const recordCells = (
     positions: { r: number; c: number }[],
     mutate: () => void,
@@ -1103,6 +1141,9 @@ export function createSheetEditor(
     for (const ch of changes) ch.after = snapFields(getCell(sheet, ch.r, ch.c));
     if (wb.kind === "xlsx" && wb.pivotCaches) flagXlsxPivotRefresh(wb, sheet.name, positions);
     history.push({ sheet: active, cells: changes, ...extra });
+    options.onCellsChanged?.(
+      positions.map((pos) => ({ sheet: sheet.name, r: pos.r, c: pos.c, input: inputOf(sheet, pos.r, pos.c) })),
+    );
   };
   const applyStep = (step: { sheet: number; cells: UndoCellChange[]; undoExtra?: () => void; redoExtra?: () => void }, dir: "undo" | "redo") => {
     if (step.sheet !== active) {
@@ -4319,6 +4360,33 @@ export function createSheetEditor(
     setCellValue(ref: string, value: string) {
       const p = parseA1Ref(ref);
       if (p) commitValue(p.row, p.col, String(value));
+    },
+    sheetNames() {
+      return wb.sheets.map((s2) => s2.name);
+    },
+    cellInputs() {
+      const out: CellInput[] = [];
+      for (const sheet of wb.sheets) {
+        for (const cell of sheet.cells.values()) {
+          const input = cell.formula != null ? `=${cell.formula}` : cell.value;
+          if (input !== "") out.push({ sheet: sheet.name, r: cell.row, c: cell.col, input });
+        }
+      }
+      return out;
+    },
+    applyRemoteCells(changes: CellInput[]) {
+      if (!changes.length) return;
+      // Writes the model directly rather than through the local commit path, which is what
+      // keeps it silent: recordCells (undo, onCellsChanged) and mark (onChange) are simply
+      // never entered. The full re-render below is what picks up wrap heights, validation
+      // marks and conditional formats that the commit path would otherwise have handled.
+      for (const ch of changes) {
+        const sheet = wb.sheets.find((s2) => s2.name === ch.sheet);
+        if (sheet) setCellInput(sheet, ch.r, ch.c, ch.input);
+      }
+      recalc(wb);
+      dirty = true; // the document really did change, even though it was not this person
+      renderGrid();
     },
     getText() {
       // No recalc needed: the model is recalculated after every edit, and CSV
