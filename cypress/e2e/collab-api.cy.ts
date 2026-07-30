@@ -142,7 +142,8 @@ describe("peer presence", () => {
     });
 
     cy.get('input[aria-label="B2"]').parent().should("have.class", "sheetedit-peer");
-    cy.get('input[aria-label="B2"]').parent().should("have.attr", "data-peers", "Ada");
+    cy.get('input[aria-label="B2"]').parent().find(".sheetedit-peerflag")
+      .should("have.length", 1).and("have.text", "Ada");
     cy.get('input[aria-label="B2"]')
       .parent()
       .should("have.css", "box-shadow")
@@ -163,7 +164,10 @@ describe("peer presence", () => {
     cy.get('input[aria-label="B4"]').parent().should("not.have.class", "sheetedit-peer");
   });
 
-  it("names everyone sitting on the same cell", () => {
+  // Several people on one cell: the cell has one outline, so it can only carry one colour.
+  // Each name gets its own badge in that person's colour, or two peers on the same cell
+  // would be indistinguishable.
+  it("gives everyone on the same cell their own badge, in their own colour", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
       h.setPeerCells([
@@ -171,7 +175,34 @@ describe("peer presence", () => {
         { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 2, c: 2 },
       ]);
     });
-    cy.get('input[aria-label="B2"]').parent().should("have.attr", "data-peers", "Ada, Grace");
+
+    const cell = () => cy.get('input[aria-label="B2"]').parent();
+    cell().find(".sheetedit-peerflag").should("have.length", 2);
+    cell().find(".sheetedit-peerflag").eq(0).should("have.text", "Ada");
+    cell().find(".sheetedit-peerflag").eq(1).should("have.text", "Grace");
+    cell().find(".sheetedit-peerflag").eq(0)
+      .should("have.css", "background-color", "rgb(255, 0, 0)");
+    cell().find(".sheetedit-peerflag").eq(1)
+      .should("have.css", "background-color", "rgb(0, 0, 255)");
+    cell().should("have.class", "sheetedit-peer"); // still one outline
+  });
+
+  it("removes a badge when only one of two peers moves away", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.setPeerCells([
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 2, c: 2 },
+      ]);
+      h.setPeerCells([
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 3, c: 2 },
+      ]);
+    });
+    cy.get('input[aria-label="B2"]').parent().find(".sheetedit-peerflag")
+      .should("have.length", 1).and("have.text", "Ada");
+    cy.get('input[aria-label="B3"]').parent().find(".sheetedit-peerflag")
+      .should("have.length", 1).and("have.text", "Grace");
   });
 
   // The grid is virtualized, so a marker applied once would vanish on the next render.

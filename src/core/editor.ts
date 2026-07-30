@@ -1143,16 +1143,32 @@ export function createSheetEditor(
    */
   const paintPeers = (td: HTMLElement, sheet: string, r: number, c: number): void => {
     const here = peerCells.get(peerKey(sheet, r, c));
+    td.querySelector(".sheetedit-peerflags")?.remove();
     if (!here?.length) {
       td.classList.remove("sheetedit-peer");
       td.style.removeProperty("--sheetedit-peer-colour");
       td.removeAttribute("data-peers");
+      td.removeAttribute("title");
       return;
     }
     td.classList.add("sheetedit-peer");
+    // A cell has one outline, so it can only carry one colour; with several people on the
+    // same cell the outline says "someone is here" and each name badge says who, in that
+    // person's own colour.
     td.style.setProperty("--sheetedit-peer-colour", here[0].colour);
     td.setAttribute("data-peers", here.map((p) => p.name).join(", "));
     td.title = here.map((p) => p.name).join(", ");
+
+    const flags = document.createElement("span");
+    flags.className = "sheetedit-peerflags";
+    for (const peer of here) {
+      const flag = document.createElement("i");
+      flag.className = "sheetedit-peerflag";
+      flag.textContent = peer.name;
+      flag.style.background = peer.colour;
+      flags.appendChild(flag);
+    }
+    td.appendChild(flags);
   };
 
   const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
