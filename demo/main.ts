@@ -38,6 +38,10 @@ function loadBytes(bytes: Uint8Array, name: string): void {
       },
     });
     win.seHandle = editor; // handy in the console, and how a host would drive it
+    // Lets a test build a second editor on the page and wire the two together, which is
+    // how a collaboration host uses this library. Doing that in the browser is the only
+    // way to check the pair without a network in the way.
+    win.createSheetEditor = createSheetEditor;
     saveBtn.disabled = false;
     statusEl.textContent = "loaded";
   } catch (e) {
