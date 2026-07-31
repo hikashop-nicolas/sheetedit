@@ -88,7 +88,14 @@ export interface SheetEditorOptions {
    * shifts every address below it on one side only, and the two documents diverge with
    * nobody told. The host owns both the policy and the explanation.
    */
-  allowStructuralEdit?: (op: { kind: "insert" | "delete"; axis: "row" | "col" }) => boolean;
+  allowStructuralEdit?: (op: {
+    kind: "insert" | "delete";
+    axis: "row" | "col";
+    /** 1-based index of the first line affected, and how many. A session needs both to
+     *  describe the operation to the other peers. */
+    at: number;
+    count: number;
+  }) => boolean;
   /**
    * Which cells just changed, and to what. onChange says only that something happened,
    * which is no use to a collaboration binding: it would have to re-read the whole sheet
@@ -1370,7 +1377,7 @@ export function createSheetEditor(
       ? (op.kind === "insert" ? "insertRows" : "deleteRows")
       : (op.kind === "insert" ? "insertColumns" : "deleteColumns");
     if (!allowAction(flag)) return;
-    if (options.allowStructuralEdit?.({ kind: op.kind, axis: op.axis }) === false) return;
+    if (options.allowStructuralEdit?.({ kind: op.kind, axis: op.axis, at: op.at, count: op.count }) === false) return;
     const snap = captureLineSnap(op);
     applyLineOp(wb, si, op);
     history.clear();
