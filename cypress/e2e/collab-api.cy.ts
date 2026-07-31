@@ -247,6 +247,9 @@ describe("structural edits", () => {
       expect(asked.length, "the host is asked").to.be.greaterThan(0);
       expect(asked[0].axis).to.equal("row");
       expect(asked[0].kind).to.equal("insert");
+      // The sheet comes from the editor: a row-header insert has no selected cell, so a
+      // host inferring it from the selection would refuse the operation silently.
+      expect((asked[0] as unknown as { sheet: string }).sheet).to.equal("Budget");
     });
   });
 

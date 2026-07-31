@@ -91,6 +91,9 @@ export interface SheetEditorOptions {
   allowStructuralEdit?: (op: {
     kind: "insert" | "delete";
     axis: "row" | "col";
+    /** The sheet it applies to. A row-header insert needs no selected cell, so a host that
+     *  inferred the sheet from the selection would refuse one silently. */
+    sheet: string;
     /** 1-based index of the first line affected, and how many. A session needs both to
      *  describe the operation to the other peers. */
     at: number;
@@ -1372,12 +1375,22 @@ export function createSheetEditor(
   };
   const lineOp = (op: LineOp) => {
     const si = active;
+    const sheet = wb.sheets[si]!;
     // Each of the four insert/delete actions has its own protection flag.
     const flag: SheetLock = op.axis === "row"
       ? (op.kind === "insert" ? "insertRows" : "deleteRows")
       : (op.kind === "insert" ? "insertColumns" : "deleteColumns");
     if (!allowAction(flag)) return;
-    if (options.allowStructuralEdit?.({ kind: op.kind, axis: op.axis, at: op.at, count: op.count }) === false) return;
+    if (
+      options.allowStructuralEdit?.({
+        kind: op.kind,
+        axis: op.axis,
+        sheet: sheet.name,
+        at: op.at,
+        count: op.count,
+      }) === false
+    )
+      return;
     const snap = captureLineSnap(op);
     applyLineOp(wb, si, op);
     history.clear();
