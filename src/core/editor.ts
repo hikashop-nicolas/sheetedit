@@ -130,6 +130,15 @@ export interface SheetEditor {
   selectedCell(): { sheet: string; r: number; c: number } | null;
   /** Show where the other people in a session are. Replaces the whole set each call. */
   setPeerCells(peers: PeerCell[]): void;
+  /**
+   * Apply a row/column insert or delete decided elsewhere: a shared session where one peer
+   * puts these in order for everyone.
+   *
+   * Skips allowStructuralEdit (the host already decided), fires nothing (it is not this
+   * person's edit), and clears the undo history, because a stack of snapshots taken before
+   * the addresses moved would restore the document to a shape nobody else has.
+   */
+  applyRemoteStructural(op: { kind: "insert" | "delete"; axis: "row" | "col"; sheet: string; at: number; count: number }): void;
   destroy(): void;
 }
 
@@ -191,6 +200,7 @@ export function createSheetEditor(
       sheetNames: () => [],
       selectedCell: () => null,
       setPeerCells: () => undefined,
+      applyRemoteStructural: () => undefined,
       destroy() {
         errWrap.remove();
       },
@@ -4443,6 +4453,18 @@ export function createSheetEditor(
       const sheet = wb.sheets[active];
       if (!sheet || !sel) return null;
       return { sheet: sheet.name, r: sel.r1, c: sel.c1 };
+    },
+    applyRemoteStructural(op) {
+      const si = wb.sheets.findIndex((s2) => s2.name === op.sheet);
+      if (si < 0) return; // a sheet this workbook does not have
+      applyLineOp(wb, si, { axis: op.axis, kind: op.kind, at: op.at, count: op.count });
+      history.clear(); // see the doc comment: those snapshots describe addresses that moved
+      sel = null;
+      anchor = null;
+      activeCell = null;
+      recalc(wb);
+      dirty = true;
+      renderGrid();
     },
     setPeerCells(peers: PeerCell[]) {
       peerCells = new Map();

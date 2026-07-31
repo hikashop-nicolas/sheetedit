@@ -17,6 +17,7 @@ type Handle = {
   sheetNames(): string[];
   getCellValue(ref: string): string;
   setPeerCells(peers: { id: string; colour: string; name: string; sheet: string; r: number; c: number }[]): void;
+  applyRemoteStructural(op: { kind: "insert" | "delete"; axis: "row" | "col"; sheet: string; at: number; count: number }): void;
 };
 
 const win = (): Cypress.Chainable<Record<string, unknown>> =>
@@ -257,6 +258,50 @@ describe("structural edits", () => {
     insertRowViaMenu();
 
     // A2 still holds what it held: nothing shifted down.
+    cy.get('input[aria-label="A2"]').should("have.value", "apples");
+  });
+});
+
+// A structural edit decided elsewhere. In a shared session one peer puts these in order for
+// everyone, and the others apply the result rather than deciding for themselves.
+describe("a structural edit from elsewhere", () => {
+  it("inserts a row and moves the cells below it down", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A2"]').should("have.value", "apples");
+
+    handle().then((h) => {
+      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: "Budget", at: 2, count: 1 });
+    });
+
+    cy.get('input[aria-label="A2"]').should("have.value", ""); // the new blank row
+    cy.get('input[aria-label="A3"]').should("have.value", "apples"); // pushed down
+  });
+
+  it("deletes a row and pulls the ones below it up", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.applyRemoteStructural({ kind: "delete", axis: "row", sheet: "Budget", at: 2, count: 1 });
+    });
+    cy.get('input[aria-label="A2"]').should("not.have.value", "apples");
+  });
+
+  it("does not ask permission: the decision was already made", () => {
+    open("cypress/fixtures/sample.xlsx");
+    win().then((w) => {
+      w.seStructural = [];
+      w.seBlockStructural = true; // this peer refuses its OWN structural edits
+      const h = (w as unknown as { seHandle: Handle }).seHandle;
+      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: "Budget", at: 2, count: 1 });
+      expect(w.seStructural, "the veto is for local edits only").to.deep.equal([]);
+    });
+    cy.get('input[aria-label="A3"]').should("have.value", "apples"); // it still applied
+  });
+
+  it("ignores an operation for a sheet this workbook does not have", () => {
+    open("cypress/fixtures/sample.xlsx");
+    handle().then((h) => {
+      h.applyRemoteStructural({ kind: "delete", axis: "row", sheet: "NoSuchSheet", at: 1, count: 5 });
+    });
     cy.get('input[aria-label="A2"]').should("have.value", "apples");
   });
 });
