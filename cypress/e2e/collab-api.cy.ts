@@ -224,3 +224,39 @@ describe("peer presence", () => {
     cy.get('input[aria-label="B2"]').parent().should("not.have.class", "sheetedit-peer");
   });
 });
+
+// Structural edits during a session. Cells are addressed by row and column, so inserting a
+// row shifts every address below it on one side only: the two documents would diverge with
+// nobody told, which is the failure mode worth spending code to prevent.
+describe("structural edits", () => {
+  function insertRowViaMenu() {
+    cy.get("th.rownum").contains("2").rightclick();
+    cy.get(".sheetedit-pop button").first().click(); // "insert row above"
+  }
+
+  it("asks the host before inserting a row", () => {
+    open("cypress/fixtures/sample.xlsx");
+    win().then((w) => {
+      w.seStructural = [];
+      w.seBlockStructural = false;
+    });
+    insertRowViaMenu();
+    win().then((w) => {
+      const asked = w.seStructural as { kind: string; axis: string }[];
+      expect(asked.length, "the host is asked").to.be.greaterThan(0);
+      expect(asked[0].axis).to.equal("row");
+      expect(asked[0].kind).to.equal("insert");
+    });
+  });
+
+  it("does not insert when the host refuses", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A2"]').should("have.value", "apples");
+    win().then((w) => (w.seBlockStructural = true));
+
+    insertRowViaMenu();
+
+    // A2 still holds what it held: nothing shifted down.
+    cy.get('input[aria-label="A2"]').should("have.value", "apples");
+  });
+});

@@ -19,6 +19,7 @@ function loadBytes(bytes: Uint8Array, name: string): void {
     const win = window as unknown as Record<string, unknown>;
     win.seChangeCount = 0; // lets a host (and the e2e suite) see that onChange really fired
     win.seCellChanges = [];
+    win.seStructural = [];
     editor = createSheetEditor(editorEl, bytes, {
       onChange: () => {
         win.seChangeCount = (win.seChangeCount as number) + 1;
@@ -30,6 +31,10 @@ function loadBytes(bytes: Uint8Array, name: string): void {
       },
       onSelectionChanged: (at) => {
         win.seSelection = at;
+      },
+      allowStructuralEdit: (op) => {
+        (win.seStructural as unknown[]).push(op);
+        return win.seBlockStructural !== true;
       },
     });
     win.seHandle = editor; // handy in the console, and how a host would drive it

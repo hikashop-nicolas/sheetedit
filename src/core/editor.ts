@@ -82,6 +82,14 @@ export interface SheetEditorOptions {
   /** The cell this person moved to, for a shared session to publish. */
   onSelectionChanged?: (at: { sheet: string; r: number; c: number }) => void;
   /**
+   * Asked before a row or column is inserted or deleted. Returning false cancels it.
+   *
+   * A shared session needs this: cells are addressed by row and column, so inserting a row
+   * shifts every address below it on one side only, and the two documents diverge with
+   * nobody told. The host owns both the policy and the explanation.
+   */
+  allowStructuralEdit?: (op: { kind: "insert" | "delete"; axis: "row" | "col" }) => boolean;
+  /**
    * Which cells just changed, and to what. onChange says only that something happened,
    * which is no use to a collaboration binding: it would have to re-read the whole sheet
    * on every keystroke to find out what to send.
@@ -1352,6 +1360,7 @@ export function createSheetEditor(
       ? (op.kind === "insert" ? "insertRows" : "deleteRows")
       : (op.kind === "insert" ? "insertColumns" : "deleteColumns");
     if (!allowAction(flag)) return;
+    if (options.allowStructuralEdit?.({ kind: op.kind, axis: op.axis }) === false) return;
     const snap = captureLineSnap(op);
     applyLineOp(wb, si, op);
     history.clear();
