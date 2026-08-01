@@ -10,6 +10,15 @@
 
 const TIMEOUT = 15000;
 
+/**
+ * The first sheet of the fixture, by id.
+ *
+ * Sheets are addressed by a collaboration id rather than by name, so that renaming one
+ * does not move every cell edit keyed to it. The ids of sheets already in the file come
+ * from their position, which is the same on every peer because every peer read the file.
+ */
+const BUDGET = "s0";
+
 type CellInput = { sheet: string; r: number; c: number; input: string };
 type Handle = {
   cellInputs(): CellInput[];
@@ -64,14 +73,14 @@ describe("the collaboration API", () => {
       expect(changes.length, "a local edit is announced").to.be.greaterThan(0);
       const b2 = changes.find((c) => c.r === 2 && c.c === 2);
       expect(b2?.input).to.equal("5");
-      expect(b2?.sheet).to.equal("Budget");
+      expect(b2?.sheet).to.equal(BUDGET);
     });
   });
 
   it("applies a remote edit, and recalculates from it", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.applyRemoteCells([{ sheet: "Budget", r: 2, c: 2, input: "10" }]);
+      h.applyRemoteCells([{ sheet: BUDGET, r: 2, c: 2, input: "10" }]);
     });
     cy.get('input[aria-label="B2"]').should("have.value", "10");
     cy.get('input[aria-label="C2"]').should("have.value", "20"); // B2*2, recalculated locally
@@ -80,7 +89,7 @@ describe("the collaboration API", () => {
   it("applies a remote formula, not only a literal", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.applyRemoteCells([{ sheet: "Budget", r: 2, c: 5, input: "=B2*10" }]);
+      h.applyRemoteCells([{ sheet: BUDGET, r: 2, c: 5, input: "=B2*10" }]);
     });
     cy.get('input[aria-label="E2"]').should("have.value", "30"); // B2 is 3 in the fixture
   });
@@ -93,7 +102,7 @@ describe("the collaboration API", () => {
       w.seChangeCount = 0;
       w.seCellChanges = [];
       const h = (w as unknown as { seHandle: Handle }).seHandle;
-      h.applyRemoteCells([{ sheet: "Budget", r: 2, c: 2, input: "42" }]);
+      h.applyRemoteCells([{ sheet: BUDGET, r: 2, c: 2, input: "42" }]);
       expect(w.seChangeCount, "onChange must not fire for a remote edit").to.equal(0);
       expect((w.seCellChanges as CellInput[]).length, "nor onCellsChanged").to.equal(0);
     });
@@ -106,7 +115,7 @@ describe("the collaboration API", () => {
     cy.get('input[aria-label="B2"]').clear().type("7").blur();
     cy.get('input[aria-label="B2"]').should("have.value", "7");
 
-    handle().then((h) => h.applyRemoteCells([{ sheet: "Budget", r: 3, c: 2, input: "99" }]));
+    handle().then((h) => h.applyRemoteCells([{ sheet: BUDGET, r: 3, c: 2, input: "99" }]));
     cy.get('input[aria-label="B3"]').should("have.value", "99");
 
     // Undo is bound on the cell input, not the document, so it has to be typed there.
@@ -132,14 +141,14 @@ describe("peer presence", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C3"]').focus();
     win().then((w) => {
-      expect(w.seSelection).to.deep.equal({ sheet: "Budget", r: 3, c: 3 });
+      expect(w.seSelection).to.deep.equal({ sheet: BUDGET, r: 3, c: 3 });
     });
   });
 
   it("marks the cell another person is on, in their colour", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
+      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 }]);
     });
 
     cy.get('input[aria-label="B2"]').parent().should("have.class", "sheetedit-peer");
@@ -155,8 +164,8 @@ describe("peer presence", () => {
   it("moves the marker when they move, and clears it when they leave", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
-      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: "Budget", r: 4, c: 2 }]);
+      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 }]);
+      h.setPeerCells([{ id: "p1", colour: "rgb(0, 128, 0)", name: "Ada", sheet: BUDGET, r: 4, c: 2 }]);
     });
     cy.get('input[aria-label="B2"]').parent().should("not.have.class", "sheetedit-peer");
     cy.get('input[aria-label="B4"]').parent().should("have.class", "sheetedit-peer");
@@ -172,8 +181,8 @@ describe("peer presence", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
       h.setPeerCells([
-        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
-        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 2, c: 2 },
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: BUDGET, r: 2, c: 2 },
       ]);
     });
 
@@ -192,12 +201,12 @@ describe("peer presence", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
       h.setPeerCells([
-        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
-        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 2, c: 2 },
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: BUDGET, r: 2, c: 2 },
       ]);
       h.setPeerCells([
-        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 },
-        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: "Budget", r: 3, c: 2 },
+        { id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 },
+        { id: "p2", colour: "rgb(0, 0, 255)", name: "Grace", sheet: BUDGET, r: 3, c: 2 },
       ]);
     });
     cy.get('input[aria-label="B2"]').parent().find(".sheetedit-peerflag")
@@ -210,8 +219,8 @@ describe("peer presence", () => {
   it("keeps the marker when a remote edit re-renders the grid", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: "Budget", r: 2, c: 2 }]);
-      h.applyRemoteCells([{ sheet: "Budget", r: 3, c: 2, input: "77" }]);
+      h.setPeerCells([{ id: "p1", colour: "rgb(255, 0, 0)", name: "Ada", sheet: BUDGET, r: 2, c: 2 }]);
+      h.applyRemoteCells([{ sheet: BUDGET, r: 3, c: 2, input: "77" }]);
     });
     cy.get('input[aria-label="B3"]').should("have.value", "77");
     cy.get('input[aria-label="B2"]').parent().should("have.class", "sheetedit-peer");
@@ -249,7 +258,7 @@ describe("structural edits", () => {
       expect(asked[0].kind).to.equal("insert");
       // The sheet comes from the editor: a row-header insert has no selected cell, so a
       // host inferring it from the selection would refuse the operation silently.
-      expect((asked[0] as unknown as { sheet: string }).sheet).to.equal("Budget");
+      expect((asked[0] as unknown as { sheet: string }).sheet).to.equal(BUDGET);
     });
   });
 
@@ -273,7 +282,7 @@ describe("a structural edit from elsewhere", () => {
     cy.get('input[aria-label="A2"]').should("have.value", "apples");
 
     handle().then((h) => {
-      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: "Budget", at: 2, count: 1 });
+      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: BUDGET, at: 2, count: 1 });
     });
 
     cy.get('input[aria-label="A2"]').should("have.value", ""); // the new blank row
@@ -283,7 +292,7 @@ describe("a structural edit from elsewhere", () => {
   it("deletes a row and pulls the ones below it up", () => {
     open("cypress/fixtures/sample.xlsx");
     handle().then((h) => {
-      h.applyRemoteStructural({ kind: "delete", axis: "row", sheet: "Budget", at: 2, count: 1 });
+      h.applyRemoteStructural({ kind: "delete", axis: "row", sheet: BUDGET, at: 2, count: 1 });
     });
     cy.get('input[aria-label="A2"]').should("not.have.value", "apples");
   });
@@ -294,7 +303,7 @@ describe("a structural edit from elsewhere", () => {
       w.seStructural = [];
       w.seBlockStructural = true; // this peer refuses its OWN structural edits
       const h = (w as unknown as { seHandle: Handle }).seHandle;
-      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: "Budget", at: 2, count: 1 });
+      h.applyRemoteStructural({ kind: "insert", axis: "row", sheet: BUDGET, at: 2, count: 1 });
       expect(w.seStructural, "the veto is for local edits only").to.deep.equal([]);
     });
     cy.get('input[aria-label="A3"]').should("have.value", "apples"); // it still applied

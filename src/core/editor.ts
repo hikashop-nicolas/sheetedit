@@ -49,6 +49,7 @@ import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
+import { assignSheetIds, sheetById } from "./sheet-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -56,7 +57,15 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // ---------------------------------------------------------------------------
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
+/** A sheet as a session names it: by id, so a rename does not move anything. */
+export interface SheetInfo {
+  id: string;
+  name: string;
+  visibility?: "hidden" | "veryHidden";
+}
+
 export interface CellInput {
+  /** The sheet's collaboration id, not its name: an id survives a rename. */
   sheet: string;
   /** 1-based, as the model counts them. */
   r: number;
@@ -135,6 +144,20 @@ export interface SheetEditor {
    */
   applyRemoteCells(changes: CellInput[]): void;
   sheetNames(): string[];
+  /** The sheets, in order, as a session names them. */
+  sheets(): SheetInfo[];
+  /**
+   * Be told when the sheets change: added, renamed, removed, reordered, hidden.
+   *
+   * A subscription like the rest of the collaboration surface, so an unshared workbook
+   * pays nothing for it.
+   */
+  setSheetsReporter(handler: ((sheets: SheetInfo[]) => void) | null): void;
+  /**
+   * Make the sheets match a peer's. Adds, removes, renames, reorders and re-hides as
+   * needed, and reports nothing back.
+   */
+  applyRemoteSheets(sheets: SheetInfo[]): void;
   /** The cell this person is on. A session publishes it on binding, so a peer is visible
    *  straight away instead of only once they next move. */
   selectedCell(): { sheet: string; r: number; c: number } | null;
@@ -186,6 +209,8 @@ export function createSheetEditor(
   let wb: Workbook;
   try {
     wb = readWorkbook(bytes, { formatHint: options.formatHint }, preunzipped);
+    // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
+    assignSheetIds(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -207,6 +232,9 @@ export function createSheetEditor(
       setCellValue: () => undefined,
       cellInputs: () => [],
       applyRemoteCells: () => undefined,
+      sheets: () => [],
+      setSheetsReporter: () => undefined,
+      applyRemoteSheets: () => undefined,
       sheetNames: () => [],
       selectedCell: () => null,
       setPeerCells: () => undefined,
@@ -508,7 +536,7 @@ export function createSheetEditor(
     // The one funnel both a click and keyboard navigation pass through, which is why the
     // announcement lives here rather than in focusCell (only the keyboard reaches that).
     const namedSheet = wb.sheets[active];
-    if (namedSheet) options.onSelectionChanged?.({ sheet: namedSheet.name, r, c });
+    if (namedSheet) options.onSelectionChanged?.({ sheet: namedSheet.cid ?? namedSheet.name, r, c });
     if (extend && anchor) setSel(anchor.r, anchor.c, r, c);
     else {
       anchor = { r, c };
@@ -1127,6 +1155,30 @@ export function createSheetEditor(
       dirty = true;
     }
     options.onChange?.();
+    reportSheets();
+  };
+
+  // --- sheets, for a collaboration session -----------------------------------------
+  //
+  // Reported from mark() rather than from each of add/rename/delete/move/hide, so an
+  // operation added later is covered without anyone remembering to wire it up. The
+  // signature check is what makes that cheap: mark() runs on every edit, and almost none
+  // of them touch the sheet list.
+  let sheetsReporter: ((sheets: SheetInfo[]) => void) | null = null;
+  let lastSheetsSig: string | null = null;
+  let applyingRemoteSheets = false;
+
+  const sheetInfos = (): SheetInfo[] =>
+    wb.sheets.map((sh) => ({ id: sh.cid ?? sh.name, name: sh.name, visibility: sh.visibility }));
+
+  const reportSheets = (): void => {
+    if (!sheetsReporter) return;
+    const infos = sheetInfos();
+    const sig = JSON.stringify(infos);
+    if (sig === lastSheetsSig) return;
+    lastSheetsSig = sig;
+    if (applyingRemoteSheets) return; // a peer's change is not ours to announce back
+    sheetsReporter(infos);
   };
 
   // Find and replace: finds across every sheet, replaces on the active one.
@@ -1235,7 +1287,7 @@ export function createSheetEditor(
     if (wb.kind === "xlsx" && wb.pivotCaches) flagXlsxPivotRefresh(wb, sheet.name, positions);
     history.push({ sheet: active, cells: changes, ...extra });
     options.onCellsChanged?.(
-      positions.map((pos) => ({ sheet: sheet.name, r: pos.r, c: pos.c, input: inputOf(sheet, pos.r, pos.c) })),
+      positions.map((pos) => ({ sheet: sheet.cid ?? sheet.name, r: pos.r, c: pos.c, input: inputOf(sheet, pos.r, pos.c) })),
     );
   };
   const applyStep = (step: { sheet: number; cells: UndoCellChange[]; undoExtra?: () => void; redoExtra?: () => void }, dir: "undo" | "redo") => {
@@ -1385,7 +1437,7 @@ export function createSheetEditor(
       options.allowStructuralEdit?.({
         kind: op.kind,
         axis: op.axis,
-        sheet: sheet.name,
+        sheet: sheet.cid ?? sheet.name,
         at: op.at,
         count: op.count,
       }) === false
@@ -3289,7 +3341,7 @@ export function createSheetEditor(
       input.type = "text";
       input.value = cellDisplay(cell);
       input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
-      paintPeers(td, sheet.name, r, c);
+      paintPeers(td, sheet.cid ?? sheet.name, r, c);
       // A locked cell on a protected sheet stays selectable and copyable (Excel's default) but
       // refuses typing. readOnly does that natively, keyboard navigation included.
       if (sheetProtected && !cell?.cellStyle?.unlocked) {
@@ -4466,16 +4518,79 @@ export function createSheetEditor(
       const p = parseA1Ref(ref);
       if (p) commitValue(p.row, p.col, String(value));
     },
+    sheets() {
+      return sheetInfos();
+    },
+    setSheetsReporter(handler) {
+      sheetsReporter = handler;
+      // The baseline is what the workbook looks like now: subscribing is not a change,
+      // and the first report after it must describe one.
+      lastSheetsSig = handler ? JSON.stringify(sheetInfos()) : null;
+    },
+    applyRemoteSheets(next) {
+      applyingRemoteSheets = true;
+      try {
+        const wanted = new Map(next.map((sh) => [sh.id, sh]));
+
+        // Gone on their side. Never the last one: a workbook with no sheets is not a
+        // thing, and the file writers assume at least one.
+        for (const sheet of [...wb.sheets]) {
+          const id = sheet.cid ?? sheet.name;
+          if (wanted.has(id) || wb.sheets.length <= 1) continue;
+          const i = wb.sheets.indexOf(sheet);
+          deleteSheet(wb, i);
+          if (active >= wb.sheets.length) active = wb.sheets.length - 1;
+        }
+
+        // New on their side. Created here, then given THEIR id, so both peers name it the
+        // same thing from now on.
+        for (const sh of next) {
+          if (wb.sheets.some((s2) => (s2.cid ?? s2.name) === sh.id)) continue;
+          try {
+            const i = addSheet(wb, sh.name);
+            wb.sheets[i].cid = sh.id;
+          } catch {
+            /* this file type has no sheets */
+          }
+        }
+
+        // Renames and visibility, by id rather than position.
+        for (const sh of next) {
+          const i = wb.sheets.findIndex((s2) => (s2.cid ?? s2.name) === sh.id);
+          if (i < 0) continue;
+          if (wb.sheets[i].name !== sh.name) renameSheet(wb, i, sh.name);
+          if ((wb.sheets[i].visibility ?? undefined) !== sh.visibility) {
+            setSheetVisibility(wb, i, sh.visibility);
+          }
+        }
+
+        // And the order they are in.
+        next.forEach((sh, target) => {
+          const from = wb.sheets.findIndex((s2) => (s2.cid ?? s2.name) === sh.id);
+          if (from >= 0 && from !== target && target < wb.sheets.length) moveSheet(wb, from, target);
+        });
+
+        dirty = true;
+        // Through the same path a local change takes, so the baseline advances by the same
+        // rule. The applyingRemoteSheets flag is the single thing that stops a peer's
+        // change being announced straight back to them.
+        reportSheets();
+        renderTabs();
+        renderGrid();
+      } finally {
+        applyingRemoteSheets = false;
+      }
+    },
     sheetNames() {
       return wb.sheets.map((s2) => s2.name);
     },
     selectedCell() {
       const sheet = wb.sheets[active];
       if (!sheet || !sel) return null;
-      return { sheet: sheet.name, r: sel.r1, c: sel.c1 };
+      return { sheet: sheet.cid ?? sheet.name, r: sel.r1, c: sel.c1 };
     },
     applyRemoteStructural(op) {
-      const si = wb.sheets.findIndex((s2) => s2.name === op.sheet);
+      const si = wb.sheets.findIndex((s2) => (s2.cid ?? s2.name) === op.sheet);
       if (si < 0) return; // a sheet this workbook does not have
       applyLineOp(wb, si, { axis: op.axis, kind: op.kind, at: op.at, count: op.count });
       history.clear(); // see the doc comment: those snapshots describe addresses that moved
@@ -4499,9 +4614,10 @@ export function createSheetEditor(
     cellInputs() {
       const out: CellInput[] = [];
       for (const sheet of wb.sheets) {
+        const cid = sheet.cid ?? sheet.name;
         for (const cell of sheet.cells.values()) {
           const input = cell.formula != null ? `=${cell.formula}` : cell.value;
-          if (input !== "") out.push({ sheet: sheet.name, r: cell.row, c: cell.col, input });
+          if (input !== "") out.push({ sheet: cid, r: cell.row, c: cell.col, input });
         }
       }
       return out;
@@ -4513,7 +4629,7 @@ export function createSheetEditor(
       // never entered. The full re-render below is what picks up wrap heights, validation
       // marks and conditional formats that the commit path would otherwise have handled.
       for (const ch of changes) {
-        const sheet = wb.sheets.find((s2) => s2.name === ch.sheet);
+        const sheet = sheetById(wb, ch.sheet);
         if (sheet) setCellInput(sheet, ch.r, ch.c, ch.input);
       }
       recalc(wb);

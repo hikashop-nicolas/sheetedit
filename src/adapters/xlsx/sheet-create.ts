@@ -1,5 +1,6 @@
 import { strToU8 } from "fflate";
 import { parseXmlOpt, serializeXml, type Sheet, type Workbook } from "../../core/model";
+import { newSheetId } from "../../core/sheet-ops";
 
 // Create a brand-new worksheet in an .xlsx workbook, registered everywhere Excel and the
 // reader look: the worksheet part, a <sheet> entry in xl/workbook.xml, a relationship in
@@ -74,7 +75,9 @@ export function createWorksheet(wb: Workbook, name: string): Sheet {
     wb.files["[Content_Types].xml"] = serializeXml(ct);
   }
 
-  const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, doc, sheetData, path, layoutDirty: true };
+  // A sheet added after the file was read cannot take its id from a position both peers
+  // agree on, so it gets a random one; see assignSheetIds.
+  const sheet: Sheet = { name, cid: newSheetId(), cells: new Map(), maxRow: 0, maxCol: 0, doc, sheetData, path, layoutDirty: true };
   wb.files[path] = serializeXml(doc);
   wb.sheets.push(sheet);
   return sheet;

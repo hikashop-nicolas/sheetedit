@@ -269,6 +269,17 @@ export interface Cell {
 
 export interface Sheet {
   name: string;
+  /**
+   * Stable identity for collaboration. Not persisted, and not the name.
+   *
+   * A name is the wrong thing to address a sheet by: renaming one would move every cell
+   * edit keyed to it, and two peers mid-rename would disagree about where an edit belongs.
+   * Sheets already in the file take their id from their position when the file was read,
+   * which is the same on every peer because every peer read the same file. Sheets added
+   * during a session take a random one, because there is no shared file to derive it from
+   * and two people each adding a sheet must end up with two.
+   */
+  cid?: string;
   /** The VBA code name (xlsx `<sheetPr codeName>`), which is how a sheet's macro module is named
       and the only way to tie a Worksheet_Change handler to the sheet it belongs to. */
   codeName?: string;

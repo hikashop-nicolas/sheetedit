@@ -11,6 +11,31 @@ const ODS_TABLE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 
 export const sheetsEditable = (wb: Workbook): boolean => wb.kind === "xlsx" || wb.kind === "ods";
 
+/**
+ * Give every sheet a stable id, and keep the ones already assigned.
+ *
+ * Sheets read from the file take their id from their position, because every peer read the
+ * same file and so agrees without being told. Sheets added afterwards take a random one:
+ * there is no shared file to derive it from, and two people each adding a sheet must end up
+ * with two sheets rather than one.
+ */
+export function assignSheetIds(wb: Workbook): void {
+  wb.sheets.forEach((sheet, index) => {
+    sheet.cid ??= `s${index}`;
+  });
+}
+
+/** Unique across peers, for a sheet that was not in the file. */
+export function newSheetId(): string {
+  const salt = new Uint8Array(4);
+  crypto.getRandomValues(salt);
+  return `s-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** The sheet with this id, or undefined. Addressing by id survives a rename. */
+export const sheetById = (wb: Workbook, cid: string): Sheet | undefined =>
+  wb.sheets.find((s) => s.cid === cid);
+
 const sheetEls = (wbDoc: Document): Element[] =>
   Array.from(wbDoc.getElementsByTagName("sheet")).filter((e) => e.localName === "sheet");
 
@@ -39,7 +64,7 @@ function createOdsTable(wb: Workbook, name: string): void {
   // Insert after the last existing table (before table:named-expressions etc.).
   const last = anyTable ? Array.from(parent.childNodes).filter((n) => (n as Element).localName === "table").pop() as Element : null;
   parent.insertBefore(table, last ? last.nextSibling : null);
-  wb.sheets.push({ name, cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table, odsDirty: true });
+  wb.sheets.push({ name, cid: newSheetId(), cells: new Map(), maxRow: 0, maxCol: 0, tableEl: table, odsDirty: true });
 }
 
 /** Add a new empty sheet; returns its index. */
