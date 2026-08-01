@@ -1,6 +1,7 @@
 import { colToLetters, parseXmlOpt, serializeXml, type Sheet, type SheetControl, type Workbook } from "../../core/model";
 import { SS_MAIN } from "./shared";
 import { insertWsChild } from "./write";
+import { newDrawingId } from "../../core/sheet-ops";
 
 // Creating a form control means building the three parts Excel expects and wiring them together:
 //   xl/ctrlProps/ctrlPropN.xml   the state (objectType, checked/sel/val, fmlaLink, fmlaRange)
@@ -266,6 +267,7 @@ export function createXlsxControl(wb: Workbook, sheet: Sheet, spec: NewControl):
     vmlPath,
     shapeId: String(shapeId),
   };
+  model.cid ??= newDrawingId();
   (sheet.controls ??= []).push(model);
   return model;
 }

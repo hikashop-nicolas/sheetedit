@@ -61,6 +61,25 @@ export function assignPivotIds(wb: Workbook): void {
   }
 }
 
+/** Give every shape and form control a stable id, from its sheet and its place in it. */
+export function assignDrawingIds(wb: Workbook): void {
+  for (const sheet of wb.sheets) {
+    sheet.shapes?.forEach((sp, i) => {
+      sp.cid ??= `${sheet.cid ?? sheet.name}-sp${i}`;
+    });
+    sheet.controls?.forEach((ct, i) => {
+      ct.cid ??= `${sheet.cid ?? sheet.name}-ct${i}`;
+    });
+  }
+}
+
+/** An id for a shape or control added during a session. */
+export const newDrawingId = (): string => {
+  const salt = new Uint8Array(4);
+  crypto.getRandomValues(salt);
+  return `d-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+};
+
 /** An id for a pivot authored during a session. */
 export const newPivotId = (): string => {
   const salt = new Uint8Array(4);

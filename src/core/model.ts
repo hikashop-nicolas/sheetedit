@@ -571,6 +571,8 @@ export interface ControlVisuals {
 }
 
 export interface SheetControl {
+  /** Stable identity for collaboration; see Sheet.cid for why a position is not enough. */
+  cid?: string;
   /** What the control is. Anything unrecognised is rendered as a label so it is never invisible. */
   kind: "checkbox" | "radio" | "dropdown" | "list" | "spin" | "scroll" | "button" | "label" | "groupBox" | "textbox" | "toggle" | "image";
   /** A container control (Frame / MultiPage / TabStrip) and what it holds. Its children have no
@@ -644,6 +646,8 @@ export interface ShapeGradient {
 /** A drawing shape anchored on a sheet. Rendered as an SVG box over the grid; authored + written
     back (xlsx xdr:sp in the drawing part, ods draw:rect/ellipse/line/custom-shape). */
 export interface SheetShape {
+  /** Stable identity for collaboration; see Sheet.cid for why a position is not enough. */
+  cid?: string;
   geom: ShapeGeom;
   /** The file's original preset geometry name (xlsx prst / ods class), preserved for a faithful
       round-trip of shapes whose geometry we render approximately as `geom`. */

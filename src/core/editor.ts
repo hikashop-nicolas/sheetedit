@@ -49,7 +49,7 @@ import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
-import { assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
+import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
@@ -58,6 +58,22 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // ---------------------------------------------------------------------------
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
+/**
+ * A shape or a form control as a session carries it.
+ *
+ * A control's *state* is not here and does not need to be: a checkbox writes TRUE or FALSE
+ * into its linked cell, and cells are already shared, so ticking one travels as the cell
+ * edit it really is. What travels here is the thing itself, so the other person has the
+ * control to tick.
+ */
+export interface SheetDrawingInfo {
+  id: string;
+  sheet: string;
+  kind: "shape" | "control";
+  /** The SheetShape or SheetControl, as JSON. Opaque here. */
+  model: string;
+}
+
 /**
  * A pivot as a session carries it: its whole definition, as one value.
  *
@@ -215,6 +231,11 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /** Every shape and form control in the workbook. */
+  drawings(): SheetDrawingInfo[];
+  setDrawingsReporter(handler: ((drawings: SheetDrawingInfo[]) => void) | null): void;
+  /** Add, change and remove shapes and controls to match a peer's. Reports nothing back. */
+  applyRemoteDrawings(drawings: SheetDrawingInfo[]): void;
   /** Every pivot in the workbook, with its definition. */
   pivots(): SheetPivotInfo[];
   setPivotsReporter(handler: ((pivots: SheetPivotInfo[]) => void) | null): void;
@@ -295,6 +316,7 @@ export function createSheetEditor(
     assignSheetIds(wb);
     assignImageIds(wb);
     assignPivotIds(wb);
+    assignDrawingIds(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -322,6 +344,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      drawings: () => [],
+      setDrawingsReporter: () => undefined,
+      applyRemoteDrawings: () => undefined,
       pivots: () => [],
       setPivotsReporter: () => undefined,
       applyRemotePivots: () => undefined,
@@ -1256,6 +1281,7 @@ export function createSheetEditor(
     reportImages();
     reportCharts();
     reportPivots();
+    reportDrawings();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1268,6 +1294,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let drawingsReporter: ((drawings: SheetDrawingInfo[]) => void) | null = null;
+  let lastDrawingsSig: string | null = null;
+  let applyingRemoteDrawings = false;
   let pivotsReporter: ((pivots: SheetPivotInfo[]) => void) | null = null;
   let lastPivotsSig: string | null = null;
   let applyingRemotePivots = false;
@@ -1356,6 +1385,30 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const drawingInfos = (): SheetDrawingInfo[] => {
+    const out: SheetDrawingInfo[] = [];
+    for (const sh of wb.sheets) {
+      const sheetId = sh.cid ?? sh.name;
+      for (const sp of sh.shapes ?? []) {
+        if (sp.cid) out.push({ id: sp.cid, sheet: sheetId, kind: "shape", model: JSON.stringify(sp) });
+      }
+      for (const ct of sh.controls ?? []) {
+        if (ct.cid) out.push({ id: ct.cid, sheet: sheetId, kind: "control", model: JSON.stringify(ct) });
+      }
+    }
+    return out;
+  };
+
+  const reportDrawings = (): void => {
+    if (!drawingsReporter) return;
+    const infos = drawingInfos();
+    const sig = JSON.stringify(infos);
+    if (sig === lastDrawingsSig) return;
+    lastDrawingsSig = sig;
+    if (applyingRemoteDrawings) return;
+    drawingsReporter(infos);
   };
 
   const pivotInfos = (): SheetPivotInfo[] => {
@@ -4830,6 +4883,60 @@ export function createSheetEditor(
         /* this file type carries no query part */
       } finally {
         applyingRemoteQueries = false;
+      }
+    },
+    drawings() {
+      return drawingInfos();
+    },
+    setDrawingsReporter(handler) {
+      drawingsReporter = handler;
+      lastDrawingsSig = handler ? JSON.stringify(drawingInfos()) : null;
+    },
+    applyRemoteDrawings(next) {
+      applyingRemoteDrawings = true;
+      try {
+        const wanted = new Map(next.map((d) => [d.id, d]));
+        for (const sh of wb.sheets) {
+          if (sh.shapes) {
+            const keep = sh.shapes.filter((sp) => !sp.cid || wanted.has(sp.cid));
+            if (keep.length !== sh.shapes.length) sh.shapes = keep;
+          }
+          if (sh.controls) {
+            const keep = sh.controls.filter((ct) => !ct.cid || wanted.has(ct.cid));
+            if (keep.length !== sh.controls.length) sh.controls = keep;
+          }
+        }
+        for (const info of next) {
+          const sheet = sheetById(wb, info.sheet);
+          if (!sheet) continue;
+          let model: { cid?: string };
+          try {
+            model = JSON.parse(info.model) as { cid?: string };
+          } catch {
+            continue; // not something we can read; leave what is there rather than guess
+          }
+          model.cid = info.id;
+          if (info.kind === "shape") {
+            const list = (sheet.shapes ??= []);
+            const at = list.findIndex((sp) => sp.cid === info.id);
+            const shape = model as unknown as import("./model").SheetShape;
+            shape.dirty = true;
+            if (at >= 0) list[at] = shape;
+            else list.push(shape);
+          } else {
+            const list = (sheet.controls ??= []);
+            const at = list.findIndex((ct) => ct.cid === info.id);
+            const control = model as unknown as import("./model").SheetControl;
+            if (at >= 0) list[at] = control;
+            else list.push(control);
+          }
+        }
+        dirty = true;
+        reportDrawings();
+        shapeLayer.refresh();
+        controlLayer.refresh();
+      } finally {
+        applyingRemoteDrawings = false;
       }
     },
     pivots() {

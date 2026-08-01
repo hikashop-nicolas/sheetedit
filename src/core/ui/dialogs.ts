@@ -1,5 +1,6 @@
 import { colToLetters, getCell, parseA1Ref, type ShapeGeom, type Sheet, type SheetShape, type Workbook } from "../model";
 import { t } from "../i18n";
+import { newDrawingId } from "../sheet-ops";
 import { formDialog, type FormField } from "./form-dialog";
 import { setOdsComment, setOdsCondFormat, setOdsDataValidation, setOdsHyperlink, setOdsSparklineGroup } from "../../adapters/ods";
 import { setXlsxComment, setXlsxCondFormat, setXlsxDataValidation, setXlsxHyperlink, setXlsxSparklineGroup } from "../../adapters/xlsx";
@@ -283,7 +284,7 @@ export function setupDialogs(ctx: DialogCtx): {
         const anchor = twoD
           ? { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c2 + 1, toRow: s.r2 + 1, toColOff: 0, toRowOff: 0 }
           : { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c1 + 3, toRow: s.r1 + 4, toColOff: 0, toRowOff: 0 };
-        (sheet.shapes ??= []).push({ geom, anchor, fill, stroke, strokeWidth, text, created: true, dirty: true });
+        (sheet.shapes ??= []).push({ cid: newDrawingId(), geom, anchor, fill, stroke, strokeWidth, text, created: true, dirty: true });
       }
       ctx.mark(); ctx.refreshShapes();
     });

@@ -29,7 +29,11 @@ type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff
 type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
 type ChartInfo = { id: string; sheet: string; model: string };
 type PivotInfo = { id: string; sheet: string; model: string };
+type DrawingInfo = { id: string; sheet: string; kind: "shape" | "control"; model: string };
 type Handle = {
+  drawings(): DrawingInfo[];
+  setDrawingsReporter(h: ((d: DrawingInfo[]) => void) | null): void;
+  applyRemoteDrawings(d: DrawingInfo[]): void;
   pivots(): PivotInfo[];
   setPivotsReporter(h: ((p: PivotInfo[]) => void) | null): void;
   applyRemotePivots(p: PivotInfo[]): void;
@@ -775,6 +779,86 @@ describe("two editors, pivots", () => {
       const model = JSON.parse(mine[0].model) as { name?: string };
       model.name = "From the other side";
       p.b.applyRemotePivots([{ ...mine[0], model: JSON.stringify(model) }]);
+      cy.wrap(null).then(() => {
+        expect(counts.reported, "applying is not a change to announce").to.equal(before);
+      });
+    });
+  });
+});
+
+// Shapes and form controls. A control's state is not shared here and does not need to be:
+// a checkbox writes TRUE or FALSE into its linked cell, and cells already travel, so
+// ticking one arrives as the cell edit it really is. What travels here is the thing
+// itself, so the other person has a control to tick.
+describe("two editors, shapes and controls", () => {
+  beforeEach(() => open("cypress/fixtures/sample.xlsx"));
+
+  function wireDrawings(p: Pair): { reported: number } {
+    const counts = { reported: 0 };
+    let applying = false;
+    const wire = (from: Handle, to: () => Handle) => {
+      from.setDrawingsReporter((drawings) => {
+        counts.reported++; // before the guard; see wireSheets
+        if (applying) return;
+        applying = true;
+        try {
+          to().applyRemoteDrawings(drawings);
+        } finally {
+          applying = false;
+        }
+      });
+    };
+    wire(p.a, () => p.b);
+    wire(p.b, () => p.a);
+    return counts;
+  }
+
+  const shape = (id: string, text: string) => ({
+    id,
+    sheet: "s0",
+    kind: "shape" as const,
+    model: JSON.stringify({
+      geom: "rect",
+      anchor: { fromCol: 2, fromRow: 2, fromColOff: 0, fromRowOff: 0, toCol: 4, toRow: 5, toColOff: 0, toRowOff: 0 },
+      fill: "#cfe2ff",
+      text,
+    }),
+  });
+
+  it("carries a shape to the other peer", () => {
+    pair().then((p) => {
+      wireDrawings(p);
+      p.b.applyRemoteDrawings([shape("d-ada", "From Ada")]);
+
+      const theirs = p.b.drawings();
+      expect(theirs.map((d) => d.id)).to.deep.equal(["d-ada"]);
+      expect(JSON.parse(theirs[0].model).text).to.equal("From Ada");
+    });
+  });
+
+  it("keeps both when each peer adds one", () => {
+    pair().then((p) => {
+      wireDrawings(p);
+      p.b.applyRemoteDrawings([shape("d-ada", "Ada's"), shape("d-bo", "Bo's")]);
+      expect(p.b.drawings().map((d) => d.id).sort()).to.deep.equal(["d-ada", "d-bo"]);
+    });
+  });
+
+  it("removes one the other peer removed", () => {
+    pair().then((p) => {
+      wireDrawings(p);
+      p.b.applyRemoteDrawings([shape("d-ada", "Ada's")]);
+      expect(p.b.drawings()).to.have.length(1);
+      p.b.applyRemoteDrawings([]);
+      expect(p.b.drawings(), "gone on B too").to.deep.equal([]);
+    });
+  });
+
+  it("does not report a peer's change back to them", () => {
+    pair().then((p) => {
+      const counts = wireDrawings(p);
+      const before = counts.reported;
+      p.b.applyRemoteDrawings([shape("d-ada", "From the other side")]);
       cy.wrap(null).then(() => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });
