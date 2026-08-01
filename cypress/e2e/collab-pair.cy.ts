@@ -32,6 +32,9 @@ type PivotInfo = { id: string; sheet: string; model: string };
 type DrawingInfo = { id: string; sheet: string; kind: "shape" | "control"; model: string };
 type SettingInfo = { sheet: string; group: string; value: string };
 type Handle = {
+  vbaModules(): Record<string, string>;
+  setVbaReporter(h: ((m: Record<string, string>) => void) | null): void;
+  applyRemoteVba(m: Record<string, string>): void;
   definedNames(): Record<string, string>;
   setDefinedNamesReporter(h: ((n: Record<string, string>) => void) | null): void;
   applyRemoteDefinedNames(n: Record<string, string>): void;
@@ -1006,6 +1009,45 @@ describe("two editors, formatting and names", () => {
       cy.wrap(null).then(() => {
         expect(reported, "applying is not a change to announce").to.deep.equal([]);
       });
+    });
+  });
+});
+
+// Macro source travels; running it never does.
+describe("two editors, macros", () => {
+  it("carries a peer's macro source, without reporting it back", () => {
+    open("cypress/fixtures/macros.xlsm");
+    pair().then((p) => {
+      const name = Object.keys(p.a.vbaModules())[0];
+      expect(name, "the fixture has a module").to.be.a("string");
+
+      const reported: Record<string, string>[] = [];
+      p.b.setVbaReporter((m) => reported.push(m));
+      p.b.applyRemoteVba({ [name]: 'Sub FromAda()\n  Range("A1").Value = 1\nEnd Sub\n' });
+
+      expect(p.b.vbaModules()[name], "the source arrived").to.contain("FromAda");
+      cy.wrap(null).then(() => {
+        expect(reported, "applying is not a change to announce").to.deep.equal([]);
+      });
+    });
+  });
+
+  it("refuses a peer's module that will not parse", () => {
+    open("cypress/fixtures/macros.xlsm");
+    pair().then((p) => {
+      const name = Object.keys(p.a.vbaModules())[0];
+      const before = p.b.vbaModules()[name];
+      p.b.applyRemoteVba({ [name]: "Sub Broken(\n" });
+      expect(p.b.vbaModules()[name], "left as it was").to.equal(before);
+    });
+  });
+
+  // A workbook with no macro project must not gain one from a peer's message.
+  it("ignores macro source for a workbook that has none", () => {
+    open("cypress/fixtures/sample.xlsx");
+    pair().then((p) => {
+      p.b.applyRemoteVba({ Module1: "Sub X()\nEnd Sub\n" });
+      expect(p.b.vbaModules(), "still no macros").to.deep.equal({});
     });
   });
 });

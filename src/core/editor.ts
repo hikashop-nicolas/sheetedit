@@ -253,6 +253,18 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /**
+   * The workbook's VBA modules, as name to source.
+   *
+   * Source only, and deliberately so. A macro is arbitrary code, and running a peer's on
+   * everyone's behalf would be strictly worse than refreshing their query: it reaches the
+   * whole workbook rather than the network. Whoever wants to run one does so knowingly,
+   * on code they can read first.
+   */
+  vbaModules(): Record<string, string>;
+  setVbaReporter(handler: ((modules: Record<string, string>) => void) | null): void;
+  /** Take a peer's macro source. Stored, never run. */
+  applyRemoteVba(modules: Record<string, string>): void;
   /** The workbook's defined names, as name to reference. */
   definedNames(): Record<string, string>;
   setDefinedNamesReporter(handler: ((names: Record<string, string>) => void) | null): void;
@@ -376,6 +388,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      vbaModules: () => ({}),
+      setVbaReporter: () => undefined,
+      applyRemoteVba: () => undefined,
       definedNames: () => ({}),
       setDefinedNamesReporter: () => undefined,
       applyRemoteDefinedNames: () => undefined,
@@ -1322,6 +1337,7 @@ export function createSheetEditor(
     reportDrawings();
     reportSheetSettings();
     reportDefinedNames();
+    reportVba();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1334,6 +1350,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let vbaReporter: ((modules: Record<string, string>) => void) | null = null;
+  let lastVbaSig: string | null = null;
+  let applyingRemoteVba = false;
   let namesReporter: ((names: Record<string, string>) => void) | null = null;
   let lastNamesSig: string | null = null;
   let applyingRemoteNames = false;
@@ -1431,6 +1450,19 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const vbaObject = (): Record<string, string> =>
+    Object.fromEntries((wb.vba?.modules ?? []).map((m) => [m.name, m.source ?? ""]));
+
+  const reportVba = (): void => {
+    if (!vbaReporter) return;
+    const modules = vbaObject();
+    const sig = JSON.stringify(modules);
+    if (sig === lastVbaSig) return;
+    lastVbaSig = sig;
+    if (applyingRemoteVba) return;
+    vbaReporter(modules);
   };
 
   const namesObject = (): Record<string, string> => Object.fromEntries(wb.definedNames ?? new Map());
@@ -5013,6 +5045,32 @@ export function createSheetEditor(
         /* this file type carries no query part */
       } finally {
         applyingRemoteQueries = false;
+      }
+    },
+    vbaModules() {
+      return vbaObject();
+    },
+    setVbaReporter(handler) {
+      vbaReporter = handler;
+      lastVbaSig = handler ? JSON.stringify(vbaObject()) : null;
+    },
+    applyRemoteVba(modules) {
+      applyingRemoteVba = true;
+      try {
+        let touched = false;
+        for (const [name, source] of Object.entries(modules)) {
+          const mod = wb.vba?.modules.find((m) => m.name === name);
+          if (!mod || mod.source === source) continue;
+          // Through the same editor a person uses, which parses before it stores: a peer's
+          // module that will not parse is refused here rather than breaking the file later.
+          if (editModuleSource(wb, name, source).ok) touched = true;
+        }
+        if (touched) {
+          dirty = true;
+          reportVba();
+        }
+      } finally {
+        applyingRemoteVba = false;
       }
     },
     definedNames() {
