@@ -50,6 +50,7 @@ import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
+import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
@@ -58,6 +59,18 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // ---------------------------------------------------------------------------
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
+/**
+ * One group of a sheet's settings: what is frozen, protected, validated, hidden, grouped,
+ * how it prints. Per group rather than per sheet, so freezing a pane and setting a print
+ * area at the same moment do not overwrite each other.
+ */
+export interface SheetSettingInfo {
+  sheet: string;
+  group: string;
+  /** The group's value, as JSON, or "" when the sheet has none of that group. */
+  value: string;
+}
+
 /**
  * A shape or a form control as a session carries it.
  *
@@ -231,6 +244,11 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /** Every sheet's settings, one entry per group. */
+  sheetSettings(): SheetSettingInfo[];
+  setSheetSettingsReporter(handler: ((settings: SheetSettingInfo[]) => void) | null): void;
+  /** Take a peer's sheet settings. Reports nothing back. */
+  applyRemoteSheetSettings(settings: SheetSettingInfo[]): void;
   /** Every shape and form control in the workbook. */
   drawings(): SheetDrawingInfo[];
   setDrawingsReporter(handler: ((drawings: SheetDrawingInfo[]) => void) | null): void;
@@ -344,6 +362,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      sheetSettings: () => [],
+      setSheetSettingsReporter: () => undefined,
+      applyRemoteSheetSettings: () => undefined,
       drawings: () => [],
       setDrawingsReporter: () => undefined,
       applyRemoteDrawings: () => undefined,
@@ -1282,6 +1303,7 @@ export function createSheetEditor(
     reportCharts();
     reportPivots();
     reportDrawings();
+    reportSheetSettings();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1294,6 +1316,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let settingsReporter: ((settings: SheetSettingInfo[]) => void) | null = null;
+  let lastSettingsSig: string | null = null;
+  let applyingRemoteSettings = false;
   let drawingsReporter: ((drawings: SheetDrawingInfo[]) => void) | null = null;
   let lastDrawingsSig: string | null = null;
   let applyingRemoteDrawings = false;
@@ -1385,6 +1410,30 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const settingInfos = (): SheetSettingInfo[] => {
+    const out: SheetSettingInfo[] = [];
+    for (const sh of wb.sheets) {
+      const sheetId = sh.cid ?? sh.name;
+      for (const group of SETTINGS_GROUPS) {
+        const value = readGroup(sh, group);
+        // An empty group still travels as "", so clearing a print area reaches the others
+        // rather than looking like a peer that has not caught up.
+        out.push({ sheet: sheetId, group, value: value === undefined ? "" : JSON.stringify(value) });
+      }
+    }
+    return out;
+  };
+
+  const reportSheetSettings = (): void => {
+    if (!settingsReporter) return;
+    const infos = settingInfos();
+    const sig = JSON.stringify(infos);
+    if (sig === lastSettingsSig) return;
+    lastSettingsSig = sig;
+    if (applyingRemoteSettings) return;
+    settingsReporter(infos);
   };
 
   const drawingInfos = (): SheetDrawingInfo[] => {
@@ -4883,6 +4932,42 @@ export function createSheetEditor(
         /* this file type carries no query part */
       } finally {
         applyingRemoteQueries = false;
+      }
+    },
+    sheetSettings() {
+      return settingInfos();
+    },
+    setSheetSettingsReporter(handler) {
+      settingsReporter = handler;
+      lastSettingsSig = handler ? JSON.stringify(settingInfos()) : null;
+    },
+    applyRemoteSheetSettings(next) {
+      applyingRemoteSettings = true;
+      try {
+        let touched = false;
+        for (const info of next) {
+          const sheet = sheetById(wb, info.sheet);
+          if (!sheet) continue;
+          if (!(SETTINGS_GROUPS as readonly string[]).includes(info.group)) continue;
+          const mine = readGroup(sheet, info.group as SettingsGroup);
+          const theirs = info.value === "" ? "" : info.value;
+          if ((mine === undefined ? "" : JSON.stringify(mine)) === theirs) continue;
+          let value: unknown;
+          try {
+            value = info.value === "" ? undefined : JSON.parse(info.value);
+          } catch {
+            continue; // unreadable; leave what is there rather than clear it
+          }
+          writeGroup(sheet, info.group as SettingsGroup, value);
+          touched = true;
+        }
+        if (touched) {
+          dirty = true;
+          reportSheetSettings();
+          renderGrid();
+        }
+      } finally {
+        applyingRemoteSettings = false;
       }
     },
     drawings() {

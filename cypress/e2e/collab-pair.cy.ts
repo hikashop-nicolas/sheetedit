@@ -30,7 +30,11 @@ type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
 type ChartInfo = { id: string; sheet: string; model: string };
 type PivotInfo = { id: string; sheet: string; model: string };
 type DrawingInfo = { id: string; sheet: string; kind: "shape" | "control"; model: string };
+type SettingInfo = { sheet: string; group: string; value: string };
 type Handle = {
+  sheetSettings(): SettingInfo[];
+  setSheetSettingsReporter(h: ((s: SettingInfo[]) => void) | null): void;
+  applyRemoteSheetSettings(s: SettingInfo[]): void;
   drawings(): DrawingInfo[];
   setDrawingsReporter(h: ((d: DrawingInfo[]) => void) | null): void;
   applyRemoteDrawings(d: DrawingInfo[]): void;
@@ -859,6 +863,94 @@ describe("two editors, shapes and controls", () => {
       const counts = wireDrawings(p);
       const before = counts.reported;
       p.b.applyRemoteDrawings([shape("d-ada", "From the other side")]);
+      cy.wrap(null).then(() => {
+        expect(counts.reported, "applying is not a change to announce").to.equal(before);
+      });
+    });
+  });
+});
+
+// Sheet settings: what is frozen, protected, validated, hidden, grouped, how it prints.
+// Carried per group rather than as one value per sheet, so freezing a pane and setting a
+// print area at the same moment do not overwrite each other.
+describe("two editors, sheet settings", () => {
+  beforeEach(() => open("cypress/fixtures/frozen.xlsx"));
+
+  function wireSettings(p: Pair): { reported: number } {
+    const counts = { reported: 0 };
+    let applying = false;
+    const wire = (from: Handle, to: () => Handle) => {
+      from.setSheetSettingsReporter((settings) => {
+        counts.reported++; // before the guard; see wireSheets
+        if (applying) return;
+        applying = true;
+        try {
+          to().applyRemoteSheetSettings(settings);
+        } finally {
+          applying = false;
+        }
+      });
+    };
+    wire(p.a, () => p.b);
+    wire(p.b, () => p.a);
+    return counts;
+  }
+
+  const groupOf = (h: Handle, group: string) =>
+    h.sheetSettings().find((s) => s.group === group && s.sheet === "s0");
+
+  it("reports every group for every sheet", () => {
+    pair().then((p) => {
+      const groups = p.a.sheetSettings().filter((s) => s.sheet === "s0").map((s) => s.group);
+      expect(groups, "freeze among them").to.include("freeze");
+      expect(groups).to.include("printSetup");
+      expect(groups).to.include("protection");
+    });
+  });
+
+  it("carries a frozen pane to the other peer", () => {
+    pair().then((p) => {
+      wireSettings(p);
+      const frozen = JSON.stringify({ rows: 3, cols: 2, paneSplit: false });
+      p.b.applyRemoteSheetSettings([{ sheet: "s0", group: "freeze", value: frozen }]);
+      expect(groupOf(p.b, "freeze")?.value, "B is frozen the same way").to.equal(frozen);
+    });
+  });
+
+  // The reason for per-group entries: two settings changed at once must both survive.
+  it("keeps two different settings changed at the same time", () => {
+    pair().then((p) => {
+      wireSettings(p);
+      p.b.applyRemoteSheetSettings([
+        { sheet: "s0", group: "freeze", value: JSON.stringify({ rows: 1, cols: 0, paneSplit: false }) },
+        { sheet: "s0", group: "autoFilter", value: JSON.stringify({ r1: 1, c1: 1, r2: 5, c2: 3 }) },
+      ]);
+      expect(JSON.parse(String(groupOf(p.b, "freeze")?.value)).rows).to.equal(1);
+      expect(JSON.parse(String(groupOf(p.b, "autoFilter")?.value)).r2).to.equal(5);
+    });
+  });
+
+  // Clearing has to travel too, or removing a print area on one side looks to the other
+  // like a peer who simply has not caught up.
+  it("carries a cleared setting, not just a set one", () => {
+    pair().then((p) => {
+      wireSettings(p);
+      p.b.applyRemoteSheetSettings([
+        { sheet: "s0", group: "freeze", value: JSON.stringify({ rows: 2, cols: 0, paneSplit: false }) },
+      ]);
+      expect(groupOf(p.b, "freeze")?.value).to.not.equal("");
+      p.b.applyRemoteSheetSettings([{ sheet: "s0", group: "freeze", value: "" }]);
+      expect(groupOf(p.b, "freeze")?.value, "unfrozen on B too").to.equal("");
+    });
+  });
+
+  it("does not report a peer's settings change back to them", () => {
+    pair().then((p) => {
+      const counts = wireSettings(p);
+      const before = counts.reported;
+      p.b.applyRemoteSheetSettings([
+        { sheet: "s0", group: "freeze", value: JSON.stringify({ rows: 4, cols: 1, paneSplit: false }) },
+      ]);
       cy.wrap(null).then(() => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });
