@@ -146,6 +146,15 @@ export interface CellInput {
   c: number;
   /** "=A1+1" for a formula, else the literal. Empty string means the cell was cleared. */
   input: string;
+  /**
+   * How the cell looks, as JSON, or "" when it is unformatted.
+   *
+   * Carried beside the input rather than inside it because the two change on completely
+   * different rhythms: an input changes on every keystroke and is a few bytes, formatting
+   * changes rarely and is an object. A host is expected to keep them apart for the same
+   * reason.
+   */
+  fmt?: string;
 }
 
 /** Another person in a shared session, and the cell they are on. */
@@ -244,6 +253,11 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /** The workbook's defined names, as name to reference. */
+  definedNames(): Record<string, string>;
+  setDefinedNamesReporter(handler: ((names: Record<string, string>) => void) | null): void;
+  /** Take a peer's defined names. Reports nothing back. */
+  applyRemoteDefinedNames(names: Record<string, string>): void;
   /** Every sheet's settings, one entry per group. */
   sheetSettings(): SheetSettingInfo[];
   setSheetSettingsReporter(handler: ((settings: SheetSettingInfo[]) => void) | null): void;
@@ -362,6 +376,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      definedNames: () => ({}),
+      setDefinedNamesReporter: () => undefined,
+      applyRemoteDefinedNames: () => undefined,
       sheetSettings: () => [],
       setSheetSettingsReporter: () => undefined,
       applyRemoteSheetSettings: () => undefined,
@@ -1304,6 +1321,7 @@ export function createSheetEditor(
     reportPivots();
     reportDrawings();
     reportSheetSettings();
+    reportDefinedNames();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1316,6 +1334,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let namesReporter: ((names: Record<string, string>) => void) | null = null;
+  let lastNamesSig: string | null = null;
+  let applyingRemoteNames = false;
   let settingsReporter: ((settings: SheetSettingInfo[]) => void) | null = null;
   let lastSettingsSig: string | null = null;
   let applyingRemoteSettings = false;
@@ -1410,6 +1431,18 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const namesObject = (): Record<string, string> => Object.fromEntries(wb.definedNames ?? new Map());
+
+  const reportDefinedNames = (): void => {
+    if (!namesReporter) return;
+    const names = namesObject();
+    const sig = JSON.stringify(names);
+    if (sig === lastNamesSig) return;
+    lastNamesSig = sig;
+    if (applyingRemoteNames) return;
+    namesReporter(names);
   };
 
   const settingInfos = (): SheetSettingInfo[] => {
@@ -1595,6 +1628,48 @@ export function createSheetEditor(
     return cell.formula != null ? `=${cell.formula}` : cell.value;
   };
 
+  /**
+   * A cell's formatting, as it travels: the number format, the resolved look, and the
+   * per-run text a rich cell carries. "" for a cell with none of it, so clearing formatting
+   * reaches the other side rather than looking like a peer who has not caught up.
+   */
+  const formatOf = (sheet: Sheet, r: number, c: number): string => {
+    const cell = getCell(sheet, r, c);
+    if (!cell) return "";
+    const fmt = {
+      numFmt: cell.numFmt,
+      cellStyle: cell.cellStyle,
+      richRuns: cell.richRuns,
+      phonetic: cell.phonetic,
+    };
+    const empty = fmt.numFmt === undefined && !fmt.cellStyle && !fmt.richRuns && !fmt.phonetic;
+    return empty ? "" : JSON.stringify(fmt);
+  };
+
+  /** Put a peer's formatting on a cell. */
+  const applyFormatTo = (sheet: Sheet, r: number, c: number, fmt: string): void => {
+    const cell = ensureCell(sheet, r, c);
+    let parsed: { numFmt?: string | number; cellStyle?: Cell["cellStyle"]; richRuns?: Cell["richRuns"]; phonetic?: Cell["phonetic"] } = {};
+    if (fmt !== "") {
+      try {
+        parsed = JSON.parse(fmt) as typeof parsed;
+      } catch {
+        return; // unreadable; leave the cell as it is rather than strip its formatting
+      }
+    }
+    // The number format goes through the format-specific setter, which also writes the
+    // style the file needs; assigning the field alone would show correctly and save wrong.
+    if (cell.numFmt !== parsed.numFmt) {
+      if (wb.kind === "ods") setOdsCellNumFmt(wb, sheet, cell, parsed.numFmt, undefined);
+      else if (wb.kind === "xlsx") setXlsxCellNumFmt(wb, sheet, cell, parsed.numFmt);
+      else cell.numFmt = parsed.numFmt;
+    }
+    cell.cellStyle = parsed.cellStyle;
+    cell.richRuns = parsed.richRuns;
+    cell.phonetic = parsed.phonetic;
+    cell.edited = true;
+  };
+
   const recordCells = (
     positions: { r: number; c: number }[],
     mutate: () => void,
@@ -1607,7 +1682,13 @@ export function createSheetEditor(
     if (wb.kind === "xlsx" && wb.pivotCaches) flagXlsxPivotRefresh(wb, sheet.name, positions);
     history.push({ sheet: active, cells: changes, ...extra });
     options.onCellsChanged?.(
-      positions.map((pos) => ({ sheet: sheet.cid ?? sheet.name, r: pos.r, c: pos.c, input: inputOf(sheet, pos.r, pos.c) })),
+      positions.map((pos) => ({
+        sheet: sheet.cid ?? sheet.name,
+        r: pos.r,
+        c: pos.c,
+        input: inputOf(sheet, pos.r, pos.c),
+        fmt: formatOf(sheet, pos.r, pos.c),
+      })),
     );
   };
   const applyStep = (step: { sheet: number; cells: UndoCellChange[]; undoExtra?: () => void; redoExtra?: () => void }, dir: "undo" | "redo") => {
@@ -4934,6 +5015,27 @@ export function createSheetEditor(
         applyingRemoteQueries = false;
       }
     },
+    definedNames() {
+      return namesObject();
+    },
+    setDefinedNamesReporter(handler) {
+      namesReporter = handler;
+      lastNamesSig = handler ? JSON.stringify(namesObject()) : null;
+    },
+    applyRemoteDefinedNames(names) {
+      applyingRemoteNames = true;
+      try {
+        const next = new Map(Object.entries(names));
+        if (JSON.stringify(Object.fromEntries(next)) === JSON.stringify(namesObject())) return;
+        wb.definedNames = next;
+        dirty = true;
+        reportDefinedNames();
+        recalc(wb); // a name a formula refers to may have just appeared or moved
+        renderGrid();
+      } finally {
+        applyingRemoteNames = false;
+      }
+    },
     sheetSettings() {
       return settingInfos();
     },
@@ -5274,7 +5376,10 @@ export function createSheetEditor(
         const cid = sheet.cid ?? sheet.name;
         for (const cell of sheet.cells.values()) {
           const input = cell.formula != null ? `=${cell.formula}` : cell.value;
-          if (input !== "") out.push({ sheet: cid, r: cell.row, c: cell.col, input });
+          const fmt = formatOf(sheet, cell.row, cell.col);
+          // A cell with only formatting still counts: someone made it bold on purpose, and
+          // an empty value is not a reason to leave that behind.
+          if (input !== "" || fmt !== "") out.push({ sheet: cid, r: cell.row, c: cell.col, input, fmt });
         }
       }
       return out;
@@ -5287,7 +5392,9 @@ export function createSheetEditor(
       // marks and conditional formats that the commit path would otherwise have handled.
       for (const ch of changes) {
         const sheet = sheetById(wb, ch.sheet);
-        if (sheet) setCellInput(sheet, ch.r, ch.c, ch.input);
+        if (!sheet) continue;
+        setCellInput(sheet, ch.r, ch.c, ch.input);
+        if (ch.fmt !== undefined) applyFormatTo(sheet, ch.r, ch.c, ch.fmt);
       }
       recalc(wb);
       dirty = true; // the document really did change, even though it was not this person

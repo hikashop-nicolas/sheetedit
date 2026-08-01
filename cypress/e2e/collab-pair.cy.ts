@@ -22,7 +22,7 @@ const TIMEOUT = 15000;
  */
 const BUDGET = "s0";
 
-type CellInput = { sheet: string; r: number; c: number; input: string };
+type CellInput = { sheet: string; r: number; c: number; input: string; fmt?: string };
 type StructuralOp = { kind: "insert" | "delete"; axis: "row" | "col"; sheet: string; at: number; count: number };
 type SheetInfo = { id: string; name: string; visibility?: "hidden" | "veryHidden" };
 type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number };
@@ -32,6 +32,9 @@ type PivotInfo = { id: string; sheet: string; model: string };
 type DrawingInfo = { id: string; sheet: string; kind: "shape" | "control"; model: string };
 type SettingInfo = { sheet: string; group: string; value: string };
 type Handle = {
+  definedNames(): Record<string, string>;
+  setDefinedNamesReporter(h: ((n: Record<string, string>) => void) | null): void;
+  applyRemoteDefinedNames(n: Record<string, string>): void;
   sheetSettings(): SettingInfo[];
   setSheetSettingsReporter(h: ((s: SettingInfo[]) => void) | null): void;
   applyRemoteSheetSettings(s: SettingInfo[]): void;
@@ -953,6 +956,55 @@ describe("two editors, sheet settings", () => {
       ]);
       cy.wrap(null).then(() => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
+      });
+    });
+  });
+});
+
+// Cell formatting and defined names.
+describe("two editors, formatting and names", () => {
+  beforeEach(() => open("cypress/fixtures/sample.xlsx"));
+
+  it("carries a cell's formatting beside its input", () => {
+    pair().then((p) => {
+      const fmt = JSON.stringify({ numFmt: "0.00%", cellStyle: { bold: true } });
+      p.b.applyRemoteCells([{ sheet: BUDGET, r: 2, c: 2, input: "0.5", fmt }]);
+
+      const mirrored = p.b.cellInputs().find((c) => c.r === 2 && c.c === 2);
+      expect(mirrored?.input, "the value arrived").to.equal("0.5");
+      expect(String(mirrored?.fmt), "and so did the format").to.contain("0.00%");
+    });
+  });
+
+  // Clearing formatting has to travel, or removing bold on one side looks to the other
+  // like a peer who has not caught up.
+  it("carries formatting being cleared", () => {
+    pair().then((p) => {
+      p.b.applyRemoteCells([
+        { sheet: BUDGET, r: 3, c: 2, input: "1", fmt: JSON.stringify({ cellStyle: { bold: true } }) },
+      ]);
+      expect(String(p.b.cellInputs().find((c) => c.r === 3 && c.c === 2)?.fmt)).to.contain("bold");
+
+      p.b.applyRemoteCells([{ sheet: BUDGET, r: 3, c: 2, input: "1", fmt: "" }]);
+      expect(p.b.cellInputs().find((c) => c.r === 3 && c.c === 2)?.fmt, "unformatted now").to.equal("");
+    });
+  });
+
+  it("carries defined names to the other peer", () => {
+    pair().then((p) => {
+      p.b.applyRemoteDefinedNames({ TaxRate: "Budget!$B$1", Region: "Budget!$A$2:$A$9" });
+      expect(p.b.definedNames().TaxRate).to.equal("Budget!$B$1");
+      expect(Object.keys(p.b.definedNames())).to.have.length(2);
+    });
+  });
+
+  it("does not report a peer's defined names back to them", () => {
+    pair().then((p) => {
+      const reported: Record<string, string>[] = [];
+      p.b.setDefinedNamesReporter((n) => reported.push(n));
+      p.b.applyRemoteDefinedNames({ FromAda: "Budget!$C$1" });
+      cy.wrap(null).then(() => {
+        expect(reported, "applying is not a change to announce").to.deep.equal([]);
       });
     });
   });
