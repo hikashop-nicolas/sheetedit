@@ -29,6 +29,9 @@ type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff
 type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
 type ChartInfo = { id: string; sheet: string; model: string };
 type Handle = {
+  queries(): Promise<string | null>;
+  setQueriesReporter(h: ((sectionM: string) => void) | null): void;
+  applyRemoteQueries(sectionM: string): Promise<void>;
   charts(): ChartInfo[];
   setChartsReporter(h: ((c: ChartInfo[]) => void) | null): void;
   applyRemoteCharts(c: ChartInfo[]): void;
@@ -596,5 +599,72 @@ describe("inserting and deleting pictures", () => {
     cy.get(".sheetedit-imagebox").first().click();
     cy.get(".sheetedit-image-del").first().click({ force: true });
     cy.window().its("seHandle").invoke("images").should("have.length", 0);
+  });
+});
+
+// Power Query definitions travel; running them does not. A refresh reaches the network,
+// so refreshing a peer's definition automatically would let anyone in a session choose
+// what everyone else's browser fetches, including addresses on a private network only
+// that person can reach. The rows a refresh produces travel as cells instead.
+describe("two editors, query definitions", () => {
+  beforeEach(() => open("cypress/fixtures/pq.xlsx"));
+
+  it("reads the workbook's query definitions", () => {
+    pair().then((p) => {
+      cy.wrap(p.a.queries()).then((m) => {
+        expect(m, "the fixture has queries").to.be.a("string");
+        expect(String(m)).to.contain("section");
+      });
+    });
+  });
+
+  it("carries a definition to the other peer", () => {
+    pair().then((p) => {
+      cy.wrap(p.a.queries()).then((original) => {
+        const edited = `${String(original)}\r\nshared Added = 42;\r\n`;
+        return cy.wrap(p.b.applyRemoteQueries(edited)).then(() =>
+          cy.wrap(p.b.queries()).then((got) => {
+            expect(String(got), "B has the peer's definition").to.contain("shared Added = 42;");
+          }),
+        );
+      });
+    });
+  });
+
+  it("does not report a peer's definitions back to them", () => {
+    pair().then((p) => {
+      const reported: string[] = [];
+      p.b.setQueriesReporter((m) => reported.push(m));
+      cy.wrap(p.a.queries()).then((original) => {
+        const edited = `${String(original)}\r\nshared FromAda = 1;\r\n`;
+        return cy.wrap(p.b.applyRemoteQueries(edited)).then(() => {
+          cy.wait(300);
+          expect(reported, "applying is not a change to announce").to.deep.equal([]);
+        });
+      });
+    });
+  });
+
+  // The security property, asserted rather than assumed: taking a definition must not run
+  // it. A query that fetches would otherwise be a way to make this browser fetch.
+  it("stores a definition without running it", () => {
+    pair().then((p) => {
+      cy.window().then((w) => {
+        const fetched: string[] = [];
+        const real = w.fetch.bind(w);
+        cy.stub(w, "fetch").callsFake((...args: unknown[]) => {
+          fetched.push(String(args[0]));
+          return real(...(args as Parameters<typeof fetch>));
+        });
+        const hostile = 'section Section1;\r\nshared Probe = Web.Contents("http://127.0.0.1:9/should-not-be-fetched");\r\n';
+        return cy.wrap(p.b.applyRemoteQueries(hostile)).then(() => {
+          cy.wait(500);
+          expect(
+            fetched.filter((u) => u.includes("should-not-be-fetched")),
+            "the definition was stored, not run",
+          ).to.deep.equal([]);
+        });
+      });
+    });
   });
 });

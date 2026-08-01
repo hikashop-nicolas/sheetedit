@@ -186,6 +186,20 @@ export interface SheetEditor {
   setImagesReporter(handler: ((images: SheetImageInfo[]) => void) | null): void;
   /** Move, resize and replace pictures to match a peer's. Reports nothing back. */
   applyRemoteImages(images: SheetImageInfo[]): void;
+  /**
+   * The workbook's Power Query definitions, as the M section document, or null when it has
+   * none. Definitions only: running a query is never done on another peer's behalf.
+   */
+  queries(): Promise<string | null>;
+  setQueriesReporter(handler: ((sectionM: string) => void) | null): void;
+  /**
+   * Take a peer's query definitions.
+   *
+   * Stored, not run. A refresh reaches the network, so refreshing a definition someone
+   * else wrote would let them choose what this browser fetches; the rows a refresh
+   * produces travel as cells instead, published by whoever ran it.
+   */
+  applyRemoteQueries(sectionM: string): Promise<void>;
   /** Every chart in the workbook, with its definition. */
   charts(): SheetChartInfo[];
   setChartsReporter(handler: ((charts: SheetChartInfo[]) => void) | null): void;
@@ -287,6 +301,9 @@ export function createSheetEditor(
       charts: () => [],
       setChartsReporter: () => undefined,
       applyRemoteCharts: () => undefined,
+      queries: () => Promise.resolve(null),
+      setQueriesReporter: () => undefined,
+      applyRemoteQueries: () => Promise.resolve(),
       sheetNames: () => [],
       selectedCell: () => null,
       setPeerCells: () => undefined,
@@ -1176,6 +1193,7 @@ export function createSheetEditor(
         void import("mlang/qdeff").then(({ writeWorkbookSectionM }) => {
           wb.files = writeWorkbookSectionM(wb.files, newM, newGuid());
           mark();
+          reportQueries();
         });
       },
       loadQuery: (name, result) => {
@@ -1263,6 +1281,50 @@ export function createSheetEditor(
     lastImagesSig = sig;
     if (applyingRemoteImages) return;
     imagesReporter(infos);
+  };
+
+  // --- Power Query definitions ------------------------------------------------------
+  //
+  // The definitions are shared; running them is not. A refresh reaches the network through
+  // Web.Contents and friends, so applying a peer's query and refreshing it automatically
+  // would let anyone in a session make everyone else's browser fetch a URL of their
+  // choosing, including addresses on a private network that only that person can reach.
+  //
+  // Nothing is lost by refusing. A refresh writes its rows into cells, and cells are
+  // already shared, so whoever refreshes publishes the data and everyone sees the same
+  // rows without running anything. Refreshing stays a deliberate act by the person doing
+  // it, on a definition they can read first.
+  const newQueryGuid = (): string => {
+    try {
+      return `{${crypto.randomUUID().toUpperCase()}}`;
+    } catch {
+      return "{00000000-0000-0000-0000-000000000000}";
+    }
+  };
+  let queriesReporter: ((sectionM: string) => void) | null = null;
+  let lastQueriesM: string | null = null;
+  let applyingRemoteQueries = false;
+
+  const currentSectionM = async (): Promise<string | null> => {
+    try {
+      const { readWorkbookQueries } = await import("mlang/qdeff");
+      return readWorkbookQueries(wb.files)?.mashup.sectionM ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const reportQueries = (): Promise<void> => {
+    if (!queriesReporter) return Promise.resolve();
+    // Read now, not when the section arrives: this returns before the read finishes, and
+    // by then the flag has been cleared, so a peer's change would look like a local one.
+    const fromRemote = applyingRemoteQueries;
+    return currentSectionM().then((sectionM) => {
+      if (sectionM == null || sectionM === lastQueriesM) return;
+      lastQueriesM = sectionM;
+      if (fromRemote) return; // a peer's definitions are not ours to announce back
+      queriesReporter?.(sectionM);
+    });
   };
 
   const chartInfos = (): SheetChartInfo[] => {
@@ -4689,6 +4751,34 @@ export function createSheetEditor(
     },
     sheets() {
       return sheetInfos();
+    },
+    queries() {
+      return currentSectionM();
+    },
+    setQueriesReporter(handler) {
+      queriesReporter = handler;
+      if (!handler) {
+        lastQueriesM = null;
+        return;
+      }
+      void currentSectionM().then((m) => {
+        lastQueriesM = m;
+      });
+    },
+    async applyRemoteQueries(sectionM) {
+      applyingRemoteQueries = true;
+      try {
+        const { writeWorkbookSectionM } = await import("mlang/qdeff");
+        wb.files = writeWorkbookSectionM(wb.files, sectionM, newQueryGuid());
+        dirty = true;
+        // Through the same path a local change takes, so the baseline advances by the same
+        // rule; the flag is what stops it going back to the peer who sent it.
+        await reportQueries();
+      } catch {
+        /* this file type carries no query part */
+      } finally {
+        applyingRemoteQueries = false;
+      }
     },
     charts() {
       return chartInfos();
