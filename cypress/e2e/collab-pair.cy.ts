@@ -28,7 +28,11 @@ type SheetInfo = { id: string; name: string; visibility?: "hidden" | "veryHidden
 type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number };
 type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
 type ChartInfo = { id: string; sheet: string; model: string };
+type PivotInfo = { id: string; sheet: string; model: string };
 type Handle = {
+  pivots(): PivotInfo[];
+  setPivotsReporter(h: ((p: PivotInfo[]) => void) | null): void;
+  applyRemotePivots(p: PivotInfo[]): void;
   queries(): Promise<string | null>;
   setQueriesReporter(h: ((sectionM: string) => void) | null): void;
   applyRemoteQueries(sectionM: string): Promise<void>;
@@ -664,6 +668,115 @@ describe("two editors, query definitions", () => {
             "the definition was stored, not run",
           ).to.deep.equal([]);
         });
+      });
+    });
+  });
+});
+
+// Pivots. Their definitions travel; their output does not need to, because a pivot's
+// output is ordinary cells and cells are already shared. Rebuilding one on each peer would
+// write those cells a second time, from a source range that may still be arriving.
+describe("two editors, pivots", () => {
+  beforeEach(() => open("cypress/fixtures/pivot.xlsx"));
+
+  function wirePivots(p: Pair): { reported: number } {
+    const counts = { reported: 0 };
+    let applying = false;
+    const wire = (from: Handle, to: () => Handle) => {
+      from.setPivotsReporter((pivots) => {
+        counts.reported++; // before the guard; see wireSheets
+        if (applying) return;
+        applying = true;
+        try {
+          to().applyRemotePivots(pivots);
+        } finally {
+          applying = false;
+        }
+      });
+    };
+    wire(p.a, () => p.b);
+    wire(p.b, () => p.a);
+    return counts;
+  }
+
+  it("gives every pivot an id both peers agree on", () => {
+    pair().then((p) => {
+      const mine = p.a.pivots();
+      expect(mine.length, "the fixture has one").to.be.greaterThan(0);
+      expect(p.b.pivots().map((x) => x.id), "same file, same ids").to.deep.equal(
+        mine.map((x) => x.id),
+      );
+    });
+  });
+
+  // The name cannot be the identity: every pivot authored in the app is called
+  // "PivotTable", so names collide inside one workbook, never mind between two peers.
+  it("identifies pivots by id rather than by name", () => {
+    pair().then((p) => {
+      const mine = p.a.pivots();
+      const model = JSON.parse(mine[0].model) as { name?: string };
+      expect(mine[0].id, "the id is not the name").to.not.equal(model.name);
+    });
+  });
+
+  // The name cannot be the identity in practice either: authoring two pivots gives both
+  // the same name, so an id derived from it would merge two pivots into one.
+  it("gives two pivots authored in one workbook different ids", () => {
+    const authorOne = () => {
+      cy.get(".sheetedit-tab").contains("Data").click();
+      cy.get('input[aria-label="A1"]').focus();
+      cy.get('input[aria-label="C7"]').trigger("mousedown", { shiftKey: true });
+      cy.get('.sheetedit-toolbar [title*="pivot" i], .sheetedit-toolbar [aria-label*="pivot" i]')
+        .first()
+        .click();
+      cy.get(".sheetedit-form-modal", { timeout: 15000 }).should("be.visible");
+      cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+      cy.get(".sheetedit-form-modal").should("not.exist");
+    };
+    authorOne();
+    authorOne();
+
+    cy.window().then((w) => {
+      const h = (w as unknown as { seHandle: Handle }).seHandle;
+      const authored = h.pivots().filter((pv) => pv.id.startsWith("pv-"));
+      expect(authored.length, "two were authored").to.equal(2);
+      expect(authored[0].id, "with different ids").to.not.equal(authored[1].id);
+      const names = authored.map((pv) => (JSON.parse(pv.model) as { name?: string }).name);
+      expect(names[0], "even though they share a name").to.equal(names[1]);
+    });
+  });
+
+  it("carries a changed definition to the other peer", () => {
+    pair().then((p) => {
+      wirePivots(p);
+      const mine = p.a.pivots();
+      const model = JSON.parse(mine[0].model) as { name?: string };
+      model.name = "Renamed by Ada";
+      p.b.applyRemotePivots([{ ...mine[0], model: JSON.stringify(model) }]);
+
+      const theirs = JSON.parse(p.b.pivots()[0].model) as { name?: string };
+      expect(theirs.name).to.equal("Renamed by Ada");
+    });
+  });
+
+  it("removes a pivot the other peer removed", () => {
+    pair().then((p) => {
+      wirePivots(p);
+      p.b.applyRemotePivots([]);
+      expect(p.b.pivots(), "gone on B too").to.deep.equal([]);
+    });
+  });
+
+  it("does not report a peer's pivot change back to them", () => {
+    pair().then((p) => {
+      const counts = wirePivots(p);
+      const before = counts.reported;
+      const mine = p.a.pivots();
+      const model = JSON.parse(mine[0].model) as { name?: string };
+      model.name = "From the other side";
+      p.b.applyRemotePivots([{ ...mine[0], model: JSON.stringify(model) }]);
+      cy.wrap(null).then(() => {
+        expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });
     });
   });

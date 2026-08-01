@@ -52,6 +52,22 @@ export const newImageId = (): string => {
   return `i-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 };
 
+/** Give every pivot a stable id, from its sheet and its place in that sheet. */
+export function assignPivotIds(wb: Workbook): void {
+  for (const sheet of wb.sheets) {
+    sheet.pivotTables?.forEach((pv, i) => {
+      pv.cid ??= `${sheet.cid ?? sheet.name}-pv${i}`;
+    });
+  }
+}
+
+/** An id for a pivot authored during a session. */
+export const newPivotId = (): string => {
+  const salt = new Uint8Array(4);
+  crypto.getRandomValues(salt);
+  return `pv-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+};
+
 /** Unique across peers, for a sheet that was not in the file. */
 export function newSheetId(): string {
   const salt = new Uint8Array(4);

@@ -1,7 +1,7 @@
 import { colToLetters, ensureCell, getCell, type PivotTableInfo, type Sheet, type Workbook } from "../model";
 import { computePivot, pivotColumnItems, pivotValueName, type PivotFunc, type PivotShowAs, type PivotSpec, type PivotValue } from "../pivot";
 import { setCellInput } from "../workbook";
-import { addSheet } from "../sheet-ops";
+import { addSheet, newPivotId } from "../sheet-ops";
 import { t } from "../i18n";
 import { deleteXlsxPivotParts, setXlsxCellNumFmt, writeXlsxPivotParts } from "../../adapters/xlsx";
 import { createXlsxSlicer, createXlsxTableSlicer } from "../../adapters/xlsx/slicer-create";
@@ -78,6 +78,7 @@ export function setupPivotUi(ctx: PivotUiCtx): { openPivotMenu: (p: PivotTableIn
     if (wb.kind === "xlsx") ({ part, cachePart } = writeXlsxPivotParts(wb, dest, { row: anchor.r, col: anchor.c }, sourceSheetName, spec, computed));
     else { dest.odsDirty = true; writeOdsPivotDef(wb, dest.name, sourceSheetName, spec, computed); }
     return {
+      cid: newPivotId(),
       name: "PivotTable",
       sourceSheet: sourceSheetName,
       sourceRange: { ...spec.source },

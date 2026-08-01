@@ -158,6 +158,15 @@ export interface PivotDataField { name: string; func?: string; }
     ordinary cells it materialises; this describes the definition so the UI can surface it and so
     an edit to the source range can flag the cache for refresh. Format-agnostic. */
 export interface PivotTableInfo {
+  /**
+   * Stable identity for collaboration.
+   *
+   * Not the name: every pivot authored in the app is called "PivotTable", so names collide
+   * inside one workbook, never mind between two peers. Pivots read from a file take their
+   * id from position, which every peer agrees on; ones authored in a session take a random
+   * one, because two people each adding a pivot must end up with two.
+   */
+  cid?: string;
   name: string;
   /** Source data location, when it is a worksheet range (sheet name + 1-based inclusive range). */
   sourceSheet?: string;

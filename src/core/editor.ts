@@ -49,7 +49,7 @@ import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
-import { assignImageIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
+import { assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
@@ -58,6 +58,21 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // ---------------------------------------------------------------------------
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
+/**
+ * A pivot as a session carries it: its whole definition, as one value.
+ *
+ * The definition only. A pivot's output is ordinary cells, and cells are already shared, so
+ * the person who builds or refreshes one publishes the result and everyone else sees the
+ * same rows. Rebuilding it on each peer would write those cells a second time, from a
+ * source range that may itself still be arriving.
+ */
+export interface SheetPivotInfo {
+  id: string;
+  sheet: string;
+  /** The PivotTableInfo, as JSON. Opaque here; the editor is the only thing that reads it. */
+  model: string;
+}
+
 /**
  * A chart as a session carries it: where it sits, and its whole definition.
  *
@@ -200,6 +215,14 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /** Every pivot in the workbook, with its definition. */
+  pivots(): SheetPivotInfo[];
+  setPivotsReporter(handler: ((pivots: SheetPivotInfo[]) => void) | null): void;
+  /**
+   * Take a peer's pivot definitions. Stored, not rebuilt: the output cells arrive through
+   * the ordinary cell path, from whoever built them.
+   */
+  applyRemotePivots(pivots: SheetPivotInfo[]): void;
   /** Every chart in the workbook, with its definition. */
   charts(): SheetChartInfo[];
   setChartsReporter(handler: ((charts: SheetChartInfo[]) => void) | null): void;
@@ -271,6 +294,7 @@ export function createSheetEditor(
     // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
     assignSheetIds(wb);
     assignImageIds(wb);
+    assignPivotIds(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -298,6 +322,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      pivots: () => [],
+      setPivotsReporter: () => undefined,
+      applyRemotePivots: () => undefined,
       charts: () => [],
       setChartsReporter: () => undefined,
       applyRemoteCharts: () => undefined,
@@ -1228,6 +1255,7 @@ export function createSheetEditor(
     reportSheets();
     reportImages();
     reportCharts();
+    reportPivots();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1240,6 +1268,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let pivotsReporter: ((pivots: SheetPivotInfo[]) => void) | null = null;
+  let lastPivotsSig: string | null = null;
+  let applyingRemotePivots = false;
   let chartsReporter: ((charts: SheetChartInfo[]) => void) | null = null;
   let lastChartsSig: string | null = null;
   let applyingRemoteCharts = false;
@@ -1325,6 +1356,27 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const pivotInfos = (): SheetPivotInfo[] => {
+    const out: SheetPivotInfo[] = [];
+    for (const sh of wb.sheets) {
+      for (const pv of sh.pivotTables ?? []) {
+        if (!pv.cid) continue;
+        out.push({ id: pv.cid, sheet: sh.cid ?? sh.name, model: JSON.stringify(pv) });
+      }
+    }
+    return out;
+  };
+
+  const reportPivots = (): void => {
+    if (!pivotsReporter) return;
+    const infos = pivotInfos();
+    const sig = JSON.stringify(infos);
+    if (sig === lastPivotsSig) return;
+    lastPivotsSig = sig;
+    if (applyingRemotePivots) return;
+    pivotsReporter(infos);
   };
 
   const chartInfos = (): SheetChartInfo[] => {
@@ -4778,6 +4830,43 @@ export function createSheetEditor(
         /* this file type carries no query part */
       } finally {
         applyingRemoteQueries = false;
+      }
+    },
+    pivots() {
+      return pivotInfos();
+    },
+    setPivotsReporter(handler) {
+      pivotsReporter = handler;
+      lastPivotsSig = handler ? JSON.stringify(pivotInfos()) : null;
+    },
+    applyRemotePivots(next) {
+      applyingRemotePivots = true;
+      try {
+        const wanted = new Map(next.map((pv) => [pv.id, pv]));
+        for (const sh of wb.sheets) {
+          if (!sh.pivotTables) continue;
+          const keep = sh.pivotTables.filter((pv) => !pv.cid || wanted.has(pv.cid));
+          if (keep.length !== sh.pivotTables.length) sh.pivotTables = keep;
+        }
+        for (const info of next) {
+          const sheet = sheetById(wb, info.sheet);
+          if (!sheet) continue;
+          let model: import("./model").PivotTableInfo;
+          try {
+            model = JSON.parse(info.model) as import("./model").PivotTableInfo;
+          } catch {
+            continue;
+          }
+          const list = (sheet.pivotTables ??= []);
+          const at = list.findIndex((pv) => pv.cid === info.id);
+          if (at >= 0) list[at] = model;
+          else list.push(model);
+        }
+        dirty = true;
+        reportPivots();
+        renderGrid();
+      } finally {
+        applyingRemotePivots = false;
       }
     },
     charts() {
