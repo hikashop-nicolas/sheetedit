@@ -27,7 +27,11 @@ type StructuralOp = { kind: "insert" | "delete"; axis: "row" | "col"; sheet: str
 type SheetInfo = { id: string; name: string; visibility?: "hidden" | "veryHidden" };
 type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number };
 type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
+type ChartInfo = { id: string; sheet: string; model: string };
 type Handle = {
+  charts(): ChartInfo[];
+  setChartsReporter(h: ((c: ChartInfo[]) => void) | null): void;
+  applyRemoteCharts(c: ChartInfo[]): void;
   getBytes(): Promise<Uint8Array>;
   images(): ImageInfo[];
   setImagesReporter(h: ((i: ImageInfo[]) => void) | null): void;
@@ -396,6 +400,91 @@ describe("two editors, pictures", () => {
       p.b.applyRemoteImages(
         p.a.images().map((im) => ({ ...im, anchor: { ...im.anchor, fromRow: im.anchor.fromRow + 2 } })),
       );
+      cy.wrap(null).then(() => {
+        expect(counts.reported, "applying is not a change to announce").to.equal(before);
+      });
+    });
+  });
+});
+
+// Charts. Unlike a picture, a chart can be inserted and removed during a session, so ids
+// for new ones have to be unique across peers rather than derived from position. Charts
+// read from a file take theirs from position, which every peer agrees on already.
+describe("two editors, charts", () => {
+  beforeEach(() => open("cypress/fixtures/chart.xlsx"));
+
+  function wireCharts(p: Pair): { reported: number } {
+    const counts = { reported: 0 };
+    let applying = false;
+    const wire = (from: Handle, to: () => Handle) => {
+      from.setChartsReporter((charts) => {
+        counts.reported++; // before the guard; see wireSheets
+        if (applying) return;
+        applying = true;
+        try {
+          to().applyRemoteCharts(charts);
+        } finally {
+          applying = false;
+        }
+      });
+    };
+    wire(p.a, () => p.b);
+    wire(p.b, () => p.a);
+    return counts;
+  }
+
+  it("gives every chart an id both peers agree on", () => {
+    pair().then((p) => {
+      const mine = p.a.charts();
+      expect(mine.length, "the fixture has one").to.be.greaterThan(0);
+      expect(p.b.charts().map((c) => c.id), "same file, same ids").to.deep.equal(
+        mine.map((c) => c.id),
+      );
+    });
+  });
+
+  it("carries a reconfigured chart to the other peer", () => {
+    pair().then((p) => {
+      wireCharts(p);
+      const mine = p.a.charts();
+      const model = JSON.parse(mine[0].model) as { title?: string };
+      model.title = "Retitled by Ada";
+      p.b.applyRemoteCharts([{ ...mine[0], model: JSON.stringify(model) }]);
+
+      const theirs = JSON.parse(p.b.charts()[0].model) as { title?: string };
+      expect(theirs.title, "B sees the new title").to.equal("Retitled by Ada");
+    });
+  });
+
+  it("carries a chart added during the session", () => {
+    pair().then((p) => {
+      wireCharts(p);
+      const mine = p.a.charts();
+      const copy = JSON.parse(mine[0].model) as { id: string; title?: string };
+      copy.id = "chart-new-1-abcdef";
+      copy.title = "Added by Ada";
+      p.b.applyRemoteCharts([...mine, { id: copy.id, sheet: mine[0].sheet, model: JSON.stringify(copy) }]);
+
+      expect(p.b.charts().map((c) => c.id), "B has both").to.include(copy.id);
+    });
+  });
+
+  it("removes a chart the other peer removed", () => {
+    pair().then((p) => {
+      wireCharts(p);
+      p.b.applyRemoteCharts([]);
+      expect(p.b.charts(), "gone on B too").to.deep.equal([]);
+    });
+  });
+
+  it("does not report a peer's chart change back to them", () => {
+    pair().then((p) => {
+      const counts = wireCharts(p);
+      const before = counts.reported;
+      const mine = p.a.charts();
+      const model = JSON.parse(mine[0].model) as { title?: string };
+      model.title = "From the other side";
+      p.b.applyRemoteCharts([{ ...mine[0], model: JSON.stringify(model) }]);
       cy.wrap(null).then(() => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });

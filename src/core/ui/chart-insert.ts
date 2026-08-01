@@ -425,6 +425,17 @@ function fillControl(label: string, initial: string, onChange: (v: string) => vo
 }
 
 let idSeq = 0;
-const uniqueId = (): string => `chart-new-${++idSeq}`;
+/**
+ * An id for a chart that was not in the file.
+ *
+ * Random, not a counter: two people each inserting a chart would both call theirs the
+ * first new one, and one would take the other's for its own. Charts read from a file take
+ * their id from position instead, which every peer agrees on without being told.
+ */
+const uniqueId = (): string => {
+  const salt = new Uint8Array(4);
+  crypto.getRandomValues(salt);
+  return `chart-new-${++idSeq}-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+};
 const cellA1 = (col: number, row: number): string => `${colLetters(col)}${row}`;
 function colLetters(c: number): string { let s = ""; while (c > 0) { s = String.fromCharCode(65 + ((c - 1) % 26)) + s; c = Math.floor((c - 1) / 26); } return s; }

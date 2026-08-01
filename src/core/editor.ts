@@ -58,6 +58,21 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
 /**
+ * A chart as a session carries it: where it sits, and its whole definition.
+ *
+ * The definition travels as one value rather than field by field. Two people reconfiguring
+ * the same chart at the same moment is rare, and a chart half from one person and half
+ * from another would be a chart neither of them asked for; last writer wins is the honest
+ * answer for something that is a single design decision.
+ */
+export interface SheetChartInfo {
+  id: string;
+  sheet: string;
+  /** The ChartModel, as JSON. Opaque here; the editor is the only thing that reads it. */
+  model: string;
+}
+
+/**
  * A picture as a session carries it.
  *
  * `dataUri` is the payload. A host that shares one is expected to move it out of the
@@ -170,6 +185,11 @@ export interface SheetEditor {
   setImagesReporter(handler: ((images: SheetImageInfo[]) => void) | null): void;
   /** Move, resize and replace pictures to match a peer's. Reports nothing back. */
   applyRemoteImages(images: SheetImageInfo[]): void;
+  /** Every chart in the workbook, with its definition. */
+  charts(): SheetChartInfo[];
+  setChartsReporter(handler: ((charts: SheetChartInfo[]) => void) | null): void;
+  /** Add, change, move and remove charts to match a peer's. Reports nothing back. */
+  applyRemoteCharts(charts: SheetChartInfo[]): void;
   /**
    * Be told when the sheets change: added, renamed, removed, reordered, hidden.
    *
@@ -263,6 +283,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      charts: () => [],
+      setChartsReporter: () => undefined,
+      applyRemoteCharts: () => undefined,
       sheetNames: () => [],
       selectedCell: () => null,
       setPeerCells: () => undefined,
@@ -1185,6 +1208,7 @@ export function createSheetEditor(
     options.onChange?.();
     reportSheets();
     reportImages();
+    reportCharts();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1197,6 +1221,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let chartsReporter: ((charts: SheetChartInfo[]) => void) | null = null;
+  let lastChartsSig: string | null = null;
+  let applyingRemoteCharts = false;
   let lastSheetsSig: string | null = null;
   let applyingRemoteSheets = false;
 
@@ -1235,6 +1262,26 @@ export function createSheetEditor(
     lastImagesSig = sig;
     if (applyingRemoteImages) return;
     imagesReporter(infos);
+  };
+
+  const chartInfos = (): SheetChartInfo[] => {
+    const out: SheetChartInfo[] = [];
+    for (const sh of wb.sheets) {
+      for (const ch of sh.charts ?? []) {
+        out.push({ id: ch.id, sheet: sh.cid ?? sh.name, model: JSON.stringify(ch) });
+      }
+    }
+    return out;
+  };
+
+  const reportCharts = (): void => {
+    if (!chartsReporter) return;
+    const infos = chartInfos();
+    const sig = JSON.stringify(infos);
+    if (sig === lastChartsSig) return;
+    lastChartsSig = sig;
+    if (applyingRemoteCharts) return;
+    chartsReporter(infos);
   };
 
   // Find and replace: finds across every sheet, replaces on the active one.
@@ -4576,6 +4623,48 @@ export function createSheetEditor(
     },
     sheets() {
       return sheetInfos();
+    },
+    charts() {
+      return chartInfos();
+    },
+    setChartsReporter(handler) {
+      chartsReporter = handler;
+      lastChartsSig = handler ? JSON.stringify(chartInfos()) : null;
+    },
+    applyRemoteCharts(next) {
+      applyingRemoteCharts = true;
+      try {
+        const wanted = new Map(next.map((c) => [c.id, c]));
+
+        // Gone on their side.
+        for (const sh of wb.sheets) {
+          if (!sh.charts) continue;
+          const keep = sh.charts.filter((ch) => wanted.has(ch.id));
+          if (keep.length !== sh.charts.length) sh.charts = keep;
+        }
+
+        for (const info of next) {
+          const sheet = wb.sheets.find((s2) => (s2.cid ?? s2.name) === info.sheet);
+          if (!sheet) continue; // a chart on a sheet we do not have: nothing to attach it to
+          let model: import("./chart-model").ChartModel;
+          try {
+            model = JSON.parse(info.model) as import("./chart-model").ChartModel;
+          } catch {
+            continue; // not a chart we can read; leave what we have rather than guess
+          }
+          model.dirty = true;
+          const charts = (sheet.charts ??= []);
+          const at = charts.findIndex((ch) => ch.id === info.id);
+          if (at >= 0) charts[at] = model;
+          else charts.push(model);
+        }
+
+        dirty = true;
+        reportCharts();
+        chartLayer.refresh();
+      } finally {
+        applyingRemoteCharts = false;
+      }
     },
     images() {
       return imageInfos();
