@@ -25,7 +25,13 @@ const BUDGET = "s0";
 type CellInput = { sheet: string; r: number; c: number; input: string };
 type StructuralOp = { kind: "insert" | "delete"; axis: "row" | "col"; sheet: string; at: number; count: number };
 type SheetInfo = { id: string; name: string; visibility?: "hidden" | "veryHidden" };
+type Anchor = { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number };
+type ImageInfo = { id: string; sheet: string; anchor: Anchor; dataUri: string };
 type Handle = {
+  getBytes(): Promise<Uint8Array>;
+  images(): ImageInfo[];
+  setImagesReporter(h: ((i: ImageInfo[]) => void) | null): void;
+  applyRemoteImages(i: ImageInfo[]): void;
   sheets(): SheetInfo[];
   setSheetsReporter(h: ((s: SheetInfo[]) => void) | null): void;
   applyRemoteSheets(s: SheetInfo[]): void;
@@ -288,6 +294,108 @@ describe("two editors, sheets", () => {
       const counts = wireSheets(p);
       const before = counts.reported;
       p.b.applyRemoteSheets([...p.a.sheets(), { id: "s-new", name: "FromNowhere" }]);
+      cy.wrap(null).then(() => {
+        expect(counts.reported, "applying is not a change to announce").to.equal(before);
+      });
+    });
+  });
+});
+
+// Pictures. A workbook's images can be moved, resized and replaced, but not inserted or
+// removed, so the list is the same on every peer and only its contents differ. That is why
+// their ids can be derived from position rather than generated.
+//
+// The payload is deliberately handed out as a data URI and not shared as one: a host is
+// expected to put it in a blob store and share a reference, or a picture replaced twice
+// would cost three pictures' worth of session for ever.
+describe("two editors, pictures", () => {
+  beforeEach(() => open("cypress/fixtures/picture.xlsx"));
+
+  function wireImages(p: Pair): { reported: number } {
+    const counts = { reported: 0 };
+    let applying = false;
+    const wire = (from: Handle, to: () => Handle) => {
+      from.setImagesReporter((images) => {
+        // Counted before the guard: see wireSheets for why.
+        counts.reported++;
+        if (applying) return;
+        applying = true;
+        try {
+          to().applyRemoteImages(images);
+        } finally {
+          applying = false;
+        }
+      });
+    };
+    wire(p.a, () => p.b);
+    wire(p.b, () => p.a);
+    return counts;
+  }
+
+  it("gives every picture an id both peers agree on", () => {
+    pair().then((p) => {
+      const mine = p.a.images();
+      expect(mine.length, "the fixture has one").to.equal(1);
+      expect(p.b.images().map((i) => i.id), "same file, same ids").to.deep.equal(
+        mine.map((i) => i.id),
+      );
+      expect(mine[0].sheet, "attached to a sheet by id, not name").to.equal("s0");
+    });
+  });
+
+  it("carries a move to the other peer", () => {
+    pair().then((p) => {
+      wireImages(p);
+      const moved = p.a.images().map((im) => ({
+        ...im,
+        anchor: { ...im.anchor, fromCol: im.anchor.fromCol + 3, toCol: im.anchor.toCol + 3 },
+      }));
+      p.a.applyRemoteImages(moved); // stands in for a drag, without the pointer events
+      p.b.applyRemoteImages(p.a.images());
+
+      expect(p.b.images()[0].anchor.fromCol, "B sees it where A put it").to.equal(
+        moved[0].anchor.fromCol,
+      );
+    });
+  });
+
+  it("carries a replacement payload", () => {
+    pair().then((p) => {
+      wireImages(p);
+      const other =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+      const before = p.b.images()[0].dataUri;
+      p.b.applyRemoteImages(p.a.images().map((im) => ({ ...im, dataUri: other })));
+
+      expect(p.b.images()[0].dataUri, "the new picture").to.equal(other);
+      expect(p.b.images()[0].dataUri, "and not the old one").to.not.equal(before);
+
+      // On screen is not enough. Without the bytes written back, B would show the peer's
+      // picture and save the one still sitting in the file's media part. Saving and
+      // reopening is the only way to tell those two apart.
+      cy.window().then((w) => {
+        const win = w as unknown as { createSheetEditor: Factory };
+        return cy.wrap(p.b.getBytes()).then((saved) => {
+          const host = w.document.createElement("div");
+          host.id = "reopened";
+          w.document.body.appendChild(host);
+          const reopened = win.createSheetEditor(host, new Uint8Array(saved as ArrayBufferLike), {});
+          expect(reopened.images()[0].dataUri, "the saved file carries the replacement").to.equal(
+            other,
+          );
+          reopened.destroy();
+        });
+      });
+    });
+  });
+
+  it("does not report a peer's picture change back to them", () => {
+    pair().then((p) => {
+      const counts = wireImages(p);
+      const before = counts.reported;
+      p.b.applyRemoteImages(
+        p.a.images().map((im) => ({ ...im, anchor: { ...im.anchor, fromRow: im.anchor.fromRow + 2 } })),
+      );
       cy.wrap(null).then(() => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });

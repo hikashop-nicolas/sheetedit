@@ -25,6 +25,20 @@ export function assignSheetIds(wb: Workbook): void {
   });
 }
 
+/**
+ * Give every picture a stable id, from its sheet and its place in that sheet.
+ *
+ * Safe to derive rather than randomise because images cannot be added or removed here:
+ * a session can move, resize or replace one, and all three keep it in place in the list.
+ */
+export function assignImageIds(wb: Workbook): void {
+  for (const sheet of wb.sheets) {
+    sheet.images?.forEach((im, i) => {
+      im.cid ??= `${sheet.cid ?? sheet.name}-i${i}`;
+    });
+  }
+}
+
 /** Unique across peers, for a sheet that was not in the file. */
 export function newSheetId(): string {
   const salt = new Uint8Array(4);

@@ -465,6 +465,13 @@ export interface TextRun {
 /** An embedded picture anchored on a sheet. Rendered on an overlay; a move/resize updates `anchor`
     and sets `dirty`, which the writer flushes back (xlsx: the drawing anchor; ods: the draw:frame). */
 export interface SheetImage {
+  /**
+   * Stable identity for collaboration. Derived from the sheet and the image's position in
+   * it when the file was read, which every peer agrees on because every peer read the same
+   * file. Images cannot be inserted or deleted in this editor, only moved, resized and
+   * replaced, so that derivation is enough and never needs a random fallback.
+   */
+  cid?: string;
   anchor: import("./chart-model").ChartAnchor;
   dataUri: string;
   /** xlsx: the drawing part path + the anchor's index among the drawing's anchors, so a dirty

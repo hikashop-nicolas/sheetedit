@@ -49,7 +49,7 @@ import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
-import { assignSheetIds, sheetById } from "./sheet-ops";
+import { assignImageIds, assignSheetIds, sheetById } from "./sheet-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -57,6 +57,20 @@ import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNu
 // ---------------------------------------------------------------------------
 
 /** One cell's editable input: what the formula bar would show, on a named sheet. */
+/**
+ * A picture as a session carries it.
+ *
+ * `dataUri` is the payload. A host that shares one is expected to move it out of the
+ * shared document and put a reference in its place: a picture in a CRDT stays there for
+ * the life of the session, still costing after someone replaces it with another.
+ */
+export interface SheetImageInfo {
+  id: string;
+  sheet: string;
+  anchor: { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number };
+  dataUri: string;
+}
+
 /** A sheet as a session names it: by id, so a rename does not move anything. */
 export interface SheetInfo {
   id: string;
@@ -147,6 +161,16 @@ export interface SheetEditor {
   /** The sheets, in order, as a session names them. */
   sheets(): SheetInfo[];
   /**
+   * Every picture in the workbook.
+   *
+   * They can be moved, resized and replaced, but not inserted or removed, so this list is
+   * the same on every peer and only its contents ever differ.
+   */
+  images(): SheetImageInfo[];
+  setImagesReporter(handler: ((images: SheetImageInfo[]) => void) | null): void;
+  /** Move, resize and replace pictures to match a peer's. Reports nothing back. */
+  applyRemoteImages(images: SheetImageInfo[]): void;
+  /**
    * Be told when the sheets change: added, renamed, removed, reordered, hidden.
    *
    * A subscription like the rest of the collaboration surface, so an unshared workbook
@@ -211,6 +235,7 @@ export function createSheetEditor(
     wb = readWorkbook(bytes, { formatHint: options.formatHint }, preunzipped);
     // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
     assignSheetIds(wb);
+    assignImageIds(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -235,6 +260,9 @@ export function createSheetEditor(
       sheets: () => [],
       setSheetsReporter: () => undefined,
       applyRemoteSheets: () => undefined,
+      images: () => [],
+      setImagesReporter: () => undefined,
+      applyRemoteImages: () => undefined,
       sheetNames: () => [],
       selectedCell: () => null,
       setPeerCells: () => undefined,
@@ -1156,6 +1184,7 @@ export function createSheetEditor(
     }
     options.onChange?.();
     reportSheets();
+    reportImages();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1165,6 +1194,9 @@ export function createSheetEditor(
   // signature check is what makes that cheap: mark() runs on every edit, and almost none
   // of them touch the sheet list.
   let sheetsReporter: ((sheets: SheetInfo[]) => void) | null = null;
+  let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
+  let lastImagesSig: string | null = null;
+  let applyingRemoteImages = false;
   let lastSheetsSig: string | null = null;
   let applyingRemoteSheets = false;
 
@@ -1179,6 +1211,30 @@ export function createSheetEditor(
     lastSheetsSig = sig;
     if (applyingRemoteSheets) return; // a peer's change is not ours to announce back
     sheetsReporter(infos);
+  };
+
+  const imageInfos = (): SheetImageInfo[] => {
+    const out: SheetImageInfo[] = [];
+    for (const sh of wb.sheets) {
+      for (const im of sh.images ?? []) {
+        if (!im.cid) continue;
+        out.push({ id: im.cid, sheet: sh.cid ?? sh.name, anchor: { ...im.anchor }, dataUri: im.dataUri });
+      }
+    }
+    return out;
+  };
+
+  const reportImages = (): void => {
+    if (!imagesReporter) return;
+    const infos = imageInfos();
+    // The signature covers the payloads, which are large. Compared rather than hashed
+    // because mark() runs on every keystroke and almost none of them touch a picture: a
+    // string compare of unchanged data is cheap, and re-hashing it would not be.
+    const sig = JSON.stringify(infos);
+    if (sig === lastImagesSig) return;
+    lastImagesSig = sig;
+    if (applyingRemoteImages) return;
+    imagesReporter(infos);
   };
 
   // Find and replace: finds across every sheet, replaces on the active one.
@@ -4520,6 +4576,51 @@ export function createSheetEditor(
     },
     sheets() {
       return sheetInfos();
+    },
+    images() {
+      return imageInfos();
+    },
+    setImagesReporter(handler) {
+      imagesReporter = handler;
+      lastImagesSig = handler ? JSON.stringify(imageInfos()) : null;
+    },
+    applyRemoteImages(next) {
+      applyingRemoteImages = true;
+      try {
+        const byId = new Map(next.map((im) => [im.id, im]));
+        let touched = false;
+        for (const sh of wb.sheets) {
+          for (const im of sh.images ?? []) {
+            const want = im.cid ? byId.get(im.cid) : undefined;
+            if (!want) continue;
+            const moved = JSON.stringify(im.anchor) !== JSON.stringify(want.anchor);
+            const replaced = im.dataUri !== want.dataUri;
+            if (!moved && !replaced) continue;
+            im.anchor = { ...want.anchor };
+            // The payload changed, so the saved file must carry the new bytes rather than
+            // the ones still sitting in the media part.
+            if (replaced) {
+              im.dataUri = want.dataUri;
+              const comma = want.dataUri.indexOf(",");
+              const meta = want.dataUri.slice(0, comma);
+              const binary = atob(want.dataUri.slice(comma + 1));
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              im.replaceBytes = bytes;
+              im.replaceExt = (meta.split("/")[1] ?? "png").split(";")[0].toLowerCase();
+            }
+            im.dirty = true;
+            touched = true;
+          }
+        }
+        if (touched) {
+          dirty = true;
+          reportImages();
+          imageLayer.refresh();
+        }
+      } finally {
+        applyingRemoteImages = false;
+      }
     },
     setSheetsReporter(handler) {
       sheetsReporter = handler;
