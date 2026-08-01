@@ -49,7 +49,8 @@ import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
-import { assignImageIds, assignSheetIds, sheetById } from "./sheet-ops";
+import { assignImageIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
+import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -2653,9 +2654,70 @@ export function createSheetEditor(
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
     onEdit: () => { mark(); imageLayer.refresh(); },
     onReplace: (im) => replaceImage(im),
+    onDelete: imagesInsertable(wb) ? (im) => removeImage(im) : undefined,
   });
   // Replace a picture's bytes: pick a new image file, swap the data URI + stage the bytes for the
   // writer (keeping the anchor). The media part is rewritten on save.
+  /**
+   * Put a picture where the selection is.
+   *
+   * Sized to the picture's own pixels rather than to the selected range: a photo squeezed
+   * into whatever cells happened to be selected is never what anyone wanted, and it can be
+   * dragged from there.
+   */
+  const pickAndInsertImage = (): void => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.style.display = "none";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const ext = (file.name.split(".").pop() || (file.type.split("/")[1] ?? "png")).toLowerCase();
+      const size = await imagePixelSize(bytes, file.type || `image/${ext}`);
+      const sheet = wb.sheets[active];
+      const at = { r: sel?.r1 ?? 1, c: sel?.c1 ?? 1 };
+      const anchor = {
+        fromCol: at.c, fromRow: at.r, fromColOff: 0, fromRowOff: 0,
+        toCol: at.c, toRow: at.r, toColOff: size.w, toRowOff: size.h,
+      };
+      const im = insertImage(wb, sheet, bytes, ext, anchor);
+      if (!im) return;
+      im.cid = newImageId();
+      im.dirty = true;
+      mark();
+      imageLayer.refresh();
+    });
+    document.body.appendChild(input);
+    input.click();
+  };
+
+  /** A picture's natural size, so it goes in at its own proportions. */
+  const imagePixelSize = (bytes: Uint8Array, mime: string): Promise<{ w: number; h: number }> =>
+    new Promise((resolve) => {
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
+      const probe = new Image();
+      probe.onload = () => {
+        URL.revokeObjectURL(url);
+        // Capped so a photograph does not arrive covering the whole sheet.
+        const scale = Math.min(1, 320 / Math.max(1, probe.naturalWidth));
+        resolve({ w: Math.round(probe.naturalWidth * scale) || 160, h: Math.round(probe.naturalHeight * scale) || 120 });
+      };
+      probe.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve({ w: 160, h: 120 });
+      };
+      probe.src = url;
+    });
+
+  const removeImage = (im: import("./model").SheetImage): void => {
+    if (!deleteImage(wb, wb.sheets[active], im)) return;
+    mark();
+    imageLayer.refresh();
+  };
+
   const replaceImage = (im: import("./model").SheetImage): void => {
     const input = document.createElement("input");
     input.type = "file";
@@ -3107,6 +3169,10 @@ export function createSheetEditor(
   if (chartsOn) {
     const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
     trailingIcons.push(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
+  }
+  if (imagesInsertable(wb)) {
+    const IMAGE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.75" cy="6.5" r="1.15"/><path d="M2.5 12l3.5-3.5 2.5 2.5L11 8l2.5 2.5"/></svg>`;
+    trailingIcons.push(tbIcon(IMAGE_ICON, t("imageInsert"), () => pickAndInsertImage()));
   }
   // Authoring controls, each advertised only when the open format supports it (see capabilities.ts).
   if (caps.autofilter) {
@@ -4678,6 +4744,36 @@ export function createSheetEditor(
       try {
         const byId = new Map(next.map((im) => [im.id, im]));
         let touched = false;
+
+        // Gone on their side. Pictures can be removed now, so an id we hold and they do
+        // not is a deletion rather than a peer that simply has not caught up.
+        for (const sh of wb.sheets) {
+          for (const im of [...(sh.images ?? [])]) {
+            if (im.cid && !byId.has(im.cid)) {
+              deleteImage(wb, sh, im);
+              touched = true;
+            }
+          }
+        }
+
+        // New on their side, with the bytes they sent rather than a fetch of our own.
+        for (const info of next) {
+          if (wb.sheets.some((sh) => sh.images?.some((im) => im.cid === info.id))) continue;
+          const sheet = sheetById(wb, info.sheet);
+          if (!sheet) continue; // a picture on a sheet we do not have
+          const comma = info.dataUri.indexOf(",");
+          if (comma < 0) continue;
+          const ext = (info.dataUri.slice(5, comma).split(/[/;]/)[1] ?? "png").toLowerCase();
+          const binary = atob(info.dataUri.slice(comma + 1));
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const made = insertImage(wb, sheet, bytes, ext, info.anchor);
+          if (!made) continue;
+          made.cid = info.id; // theirs, so both peers name it the same thing from now on
+          made.dirty = true;
+          touched = true;
+        }
+
         for (const sh of wb.sheets) {
           for (const im of sh.images ?? []) {
             const want = im.cid ? byId.get(im.cid) : undefined;

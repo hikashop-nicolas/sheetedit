@@ -1,4 +1,5 @@
 import { setupOverlayHosts } from "./overlay-hosts";
+import { t } from "../i18n";
 import { metafileFromDataUri, metafileToPng } from "../metafile";
 import type { Sheet, SheetImage } from "../model";
 import type { ChartGeom } from "./chart-overlay";
@@ -18,6 +19,8 @@ export interface ImageLayerDeps {
   onEdit?: (im: SheetImage) => void;
   /** Double-click on an editable image: the host prompts for a replacement file. */
   onReplace?: (im: SheetImage) => void;
+  /** Remove a picture. Absent when the open format has no drawings to remove it from. */
+  onDelete?: (im: SheetImage) => void;
   /** True when the active sheet's images can be written back; gates the drag handles + replace. */
   editable?: () => boolean;
 }
@@ -123,6 +126,24 @@ export function setupImageLayer(deps: ImageLayerDeps): { refresh(): void; teardo
         attachDrag(box, handle, im);
         box.title = deps.onReplace ? "Double-click to replace" : "";
         box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); deps.onReplace?.(im); });
+        if (deps.onDelete) {
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "sheetedit-image-del";
+          del.textContent = "\u00d7";
+          del.title = t("imageDelete");
+          del.setAttribute("aria-label", t("imageDelete"));
+          del.addEventListener("pointerdown", (e) => e.stopPropagation());
+          del.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); deps.onDelete?.(im); });
+          box.appendChild(del);
+          // Delete removes the selected picture, for anyone not reaching for the mouse.
+          box.tabIndex = 0;
+          box.addEventListener("keydown", (e) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            e.preventDefault();
+            deps.onDelete?.(im);
+          });
+        }
       }
       hosts.hostFor(im.anchor.fromRow).appendChild(box);
       boxes.set(im, box);

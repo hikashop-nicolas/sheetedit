@@ -39,6 +39,19 @@ export function assignImageIds(wb: Workbook): void {
   }
 }
 
+/**
+ * An id for a picture added during a session.
+ *
+ * Random rather than derived, now that pictures can be inserted: two people each adding
+ * one would otherwise both call theirs the same thing and each would take the other's for
+ * its own. Pictures already in the file keep their position-derived id.
+ */
+export const newImageId = (): string => {
+  const salt = new Uint8Array(4);
+  crypto.getRandomValues(salt);
+  return `i-${[...salt].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+};
+
 /** Unique across peers, for a sheet that was not in the file. */
 export function newSheetId(): string {
   const salt = new Uint8Array(4);

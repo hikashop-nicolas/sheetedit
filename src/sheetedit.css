@@ -616,6 +616,13 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-image-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
   background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border); cursor:nwse-resize; pointer-events:auto; display:none; }
 .sheetedit-imagebox.selected .sheetedit-image-resize { display:block; }
+/* Remove: shown only on the selected picture, like the resize handle, so a sheet full of
+   pictures is not a sheet full of buttons. */
+.sheetedit-image-del { position:absolute; right:-7px; top:-7px; width:16px; height:16px; padding:0;
+  border-radius:50%; border:1.5px solid var(--sheetedit-handle-border); background:var(--sheetedit-accent,#4c8bf5);
+  color:var(--sheetedit-accent-fg,#fff); font:600 11px/1 system-ui,sans-serif; cursor:pointer; pointer-events:auto; display:none; }
+.sheetedit-imagebox.selected .sheetedit-image-del { display:block; }
+.sheetedit-image-del:hover { filter:brightness(1.1); }
 
 /* --- pivot outlines ---------------------------------------------------- */
 .sheetedit-pivotlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:4; }

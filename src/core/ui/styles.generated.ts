@@ -513,6 +513,11 @@ border-color:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); }
 .sheetedit-image-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
 background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border); cursor:nwse-resize; pointer-events:auto; display:none; }
 .sheetedit-imagebox.selected .sheetedit-image-resize { display:block; }
+.sheetedit-image-del { position:absolute; right:-7px; top:-7px; width:16px; height:16px; padding:0;
+border-radius:50%; border:1.5px solid var(--sheetedit-handle-border); background:var(--sheetedit-accent,#4c8bf5);
+color:var(--sheetedit-accent-fg,#fff); font:600 11px/1 system-ui,sans-serif; cursor:pointer; pointer-events:auto; display:none; }
+.sheetedit-imagebox.selected .sheetedit-image-del { display:block; }
+.sheetedit-image-del:hover { filter:brightness(1.1); }
 .sheetedit-pivotlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:4; }
 .sheetedit-pivotlayer-inner { position:absolute; inset:0; }
 .sheetedit-pivotbox { position:absolute; box-sizing:border-box; border:1.5px dashed var(--sheetedit-accent,#3b82f6); border-radius:3px; background:color-mix(in srgb, var(--sheetedit-accent,#3b82f6) 6%, transparent); }

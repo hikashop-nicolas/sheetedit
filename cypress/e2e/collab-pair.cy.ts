@@ -393,6 +393,50 @@ describe("two editors, pictures", () => {
     });
   });
 
+  // Pictures can be added and removed now, so a session has to carry both. Before that
+  // they were a fixed set and an id could be derived from position; it cannot any more.
+  it("carries a picture added by the other peer", () => {
+    pair().then((p) => {
+      wireImages(p);
+      const png =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+      const added = {
+        id: "i-fromada",
+        sheet: "s0",
+        anchor: { fromCol: 2, fromRow: 2, fromColOff: 0, fromRowOff: 0, toCol: 3, toRow: 4, toColOff: 60, toRowOff: 40 },
+        dataUri: png,
+      };
+      p.b.applyRemoteImages([...p.a.images(), added]);
+
+      const theirs = p.b.images();
+      expect(theirs.map((i) => i.id), "B has it too").to.include("i-fromada");
+      expect(theirs.find((i) => i.id === "i-fromada")?.dataUri, "with the payload").to.equal(png);
+    });
+  });
+
+  it("removes a picture the other peer removed", () => {
+    pair().then((p) => {
+      wireImages(p);
+      expect(p.b.images().length, "starts with one").to.equal(1);
+      p.b.applyRemoteImages([]);
+      expect(p.b.images(), "gone on B too").to.deep.equal([]);
+
+      // Gone from the model is not gone from the file. Saving and reopening is the only
+      // way to tell a real removal from one that only cleared the screen.
+      cy.window().then((w) => {
+        const win = w as unknown as { createSheetEditor: Factory };
+        return cy.wrap(p.b.getBytes()).then((saved) => {
+          const host = w.document.createElement("div");
+          host.id = "reopened-del";
+          w.document.body.appendChild(host);
+          const reopened = win.createSheetEditor(host, new Uint8Array(saved as ArrayBufferLike), {});
+          expect(reopened.images(), "and gone from the saved workbook").to.deep.equal([]);
+          reopened.destroy();
+        });
+      });
+    });
+  });
+
   it("does not report a peer's picture change back to them", () => {
     pair().then((p) => {
       const counts = wireImages(p);
@@ -489,5 +533,68 @@ describe("two editors, charts", () => {
         expect(counts.reported, "applying is not a change to announce").to.equal(before);
       });
     });
+  });
+});
+
+// Inserting and deleting pictures, through the toolbar rather than the API. Until now a
+// workbook could only ever hold the pictures it arrived with.
+describe("inserting and deleting pictures", () => {
+  const PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  function insertViaToolbar() {
+    cy.get('.sheetedit-toolbar [title*="picture" i], .sheetedit-toolbar [aria-label*="picture" i]')
+      .first()
+      .then(($btn) => {
+        // The button opens a file picker, which a test cannot drive; put the file straight
+        // into the input the handler creates, which is the same path from there on.
+        cy.window().then((w) => {
+          const realCreate = w.document.createElement.bind(w.document);
+          cy.stub(w.document, "createElement").callsFake((tag: string) => {
+            const el = realCreate(tag);
+            if (tag === "input") {
+              setTimeout(() => {
+                const bytes = Uint8Array.from(atob(PNG), (ch) => ch.charCodeAt(0));
+                const file = new w.File([bytes], "dot.png", { type: "image/png" });
+                const dt = new w.DataTransfer();
+                dt.items.add(file);
+                (el as HTMLInputElement).files = dt.files;
+                el.dispatchEvent(new w.Event("change"));
+              }, 0);
+            }
+            return el;
+          });
+          $btn[0].click();
+        });
+      });
+  }
+
+  it("adds a picture to a workbook that had none, and saves it", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.window().then((w) => {
+      const h = (w as unknown as { seHandle: Handle }).seHandle;
+      expect(h.images(), "the fixture has none").to.deep.equal([]);
+    });
+
+    insertViaToolbar();
+
+    cy.window().its("seHandle").invoke("images").should("have.length", 1);
+    cy.window().then((w) => {
+      const win = w as unknown as { seHandle: Handle; createSheetEditor: Factory };
+      return cy.wrap(win.seHandle.getBytes()).then((saved) => {
+        const host = w.document.createElement("div");
+        w.document.body.appendChild(host);
+        const reopened = win.createSheetEditor(host, new Uint8Array(saved as ArrayBufferLike), {});
+        expect(reopened.images(), "and it is in the saved workbook").to.have.length(1);
+        reopened.destroy();
+      });
+    });
+  });
+
+  it("removes one with the button on the selected picture", () => {
+    open("cypress/fixtures/picture.xlsx");
+    cy.get(".sheetedit-imagebox").first().click();
+    cy.get(".sheetedit-image-del").first().click({ force: true });
+    cy.window().its("seHandle").invoke("images").should("have.length", 0);
   });
 });
