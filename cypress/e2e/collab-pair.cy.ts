@@ -31,7 +31,11 @@ type ChartInfo = { id: string; sheet: string; model: string };
 type PivotInfo = { id: string; sheet: string; model: string };
 type DrawingInfo = { id: string; sheet: string; kind: "shape" | "control"; model: string };
 type SettingInfo = { sheet: string; group: string; value: string };
+type TableDef = { cid: string; name: string; sheet: string; r1: number; c1: number; r2: number; c2: number; headerRow: boolean; columns: string[] };
 type Handle = {
+  tables(): TableDef[];
+  setTablesReporter(h: ((t: TableDef[]) => void) | null): void;
+  applyRemoteTables(t: TableDef[]): void;
   vbaModules(): Record<string, string>;
   setVbaReporter(h: ((m: Record<string, string>) => void) | null): void;
   applyRemoteVba(m: Record<string, string>): void;
@@ -1048,6 +1052,111 @@ describe("two editors, macros", () => {
     pair().then((p) => {
       p.b.applyRemoteVba({ Module1: "Sub X()\nEnd Sub\n" });
       expect(p.b.vbaModules(), "still no macros").to.deep.equal({});
+    });
+  });
+});
+
+// Named data ranges: an xlsx table and an ODF named database range are the same idea in two
+// storages, so both are authored and shared through one shape. Until now they could only be
+// read, which left structured references, table slicers, Power Query's own-workbook source
+// and VBA's ListObjects reachable only on files authored elsewhere.
+describe("named data ranges", () => {
+  // Scoped to the first editor: the pair tests put a second one on the page, so an
+  // unscoped selector matches twice and Cypress refuses to act on both.
+  function createFromSelection(name: string) {
+    cy.get('#editor input[aria-label="A1"]').focus();
+    cy.get('#editor input[aria-label="C7"]').trigger("mousedown", { shiftKey: true, force: true });
+    cy.get('#editor .sheetedit-toolbar [title*="table" i], #editor .sheetedit-toolbar [aria-label*="table" i]')
+      .first()
+      .click();
+    cy.get(".sheetedit-form-modal", { timeout: 15000 }).should("be.visible");
+    cy.get('.sheetedit-form-modal [data-field="name"]').clear().type(name);
+    cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+    cy.get(".sheetedit-form-modal").should("not.exist");
+  }
+
+  for (const fixture of ["cypress/fixtures/sample.xlsx", "cypress/fixtures/sample.ods"]) {
+    const kind = fixture.endsWith(".ods") ? "ods" : "xlsx";
+
+    it(`creates one from a selection and saves it (${kind})`, () => {
+      open(fixture);
+      cy.window().then((w) => {
+        expect((w as unknown as { seHandle: Handle }).seHandle.tables(), "none to begin with").to.deep.equal([]);
+      });
+
+      createFromSelection("Sales");
+
+      cy.window().then((w) => {
+        const win = w as unknown as { seHandle: Handle; createSheetEditor: Factory };
+        const made = win.seHandle.tables();
+        expect(made, "one now").to.have.length(1);
+        expect(made[0].name).to.equal("Sales");
+        expect(made[0].columns.length, "with its columns named").to.be.greaterThan(0);
+
+        // In the model is not in the file. Saving and reopening is the only way to tell.
+        return cy.wrap(win.seHandle.getBytes()).then((saved) => {
+          const host = w.document.createElement("div");
+          w.document.body.appendChild(host);
+          const reopened = win.createSheetEditor(host, new Uint8Array(saved as ArrayBufferLike), {});
+          expect(reopened.tables().map((t) => t.name), "and in the saved workbook").to.deep.equal(["Sales"]);
+          reopened.destroy();
+        });
+      });
+    });
+
+    it(`removes one, and the removal survives a save (${kind})`, () => {
+      open(fixture);
+      createFromSelection("Doomed");
+      cy.get('#editor input[aria-label="B2"]').focus();
+      cy.get('#editor .sheetedit-toolbar [title*="table" i], #editor .sheetedit-toolbar [aria-label*="table" i]')
+        .first()
+        .click();
+      cy.get(".sheetedit-form-modal", { timeout: 15000 }).should("be.visible");
+      cy.get('.sheetedit-form-modal [data-field="remove"]').check({ force: true });
+      cy.get('.sheetedit-form-modal [data-role="ok"]').click();
+
+      cy.window().then((w) => {
+        const win = w as unknown as { seHandle: Handle; createSheetEditor: Factory };
+        expect(win.seHandle.tables(), "gone").to.deep.equal([]);
+        return cy.wrap(win.seHandle.getBytes()).then((saved) => {
+          const host = w.document.createElement("div");
+          w.document.body.appendChild(host);
+          const reopened = win.createSheetEditor(host, new Uint8Array(saved as ArrayBufferLike), {});
+          expect(reopened.tables(), "and gone from the saved workbook").to.deep.equal([]);
+          reopened.destroy();
+        });
+      });
+    });
+  }
+
+  it("carries a table to the other peer, under the same id", () => {
+    open("cypress/fixtures/sample.xlsx");
+    pair().then((p) => {
+      createFromSelection("Shared");
+      cy.wrap(null).then(() => {
+        const mine = p.a.tables();
+        expect(mine, "A made one").to.have.length(1);
+        p.b.applyRemoteTables(mine);
+        expect(p.b.tables().map((t) => t.cid), "B has it under the same id").to.deep.equal(
+          mine.map((t) => t.cid),
+        );
+        expect(p.b.tables()[0].name).to.equal("Shared");
+      });
+    });
+  });
+
+  it("does not report a peer's table back to them", () => {
+    open("cypress/fixtures/sample.xlsx");
+    pair().then((p) => {
+      const reported: unknown[] = [];
+      p.b.setTablesReporter((t) => reported.push(t));
+      createFromSelection("FromAda");
+      cy.wrap(null).then(() => {
+        p.b.applyRemoteTables(p.a.tables());
+        cy.wrap(null).then(() => {
+          expect(reported, "applying is not a change to announce").to.deep.equal([]);
+        });
+      });
     });
   });
 });

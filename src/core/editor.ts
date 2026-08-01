@@ -52,6 +52,7 @@ import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
 import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
+import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
 import { unzipAsync } from "./zip";
 import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
@@ -253,6 +254,11 @@ export interface SheetEditor {
    * produces travel as cells instead, published by whoever ran it.
    */
   applyRemoteQueries(sectionM: string): Promise<void>;
+  /** The workbook's named data ranges: xlsx tables and ODF named database ranges. */
+  tables(): import("./table-ops").TableDef[];
+  setTablesReporter(handler: ((tables: import("./table-ops").TableDef[]) => void) | null): void;
+  /** Take a peer's tables. Reports nothing back. */
+  applyRemoteTables(tables: import("./table-ops").TableDef[]): void;
   /**
    * The workbook's VBA modules, as name to source.
    *
@@ -361,6 +367,7 @@ export function createSheetEditor(
     assignImageIds(wb);
     assignPivotIds(wb);
     assignDrawingIds(wb);
+    readTables(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -388,6 +395,9 @@ export function createSheetEditor(
       images: () => [],
       setImagesReporter: () => undefined,
       applyRemoteImages: () => undefined,
+      tables: () => [],
+      setTablesReporter: () => undefined,
+      applyRemoteTables: () => undefined,
       vbaModules: () => ({}),
       setVbaReporter: () => undefined,
       applyRemoteVba: () => undefined,
@@ -1338,6 +1348,7 @@ export function createSheetEditor(
     reportSheetSettings();
     reportDefinedNames();
     reportVba();
+    reportTables();
   };
 
   // --- sheets, for a collaboration session -----------------------------------------
@@ -1350,6 +1361,9 @@ export function createSheetEditor(
   let imagesReporter: ((images: SheetImageInfo[]) => void) | null = null;
   let lastImagesSig: string | null = null;
   let applyingRemoteImages = false;
+  let tablesReporter: ((tables: import("./table-ops").TableDef[]) => void) | null = null;
+  let lastTablesSig: string | null = null;
+  let applyingRemoteTables = false;
   let vbaReporter: ((modules: Record<string, string>) => void) | null = null;
   let lastVbaSig: string | null = null;
   let applyingRemoteVba = false;
@@ -1450,6 +1464,16 @@ export function createSheetEditor(
       if (fromRemote) return; // a peer's definitions are not ours to announce back
       queriesReporter?.(sectionM);
     });
+  };
+
+  const reportTables = (): void => {
+    if (!tablesReporter) return;
+    const tables = wb.tables ?? [];
+    const sig = JSON.stringify(tables);
+    if (sig === lastTablesSig) return;
+    lastTablesSig = sig;
+    if (applyingRemoteTables) return;
+    tablesReporter(tables.map((t) => ({ ...t })));
   };
 
   const vbaObject = (): Record<string, string> =>
@@ -2994,6 +3018,72 @@ export function createSheetEditor(
    * into whatever cells happened to be selected is never what anyone wanted, and it can be
    * dragged from there.
    */
+  /** The table the selection is inside, if any. */
+  const tableAtSelection = (): import("./table-ops").TableDef | undefined => {
+    const sheet = wb.sheets[active];
+    if (!sheet || !sel) return undefined;
+    const sheetId = sheet.cid ?? sheet.name;
+    const at = { r: sel.r1, c: sel.c1 };
+    return (wb.tables ?? []).find(
+      (t) => t.sheet === sheetId && at.r >= t.r1 && at.r <= t.r2 && at.c >= t.c1 && at.c <= t.c2,
+    );
+  };
+
+  /**
+   * Make a table over the selection, or offer to remove the one already there.
+   *
+   * One button for both, because "create a table here" and "there is already a table here"
+   * are the same gesture from the person's side, and a second button that is disabled most
+   * of the time teaches nothing.
+   */
+  const createTableFromSelection = (): void => {
+    const sheet = wb.sheets[active];
+    if (!sheet || !sel) return;
+    if (!allowAction("formatCells")) return;
+
+    const existing = tableAtSelection();
+    if (existing) {
+      formDialog(
+        wrap,
+        t("tableAt", { name: existing.name }),
+        [
+          { key: "name", label: t("tableName"), type: "text", value: existing.name },
+          { key: "remove", label: t("tableDelete"), type: "checkbox", value: "" },
+        ],
+        (v) => {
+          if (v.remove !== "") deleteTable(wb, sheet, existing.cid);
+          else if (String(v.name ?? "").trim() && v.name !== existing.name) {
+            updateTable(wb, sheet, existing.cid, { name: String(v.name).trim() });
+          }
+          mark();
+          renderGrid();
+        },
+      );
+      return;
+    }
+
+    const box = { r1: sel.r1, c1: sel.c1, r2: sel.r2, c2: sel.c2 };
+    formDialog(
+      wrap,
+      t("tableCreate"),
+      [
+        { key: "name", label: t("tableName"), type: "text", value: freeTableName(wb) },
+        { key: "header", label: t("tableHeaderRow"), type: "checkbox", value: "on" },
+      ],
+      (v) => {
+        const made = createTable(
+          wb,
+          sheet,
+          box,
+          { name: String(v.name ?? "").trim() || undefined, headerRow: v.header !== "" },
+        );
+        if (!made) return;
+        mark();
+        renderGrid();
+      },
+    );
+  };
+
   const pickAndInsertImage = (): void => {
     const input = document.createElement("input");
     input.type = "file";
@@ -3498,6 +3588,10 @@ export function createSheetEditor(
   if (chartsOn) {
     const CHART_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2v12h12"/><rect x="4" y="8" width="2.2" height="4"/><rect x="8" y="5" width="2.2" height="7"/><rect x="12" y="9" width="2.2" height="3"/></svg>`;
     trailingIcons.push(tbIcon(CHART_ICON, t("chartInsert"), () => chartUi.openInsert(getSelRect())));
+  }
+  if (tablesAuthorable(wb)) {
+    const TABLE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 6.5h12M6 6.5V13M10 6.5V13"/></svg>`;
+    trailingIcons.push(tbIcon(TABLE_ICON, t("tableCreate"), () => createTableFromSelection()));
   }
   if (imagesInsertable(wb)) {
     const IMAGE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.75" cy="6.5" r="1.15"/><path d="M2.5 12l3.5-3.5 2.5 2.5L11 8l2.5 2.5"/></svg>`;
@@ -5045,6 +5139,52 @@ export function createSheetEditor(
         /* this file type carries no query part */
       } finally {
         applyingRemoteQueries = false;
+      }
+    },
+    tables() {
+      return (wb.tables ?? []).map((t) => ({ ...t }));
+    },
+    setTablesReporter(handler) {
+      tablesReporter = handler;
+      lastTablesSig = handler ? JSON.stringify(wb.tables ?? []) : null;
+    },
+    applyRemoteTables(next) {
+      applyingRemoteTables = true;
+      try {
+        let touched = false;
+        const wanted = new Map(next.map((t) => [t.cid, t]));
+
+        for (const mine of [...(wb.tables ?? [])]) {
+          if (wanted.has(mine.cid)) continue;
+          const sheet = sheetById(wb, mine.sheet);
+          if (sheet && deleteTable(wb, sheet, mine.cid)) touched = true;
+        }
+        for (const theirs of next) {
+          const sheet = sheetById(wb, theirs.sheet);
+          if (!sheet) continue; // a table on a sheet we do not have
+          const mine = (wb.tables ?? []).find((t) => t.cid === theirs.cid);
+          if (!mine) {
+            // Only the box: createTable takes a range, and spreading a whole definition
+            // into it would carry the peer's id in by accident rather than on purpose.
+            const box = { r1: theirs.r1, c1: theirs.c1, r2: theirs.r2, c2: theirs.c2 };
+            const made = createTable(wb, sheet, box, { name: theirs.name, headerRow: theirs.headerRow });
+            if (made) {
+              // Their id, so both peers name it the same thing from here on.
+              made.cid = theirs.cid;
+              made.columns = theirs.columns;
+              touched = true;
+            }
+          } else if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+            if (updateTable(wb, sheet, mine.cid, theirs)) touched = true;
+          }
+        }
+        if (touched) {
+          dirty = true;
+          reportTables();
+          renderGrid();
+        }
+      } finally {
+        applyingRemoteTables = false;
       }
     },
     vbaModules() {
