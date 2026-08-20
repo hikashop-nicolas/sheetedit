@@ -782,7 +782,7 @@ position:absolute; display:flex; align-items:center; font:11px system-ui, sans-s
 border:1px solid var(--sheetedit-print-rule); background:var(--sheetedit-print-head-bg); font-weight:600; font-size:11px; text-align:center; padding:1px 4px;
 }
 @media print {
-body > *:not(.sheetedit-print) { display:none !important; }
+html.sheetedit-printing body > *:not(.sheetedit-print) { display:none !important; }
 .sheetedit-print { position:static !important; left:auto !important; }
 .sheetedit-print-page { break-after:page; }
 }

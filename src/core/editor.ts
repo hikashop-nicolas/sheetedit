@@ -2318,7 +2318,15 @@ export function createSheetEditor(
       return;
     }
     document.body.appendChild(printRoot);
-    const cleanup = (): void => { printRoot?.remove(); printRoot = null; };
+    // Marks this as our own print, which is what the stylesheet's "hide everything else"
+    // rule is scoped to: a host printing our pages inside its own document must not have
+    // its page hidden by us.
+    document.documentElement.classList.add("sheetedit-printing");
+    const cleanup = (): void => {
+      printRoot?.remove();
+      printRoot = null;
+      document.documentElement.classList.remove("sheetedit-printing");
+    };
     // afterprint is the reliable signal in every current browser; the timeout is the belt and
     // braces for one that fires nothing, so the pages can never be left behind in the document.
     window.addEventListener("afterprint", cleanup, { once: true });

@@ -926,8 +926,11 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 }
 
 @media print {
-  /* Only the pages print: everything the app draws is hidden, and the pages come back on screen. */
-  body > *:not(.sheetedit-print) { display:none !important; }
+  /* Only the pages print: everything the app draws is hidden, and the pages come back on screen.
+     Scoped to this editor's own printing, because it assumes the pages sit at the top of the
+     document. A host that takes the pages puts them where it likes and hides what it likes;
+     unscoped, this rule hid the host's own page along with everything else. */
+  html.sheetedit-printing body > *:not(.sheetedit-print) { display:none !important; }
   .sheetedit-print { position:static !important; left:auto !important; }
   .sheetedit-print-page { break-after:page; }
 }
