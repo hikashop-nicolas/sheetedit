@@ -228,6 +228,22 @@ export interface SheetEditor {
    */
   applyRemoteCells(changes: CellInput[]): void;
   sheetNames(): string[];
+  /**
+   * Hand printing to the host, or pass null to take it back.
+   *
+   * This editor prints by building its pages and calling window.print(). A WebView does
+   * not implement that, so inside a native shell the print button built pages nobody ever
+   * saw; such a host prints through the platform instead and takes the button over.
+   */
+  setPrintHandler(handler: (() => void) | null): void;
+  /**
+   * The pages this sheet would print, for a host that prints them itself.
+   *
+   * The grid holds only the rows near the viewport, so printing the surface prints a
+   * screenful of a spreadsheet. These are the paginated pages instead, for the active
+   * sheet, with the headers, footers and grid lines its print setup asks for.
+   */
+  printPages(): HTMLElement | null;
   /** The sheets, in order, as a session names them. */
   sheets(): SheetInfo[];
   /**
@@ -383,6 +399,8 @@ export function createSheetEditor(
     return {
       getBytes: () => Promise.resolve(original.slice()),
       getText: () => null,
+      setPrintHandler: () => undefined,
+      printPages: () => null, // nothing opened, so nothing to print
       isDirty: () => false,
       markClean: () => undefined,
       getCellValue: () => "",
@@ -2279,6 +2297,8 @@ export function createSheetEditor(
    * stylesheet hides everything else.
    */
   let printRoot: HTMLElement | null = null;
+  /** Set by a host that prints through its platform rather than through window.print(). */
+  let printHandler: (() => void) | null = null;
   const doPrint = (job: PrintJob, sheetIndex = active): void => {
     printRoot?.remove();
     const result = buildPrintJob(wb, sheetIndex, options.fileName ?? "", job);
@@ -2290,6 +2310,13 @@ export function createSheetEditor(
     // printed faithfully in one go. Say so rather than silently printing them all at one size.
     if (result.mixedPaper) showNotice(t("printMixedPaper"));
     printRoot = result.root;
+    if (printHandler) {
+      // The host places and prints the pages itself; letting go of them here keeps the
+      // cleanup below from pulling them out of wherever it put them.
+      printRoot = null;
+      printHandler();
+      return;
+    }
     document.body.appendChild(printRoot);
     const cleanup = (): void => { printRoot?.remove(); printRoot = null; };
     // afterprint is the reliable signal in every current browser; the timeout is the belt and
@@ -2303,6 +2330,19 @@ export function createSheetEditor(
   };
 
   /** Ask what the job covers, then print it. A single-sheet workbook with no selection just prints. */
+  /**
+   * The pages this sheet would print, built and handed over rather than printed.
+   *
+   * The grid on screen holds only the rows near the viewport, so printing the surface
+   * prints a screenful. A host that prints the document itself takes these instead. It
+   * covers the active sheet: choosing a scope is a question, and this answers without
+   * asking one.
+   */
+  const buildPrintPages = (): HTMLElement | null => {
+    const result = buildPrintJob(wb, active, options.fileName ?? "", { scope: "sheet" });
+    return result ? result.root : null;
+  };
+
   const openPrintScopeDialog = (): void => {
     const cur = sel;
     const multiSheet = wb.sheets.length > 1;
@@ -5540,6 +5580,12 @@ export function createSheetEditor(
     },
     sheetNames() {
       return wb.sheets.map((s2) => s2.name);
+    },
+    setPrintHandler(handler) {
+      printHandler = handler;
+    },
+    printPages() {
+      return buildPrintPages();
     },
     selectedCell() {
       const sheet = wb.sheets[active];
