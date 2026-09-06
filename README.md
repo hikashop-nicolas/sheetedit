@@ -14,6 +14,12 @@ refreshing them on-device (see [Charts](#charts), [Pivot tables](#pivot-tables),
 **[▶ Live demo](https://hikashop-nicolas.github.io/sheetedit/)** - open a `.xlsx` or
 `.ods`, edit cells and formulas, and download the result, entirely in your browser.
 
+Used in production by **[Omnitext](https://hikashop-nicolas.github.io/omnitext/)**, a free
+browser editor for practically any file, as its
+[Excel](https://hikashop-nicolas.github.io/omnitext/formats/xlsx.html) and
+[OpenDocument](https://hikashop-nicolas.github.io/omnitext/formats/ods.html) spreadsheet
+editor.
+
 ```ts
 import { createSheetEditor } from "sheetedit";
 
