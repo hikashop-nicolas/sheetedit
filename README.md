@@ -39,6 +39,10 @@ extracted from this project), all MIT. The Power Query engine
 assistant ([`localml`](https://github.com/hikashop-nicolas/localml)) are lazy-loaded
 only when their features are used, so they stay out of the base bundle.
 
+The UI is **multilingual**: English, French, Japanese, Spanish, German, Portuguese, Russian and Simplified Chinese,
+auto-detected from the browser with an English fallback. `setLocale()` forces one, and a host
+can override individual strings.
+
 ## Formulas and recalculation
 
 - Type `=B2*2` or `=SUM(C2:C3)` into a cell; the result is computed and shown.
