@@ -14,7 +14,7 @@ import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellCha
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook, SheetControl } from "./model";
 import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
-import { makeFormulaEvaluator, recalc } from "./recalc";
+import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -384,6 +384,10 @@ export function createSheetEditor(
     assignPivotIds(wb);
     assignDrawingIds(wb);
     readTables(wb);
+    // A workbook whose producer stored formulas without results renders as an empty grid,
+    // because the grid draws cached values. Compute once here when there is nothing cached
+    // to draw; a file that already carries its results skips this entirely.
+    if (needsCalcOnLoad(wb)) recalc(wb);
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.

@@ -355,6 +355,9 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
     if (name && target && dn.getAttribute("localSheetId") == null && !name.startsWith("_xlnm")) definedNames.set(name, target);
   }
   if (definedNames.size) wb.definedNames = definedNames;
+  // <calcPr fullCalcOnLoad="1">: written by producers that store formulas without results.
+  const calcPr = wbDoc.getElementsByTagName("calcPr")[0];
+  if (calcPr && xmlBool(calcPr, "fullCalcOnLoad")) wb.fullCalcOnLoad = true;
   // <workbookProtection lockStructure="1" lockWindows="1"/>: the sheet set / window layout is locked.
   const wbProt = wbDoc.getElementsByTagName("workbookProtection")[0];
   if (wbProt) {
