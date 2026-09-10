@@ -1,7 +1,7 @@
 import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet, SheetShape } from "../model";
 import type { ChartGeom } from "./chart-overlay";
-import { shapePoints } from "../shape-geom";
+import { shapeOutlinePath, shapePoints } from "../shape-geom";
 
 // An overlay that floats a sheet's drawing shapes over the grid as SVG, anchored to cells and glued
 // while scrolling (the same layer pattern as the image / chart overlays). Shapes can be selected,
@@ -102,6 +102,12 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
       break;
     }
     default: {
+      // Braces and brackets: an open stroked outline, never filled.
+      const path = shapeOutlinePath(sh.geom, iw, ih);
+      if (path) {
+        body = `<path d="${path}" transform="translate(${inset},${inset})" fill="none" stroke="${stroke === "none" ? "#000000" : stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+        break;
+      }
       // Polygon shapes (triangle / diamond / hexagon / pentagon / star / arrow / parallelogram),
       // inset a touch so the stroke stays inside the box; else a plain rectangle.
       const pts = shapePoints(sh.geom, iw, ih);
@@ -126,6 +132,33 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
     label = `<foreignObject x="0" y="0" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" class="sheetedit-shapetext" style="${style}">${esc}</div></foreignObject>`;
   }
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grad?.def ?? ""}${markerDefs}${body}${label}</svg>`;
+}
+
+/**
+ * Draw a shape into its box at the given size.
+ *
+ * A rotated shape's anchor is its bounding box AFTER the turn, so the shape itself is drawn in a
+ * box with the two axes swapped for a quarter turn and rotated back into the anchor. Without this
+ * a brace turned on its side to bracket a run of columns was drawn upright and tall, across the
+ * rows it was meant to sit under.
+ */
+function paintShape(box: HTMLElement, sh: SheetShape, w: number, h: number): void {
+  const rot = sh.rotation ?? 0;
+  if (!rot) {
+    box.innerHTML = shapeSvg(sh, w, h);
+    return;
+  }
+  const quarter = Math.abs((((rot % 180) + 180) % 180) - 90) < 1;
+  const [dw, dh] = quarter ? [h, w] : [w, h];
+  box.innerHTML = shapeSvg(sh, dw, dh);
+  const svg = box.firstElementChild as HTMLElement | null;
+  if (!svg) return;
+  svg.style.position = "absolute";
+  svg.style.left = "50%";
+  svg.style.top = "50%";
+  svg.style.width = `${dw}px`;
+  svg.style.height = `${dh}px`;
+  svg.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
 }
 
 export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
@@ -171,14 +204,13 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
       const sx = e.clientX, sy = e.clientY;
       const x0 = parseFloat(box.style.left) || 0, y0 = parseFloat(box.style.top) || 0;
       const w0 = box.offsetWidth, h0 = box.offsetHeight;
-      const svg = box.querySelector("svg");
       const onMove = (ev: PointerEvent): void => {
         const dx = ev.clientX - sx, dy = ev.clientY - sy;
         if (mode === "move") { box.style.left = `${Math.max(0, x0 + dx)}px`; box.style.top = `${Math.max(0, y0 + dy)}px`; }
         else {
           const w = Math.max(8, w0 + dx), h = Math.max(8, h0 + dy);
           box.style.width = `${w}px`; box.style.height = `${h}px`;
-          if (svg) svg.outerHTML = shapeSvg(sh, w, h); // redraw so geometry tracks the new size
+          paintShape(box, sh, w, h); // redraw so geometry tracks the new size
         }
       };
       const onUp = (): void => {
@@ -228,7 +260,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
       box.style.top = `${y}px`;
       box.style.width = `${w}px`;
       box.style.height = `${h}px`;
-      box.innerHTML = shapeSvg(sh, w, h);
+      paintShape(box, sh, w, h);
       if (sh.macro && deps.runMacro) {
         box.classList.add("macro");
         box.title = `${deps.macroTitle ?? ""} ${sh.macro}`.trim();

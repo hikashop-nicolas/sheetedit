@@ -223,3 +223,47 @@ describe("shape text and line ends", () => {
     expect(shapeSvg(sh, 100, 50)).toMatch(/x1="99\.5" y1="0\.5" x2="0\.5" y2="49\.5"/);
   });
 });
+
+// Braces and brackets are open outlines, not closed shapes. An unrecognised preset falls back to a
+// rectangle, and a brace drawn as the rectangle around the columns it groups says nothing at all.
+describe("braces and brackets", () => {
+  const braceAnchor = (prst: string, xfrm = "<a:xfrm/>") =>
+    `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="B"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>${xfrm}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom><a:ln><a:solidFill><a:srgbClr val="ED7D31"/></a:solidFill></a:ln></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("reads each brace and bracket preset as itself", () => {
+    for (const prst of ["leftBrace", "rightBrace", "bracePair", "leftBracket", "rightBracket", "bracketPair"]) {
+      expect(readWorkbook(base(braceAnchor(prst))).sheets[0].shapes![0]!.geom, prst).toBe(prst);
+    }
+  });
+
+  it("draws one as a stroked open path, never a filled box", () => {
+    const sh = readWorkbook(base(braceAnchor("rightBrace"))).sheets[0].shapes![0]!;
+    const svg = shapeSvg(sh, 20, 200);
+    expect(svg).toContain("<path");
+    expect(svg).not.toContain("<rect");
+    expect(svg).toContain('fill="none"');
+    expect(svg).toContain('stroke="#ED7D31"');
+    expect(svg).not.toMatch(/[Zz]"/); // open: the path is never closed
+  });
+
+  // A "{" is a "}" mirrored, so the two must not come out identical, which is what a shared
+  // fallback would give.
+  it("mirrors the left and right forms", () => {
+    const left = shapeSvg(readWorkbook(base(braceAnchor("leftBrace"))).sheets[0].shapes![0]!, 20, 200);
+    const right = shapeSvg(readWorkbook(base(braceAnchor("rightBrace"))).sheets[0].shapes![0]!, 20, 200);
+    expect(left).not.toBe(right);
+  });
+
+  it("draws a pair as two outlines", () => {
+    const pair = shapeSvg(readWorkbook(base(braceAnchor("bracketPair"))).sheets[0].shapes![0]!, 60, 200);
+    expect((pair.match(/M /g) ?? []).length).toBe(2);
+  });
+
+  // A brace bracketing a row of columns is a tall one turned on its side. Without the angle it is
+  // drawn upright, down the rows it was meant to sit under.
+  it("reads the rotation angle, in degrees", () => {
+    const sh = readWorkbook(base(braceAnchor("rightBrace", '<a:xfrm rot="16200000"/>'))).sheets[0].shapes![0]!;
+    expect(sh.rotation).toBe(270); // 16200000 / 60000
+    expect(readWorkbook(base(braceAnchor("rightBrace"))).sheets[0].shapes![0]!.rotation).toBeUndefined();
+  });
+});

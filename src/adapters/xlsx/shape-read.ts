@@ -21,6 +21,12 @@ function geomOf(prst: string | null): ShapeGeom {
     case "pentagon": return "pentagon";
     case "star4": case "star5": case "star6": case "star7": case "star8": return "star";
     case "rightArrow": case "leftArrow": case "upArrow": case "downArrow": return "rightArrow";
+    case "leftBrace": return "leftBrace";
+    case "rightBrace": return "rightBrace";
+    case "bracePair": return "bracePair";
+    case "leftBracket": return "leftBracket";
+    case "rightBracket": return "rightBracket";
+    case "bracketPair": return "bracketPair";
     default: return "rect";
   }
 }
@@ -212,6 +218,7 @@ export function readShapes(
         ...(ln && kid(ln, "tailEnd")?.getAttribute("type") ? { tailEnd: kid(ln, "tailEnd")!.getAttribute("type")! } : {}),
         ...(xfrm?.getAttribute("flipH") === "1" ? { flipH: true } : {}),
         ...(xfrm?.getAttribute("flipV") === "1" ? { flipV: true } : {}),
+        ...(Number(xfrm?.getAttribute("rot") ?? "0") ? { rotation: Number(xfrm!.getAttribute("rot")) / 60000 } : {}),
         ...(sp.getAttribute("macro") ? { macro: sp.getAttribute("macro")! } : {}),
         textColor: colorFrom(rPr ? kid(rPr, "solidFill") : undefined, theme) ?? styleText,
         drawingPath: drawPath,

@@ -644,7 +644,12 @@ export interface SheetControl {
 
 /** A supported drawing shape geometry. Anything else read from a file maps to "rect" for rendering
     but keeps its original preset name so it round-trips. */
-export type ShapeGeom = "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "diamond" | "parallelogram" | "hexagon" | "pentagon" | "star" | "rightArrow";
+export type ShapeGeom =
+  | "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "diamond" | "parallelogram"
+  | "hexagon" | "pentagon" | "star" | "rightArrow"
+  // Braces and brackets: open outlines rather than closed shapes, used to bracket a range of
+  // rows or columns. Rendered, not offered for authoring.
+  | "leftBrace" | "rightBrace" | "bracePair" | "leftBracket" | "rightBracket" | "bracketPair";
 
 /** A linear gradient fill. `angle` is in degrees clockwise from the positive x axis, as DrawingML
     measures it, and `pos` runs 0..1 along that direction. */
@@ -683,6 +688,10 @@ export interface SheetShape {
       geometry: a flipped line runs from the other corner of its box. */
   flipH?: boolean;
   flipV?: boolean;
+  /** Clockwise rotation in degrees (xlsx <a:xfrm rot>, in 60000ths of one). The anchor is the
+      shape's bounding box after the turn, so a quarter-turned shape is drawn in a box with its
+      width and height swapped and then rotated back into place. */
+  rotation?: number;
   /** The macro assigned to the shape (xlsx <xdr:sp macro>). A shape with one is a button: clicking
       it runs the macro, exactly as a form control's button does. */
   macro?: string;
