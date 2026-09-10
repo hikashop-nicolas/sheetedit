@@ -5,7 +5,7 @@ import { isDateFmt } from "./dates";
 import { dynamicArrayFunctions } from "./dynamic-arrays";
 import { extraFunctions } from "./functions";
 import { financialFunctions } from "./financial";
-import { allowRawRefs, fixIndexSheet, referenceFunctions } from "./reference-fns";
+import { allowRawRefs, fixBlankCompare, fixIndexSheet, referenceFunctions } from "./reference-fns";
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 
@@ -188,7 +188,7 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
 export function needsCalcOnLoad(wb: Workbook): boolean {
   for (const sheet of wb.sheets) {
     for (const cell of sheet.cells.values()) {
-      if (cell.formula !== undefined && cell.value === "") return true;
+      if (cell.formula !== undefined && cell.uncomputed) return true;
     }
   }
   return false;
@@ -376,6 +376,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
   });
   allowRawRefs(parser);
   fixIndexSheet(parser);
+  fixBlankCompare(parser);
 
   // Dynamic-array spill: a plain formula (no legacy arrayRef) whose result is a 2-D array with
   // more than one cell spills into the anchor + the range below/right of it. A non-empty obstacle
@@ -441,7 +442,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
       // say so in the grid instead of silently showing a stale number. On the load pass a cell
       // that came with a result is not stale and nobody asked for it to be computed, so it is
       // not flagged: a blank template sheet whose dates are empty would open covered in badges.
-      if (opts.keepCached && node.cell.value !== "") continue;
+      if (opts.keepCached && !node.cell.uncomputed) continue;
       if (node.cell.calcFailed !== "circular") {
         // The library throws "#ERROR! Function X is not implemented." for unknown names.
         const msg = `${String(err)} ${(err as { message?: string })?.message ?? ""}`;
@@ -449,8 +450,9 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
       }
       continue;
     }
-    // The load pass fills the blanks and nothing else: a cell that arrived with a result keeps it.
-    if (opts.keepCached && node.cell.value !== "") continue;
+    // The load pass fills the blanks and nothing else: a cell that arrived with a result keeps it,
+    // and "" IS a result when the file stored one.
+    if (opts.keepCached && !node.cell.uncomputed) continue;
     // A fresh recompute can error on blank inputs (e.g. DATEDIF on an empty date) even
     // though the file holds a valid cached result; keep that result rather than show an
     // error. A #NAME? is different: the function does not exist, so the stale value can
@@ -548,6 +550,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
   });
   allowRawRefs(parser);
   fixIndexSheet(parser);
+  fixBlankCompare(parser);
   return {
     at(formula, r0, c0, r, c, sheetName) {
       let f = shiftFormula(formula.replace(/^=/, ""), r - r0, c - c0);

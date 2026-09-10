@@ -971,6 +971,9 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       odsValueType,
       odsCurrency,
       formula: formulaRaw ? odfToA1(formulaRaw) : undefined,
+      // ODF states a formula cell's result with office:value-type. Without one, the producer
+      // stored the formula and no result, and the grid has nothing to draw until it is computed.
+      ...(formulaRaw && !valueType ? { uncomputed: true } : {}),
       odfFormula: formulaRaw,
       style,
       cellStyle: style ? styles.cell.get(style) : undefined,

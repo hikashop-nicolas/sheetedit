@@ -45,6 +45,13 @@ describe("deciding whether a workbook needs computing on load", () => {
     expect(needsCalcOnLoad(readWorkbook(makeXlsx(CACHED)))).toBe(false);
   });
 
+  // "" is a result. IF(x="","",...) computes to it, and Excel stores that as an empty <v>, which
+  // looks exactly like a blank cell unless the reader keeps the difference.
+  it("says no when a formula's cached result IS the empty string", () => {
+    const blanked = `<row r="1"><c r="A1"/><c r="B1" t="str"><f>IF(A1="","",A1-1)</f><v/></c></row>`;
+    expect(needsCalcOnLoad(readWorkbook(makeXlsx(blanked)))).toBe(false);
+  });
+
   it("says no for a workbook with no formulas at all", () => {
     const plain = `<row r="1"><c r="A1"><v>2</v></c><c r="B1" t="s"><v>0</v></c></row>`;
     expect(needsCalcOnLoad(readWorkbook(makeXlsx(plain)))).toBe(false);
@@ -82,6 +89,12 @@ describe("computing a workbook that shipped without results", () => {
     const sheet = wb.sheets[0]!;
     expect(getCell(sheet, 1, 2)?.value).toBe("99");
     expect(getCell(sheet, 1, 3)?.value).toBe("198"); // the blank is filled, from the cached 99
+  });
+
+  it("leaves a deliberately blanked cell blank", () => {
+    const wb = readWorkbook(makeXlsx(`<row r="1"><c r="A1"/><c r="B1" t="str"><f>IF(A1="","",A1-1)</f><v/></c></row>`));
+    recalc(wb, { keepCached: true });
+    expect(getCell(wb.sheets[0]!, 1, 2)?.value).toBe("");
   });
 
   // An explicit recalculation (an edit, or the user asking) still recomputes everything.

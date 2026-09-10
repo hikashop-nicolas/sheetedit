@@ -138,3 +138,34 @@ export function fixIndexSheet(parser: unknown): void {
   fixed.sheetFixed = true;
   p.functions!.INDEX = fixed;
 }
+
+const COMPARISONS = new Set(["=", "<>", "<", ">", "<=", ">="]);
+
+/**
+ * Excel's blank-cell comparison. An empty cell takes the TYPE of whatever it is compared against,
+ * so `A1=""` and `A1=0` are both TRUE when A1 is empty. fast-formula-parser turns a blank into 0
+ * unconditionally, so `A1=""` compared a number with a string and came out FALSE. That breaks
+ * `IF(A1="","",...)`, the standard way to leave a row blank until it is filled in: instead of
+ * nothing, the cell showed the result of the arithmetic in the other branch.
+ */
+export function fixBlankCompare(parser: unknown): void {
+  const utils = (parser as { utils?: Record<string, unknown> }).utils;
+  const orig = utils?.["_applyInfix"];
+  if (typeof orig !== "function" || (orig as { blankFixed?: boolean }).blankFixed) return;
+  type Operand = { val?: unknown; isArray?: boolean };
+  const asType = (blank: Operand, other: Operand): Operand => {
+    const t = typeof other.val;
+    if (t === "string") return { ...blank, val: "" };
+    if (t === "boolean") return { ...blank, val: false };
+    return blank; // against a number (or another blank), 0 is already right
+  };
+  const fixed = function (this: unknown, a: Operand, infix: string, b: Operand): unknown {
+    if (COMPARISONS.has(infix) && !a?.isArray && !b?.isArray) {
+      if (a?.val == null && b?.val != null) a = asType(a, b);
+      else if (b?.val == null && a?.val != null) b = asType(b, a);
+    }
+    return (orig as (a: Operand, i: string, b: Operand) => unknown).call(this, a, infix, b);
+  };
+  fixed.blankFixed = true;
+  utils!["_applyInfix"] = fixed;
+}
