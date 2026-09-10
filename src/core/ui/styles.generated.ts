@@ -74,15 +74,12 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-input-bg: #1c1f24;
 --sheetedit-input-fg: #e7eaf0;
 --sheetedit-grid-bg: #16181c;
---sheetedit-cell-bg: #1e2126;
---sheetedit-cell-fg: #e3e6ea;
---sheetedit-gridline: #2f343b;
 --sheetedit-head-bg: #262a31;
 --sheetedit-head-fg: #b9c0cb;
 --sheetedit-head-border: #343a43;
 --sheetedit-head-hover: #2f353d;
---sheetedit-cell-focus-bg: #262c4a;
---sheetedit-zebra: #22252b;
+--sheetedit-cell-focus-bg: #eaf1ff;
+--sheetedit-zebra: #f7f7f9;
 --sheetedit-link: #7aa2ff;
 --sheetedit-flat-bg: #2a2f36;
 --sheetedit-flat-hover: #343a43;
@@ -121,15 +118,12 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-input-bg: #1c1f24;
 --sheetedit-input-fg: #e7eaf0;
 --sheetedit-grid-bg: #16181c;
---sheetedit-cell-bg: #1e2126;
---sheetedit-cell-fg: #e3e6ea;
---sheetedit-gridline: #2f343b;
 --sheetedit-head-bg: #262a31;
 --sheetedit-head-fg: #b9c0cb;
 --sheetedit-head-border: #343a43;
 --sheetedit-head-hover: #2f353d;
---sheetedit-cell-focus-bg: #262c4a;
---sheetedit-zebra: #22252b;
+--sheetedit-cell-focus-bg: #eaf1ff;
+--sheetedit-zebra: #f7f7f9;
 --sheetedit-link: #7aa2ff;
 --sheetedit-flat-bg: #2a2f36;
 --sheetedit-flat-hover: #343a43;
@@ -900,4 +894,11 @@ display: flex; gap: 2px; pointer-events: none; z-index: 3; max-width: 100%;
 font-style: normal; font-size: 9px; line-height: 13px; padding: 0 4px;
 border-radius: 6px 6px 0 0; color: var(--sheetedit-accent-fg);
 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:root[data-sheet-canvas="dark"] {
+--sheetedit-cell-bg: #1e2126;
+--sheetedit-cell-fg: #e3e6ea;
+--sheetedit-gridline: #2f343b;
+--sheetedit-cell-focus-bg: #262c4a;
+--sheetedit-zebra: #22252b;
 }`;

@@ -118,15 +118,17 @@
     --sheetedit-input-fg: #e7eaf0;
 
     --sheetedit-grid-bg: #16181c;
-    --sheetedit-cell-bg: #1e2126;
-    --sheetedit-cell-fg: #e3e6ea;
-    --sheetedit-gridline: #2f343b;
+    /* The cell canvas is document, not chrome: a workbook's fills, font colours and
+       conditional formats were chosen against a white sheet, and drawing them on a dark one
+       changes the contrast the author designed. Excel and LibreOffice darken their UI and
+       leave the sheet light for the same reason. A host that wants the dark canvas anyway
+       opts in with [data-sheet-canvas="dark"]. */
     --sheetedit-head-bg: #262a31;
     --sheetedit-head-fg: #b9c0cb;
     --sheetedit-head-border: #343a43;
     --sheetedit-head-hover: #2f353d;
-    --sheetedit-cell-focus-bg: #262c4a;
-    --sheetedit-zebra: #22252b;
+    --sheetedit-cell-focus-bg: #eaf1ff;
+    --sheetedit-zebra: #f7f7f9;
 
     --sheetedit-link: #7aa2ff;
     --sheetedit-flat-bg: #2a2f36;
@@ -169,15 +171,13 @@
   --sheetedit-input-fg: #e7eaf0;
 
   --sheetedit-grid-bg: #16181c;
-  --sheetedit-cell-bg: #1e2126;
-  --sheetedit-cell-fg: #e3e6ea;
-  --sheetedit-gridline: #2f343b;
+  /* See the note above: the cell canvas stays as the document authored it. */
   --sheetedit-head-bg: #262a31;
   --sheetedit-head-fg: #b9c0cb;
   --sheetedit-head-border: #343a43;
   --sheetedit-head-hover: #2f353d;
-  --sheetedit-cell-focus-bg: #262c4a;
-  --sheetedit-zebra: #22252b;
+  --sheetedit-cell-focus-bg: #eaf1ff;
+  --sheetedit-zebra: #f7f7f9;
 
   --sheetedit-link: #7aa2ff;
   --sheetedit-flat-bg: #2a2f36;
@@ -1083,4 +1083,15 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
   font-style: normal; font-size: 9px; line-height: 13px; padding: 0 4px;
   border-radius: 6px 6px 0 0; color: var(--sheetedit-accent-fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Opt back in to a dark cell canvas: set data-sheet-canvas="dark" on the root. Off by
+   default because a spreadsheet carries its own colours and they were picked for a white
+   sheet; this exists for hosts and readers who want the darker surface regardless. */
+:root[data-sheet-canvas="dark"] {
+  --sheetedit-cell-bg: #1e2126;
+  --sheetedit-cell-fg: #e3e6ea;
+  --sheetedit-gridline: #2f343b;
+  --sheetedit-cell-focus-bg: #262c4a;
+  --sheetedit-zebra: #22252b;
 }
