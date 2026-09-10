@@ -679,7 +679,13 @@ export type ShapeGeom =
   | "elbow" | "curve" | "arc"
   // Curved and hollow shapes, drawn as closed paths.
   | "pie" | "chord" | "donut" | "moon" | "teardrop" | "frame" | "halfFrame" | "can" | "cube"
-  | "cloud" | "wave" | "heart" | "lightningBolt" | "noSmoking";
+  | "cloud" | "wave" | "heart" | "lightningBolt" | "noSmoking"
+  | "ribbon" | "scrollH" | "scrollV" | "gear6" | "gear9" | "funnel"
+  // Flowchart symbols that are not one of the shapes above.
+  | "flowDocument" | "flowMultidocument" | "flowPunchedTape" | "flowCollate"
+  | "flowOfflineStorage" | "flowMagneticTape" | "flowDisplay" | "flowPredefined" | "flowStorage"
+  // Marks drawn as lines only: chart symbols and corner tabs.
+  | "chartX" | "chartStar" | "chartPlus" | "tabs";
 
 /** A linear gradient fill. `angle` is in degrees clockwise from the positive x axis, as DrawingML
     measures it, and `pos` runs 0..1 along that direction. */

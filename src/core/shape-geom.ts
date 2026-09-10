@@ -252,8 +252,79 @@ export function shapeFilledPath(geom: ShapeGeom, w: number, h: number): ShapePat
       return { d: `M ${round(cx - rx)} ${round(cy)} a ${round(rx)} ${round(ry)} 0 1 0 ${round(rx * 2)} 0 a ${round(rx)} ${round(ry)} 0 1 0 ${round(-rx * 2)} 0 Z` +
         ` M ${round(w * 0.18)} ${round(h * 0.28)} L ${round(w * 0.82)} ${round(h * 0.72)} L ${round(w * 0.72)} ${round(h * 0.82)} L ${round(w * 0.18)} ${round(h * 0.38)} Z` };
     }
+    case "ribbon": {
+      const [t, b] = [round(h * 0.25), round(h * 0.75)];
+      // A banner: the centre band, and a notched tail folded back at each end.
+      const tail = (x0: number, x1: number, notch: number): string =>
+        `M ${round(x0)} ${round(h * 0.12)} L ${round(x1)} ${t} V ${b} L ${round(x0)} ${round(h * 0.88)} L ${round(notch)} ${round(h / 2)} Z`;
+      return { d: [
+        tail(0, w * 0.14, w * 0.07),
+        `M ${round(w * 0.14)} ${t} H ${round(w * 0.86)} V ${b} H ${round(w * 0.14)} Z`,
+        tail(w, w * 0.86, w * 0.93),
+      ].join(" ") };
+    }
+    case "scrollH": case "scrollV": {
+      // A sheet with two opposite edges rolled up. The roll is a three-quarter turn drawn over the
+      // body: a closed circle would read as a dot, and cut a hole out of the fill besides.
+      const r = round(Math.min(w, h) * 0.16);
+      const horizontal = geom === "scrollH";
+      const curl = (cx: number, cy: number, back: boolean): string => {
+        const sweep = back ? 0 : 1;
+        const [sx, sy] = horizontal ? [cx, cy - r] : [cx - r, cy];
+        const [ex, ey] = horizontal ? [cx - r, cy] : [cx, cy + r];
+        return `M ${round(sx)} ${round(sy)} A ${r} ${r} 0 1 ${sweep} ${round(ex)} ${round(ey)}`;
+      };
+      const body = horizontal
+        ? `M 0 ${r} H ${round(w)} V ${round(h - r)} H 0 Z`
+        : `M ${r} 0 H ${round(w - r)} V ${round(h)} H ${r} Z`;
+      return { d: body, lines: `${curl(r, r, false)} ${curl(w - r, h - r, true)}` };
+    }
+    case "gear6": return { d: gear(w, h, 6) };
+    case "gear9": return { d: gear(w, h, 9) };
+    case "funnel":
+      return { d: `M 0 ${round(h * 0.16)} L ${round(w * 0.42)} ${round(h * 0.6)} V ${round(h)} H ${round(w * 0.58)} V ${round(h * 0.6)} L ${round(w)} ${round(h * 0.16)} Z` +
+        ` M 0 ${round(h * 0.16)} a ${round(w / 2)} ${round(h * 0.16)} 0 1 1 ${round(w)} 0 a ${round(w / 2)} ${round(h * 0.16)} 0 1 1 ${round(-w)} 0 Z` };
+    case "flowDocument":
+      return { d: `M 0 0 H ${round(w)} V ${round(h * 0.82)} Q ${round(w * 0.75)} ${round(h * 1.06)} ${round(w / 2)} ${round(h * 0.88)} T 0 ${round(h * 0.82)} Z` };
+    case "flowMultidocument": {
+      const doc = (x: number, y: number, sw: number, sh: number): string =>
+        `M ${round(x)} ${round(y)} H ${round(x + sw)} V ${round(y + sh * 0.82)} Q ${round(x + sw * 0.75)} ${round(y + sh * 1.06)} ${round(x + sw / 2)} ${round(y + sh * 0.88)} T ${round(x)} ${round(y + sh * 0.82)} Z`;
+      return { d: `${doc(w * 0.12, 0, w * 0.88, h * 0.78)} ${doc(w * 0.06, h * 0.11, w * 0.88, h * 0.78)} ${doc(0, h * 0.22, w * 0.88, h * 0.78)}` };
+    }
+    case "flowPunchedTape":
+      return { d: `M 0 ${round(h * 0.14)} Q ${round(w * 0.25)} ${round(-h * 0.12)} ${round(w / 2)} ${round(h * 0.14)} T ${round(w)} ${round(h * 0.14)}` +
+        ` V ${round(h * 0.86)} Q ${round(w * 0.75)} ${round(h * 1.12)} ${round(w / 2)} ${round(h * 0.86)} T 0 ${round(h * 0.86)} Z` };
+    case "flowCollate": // two triangles meeting at a point, an hourglass
+      return { d: `M 0 0 H ${round(w)} L 0 ${round(h)} H ${round(w)} Z` };
+    case "flowOfflineStorage":
+      return { d: `M 0 0 H ${round(w)} L ${round(w / 2)} ${round(h)} Z`, lines: `M ${round(w * 0.16)} ${round(h * 0.68)} H ${round(w * 0.84)}` };
+    case "flowMagneticTape": {
+      const [rx, ry] = [round(w / 2), round(h * 0.44)];
+      return { d: `M 0 ${ry} a ${rx} ${ry} 0 1 1 ${round(w * 0.78)} ${round(h * 0.36)} H ${round(w)} V ${round(h)} H ${round(w * 0.6)} A ${rx} ${ry} 0 0 1 0 ${ry} Z` };
+    }
+    case "flowDisplay":
+      return { d: `M ${round(w * 0.16)} 0 H ${round(w * 0.82)} L ${round(w)} ${round(h / 2)} L ${round(w * 0.82)} ${round(h)} H ${round(w * 0.16)} A ${round(w * 0.16)} ${round(h / 2)} 0 0 1 ${round(w * 0.16)} 0 Z` };
+    case "flowPredefined":
+      return { d: `M 0 0 H ${round(w)} V ${round(h)} H 0 Z`, lines: `M ${round(w * 0.12)} 0 V ${round(h)} M ${round(w * 0.88)} 0 V ${round(h)}` };
+    case "flowStorage":
+      return { d: `M 0 0 H ${round(w)} V ${round(h)} H 0 Z`, lines: `M ${round(w * 0.14)} 0 V ${round(h)} M 0 ${round(h * 0.2)} H ${round(w)}` };
     default: return null;
   }
+}
+
+/** A gear: `teeth` square teeth round a hub, with the axle bored out of the middle. */
+function gear(w: number, h: number, teeth: number): string {
+  const [cx, cy] = [w / 2, h / 2];
+  const [ro, ri] = [Math.min(w, h) / 2, (Math.min(w, h) / 2) * 0.74];
+  const step = (Math.PI * 2) / teeth;
+  const at = (a: number, r: number): string => `${round(cx + r * Math.cos(a))} ${round(cy + r * Math.sin(a))}`;
+  let d = `M ${at(0, ro)}`;
+  for (let i = 0; i < teeth; i++) {
+    const a = i * step;
+    d += ` L ${at(a + step * 0.32, ro)} L ${at(a + step * 0.42, ri)} L ${at(a + step * 0.9, ri)} L ${at(a + step, ro)}`;
+  }
+  const rh = round(ro * 0.3);
+  return `${d} Z M ${round(cx - rh)} ${round(cy)} a ${rh} ${rh} 0 1 0 ${rh * 2} 0 a ${rh} ${rh} 0 1 0 ${-rh * 2} 0 Z`;
 }
 
 /** The stroked path for a brace / bracket geometry, or null for anything else. */
@@ -271,6 +342,17 @@ export function shapeOutlinePath(geom: ShapeGeom, w: number, h: number, adjust?:
     // A curved connector: the same journey as an elbow, rounded off.
     case "curve": return `M 0 0 C ${round(w * 0.5)} 0 ${round(w * 0.5)} ${round(h)} ${round(w)} ${round(h)}`;
     case "arc": return `M 0 ${round(h / 2)} A ${round(w / 2)} ${round(h / 2)} 0 0 1 ${round(w)} ${round(h / 2)}`;
+    // Chart markers and corner tabs: strokes, with nothing to fill.
+    case "chartPlus": return `M ${round(w / 2)} 0 V ${round(h)} M 0 ${round(h / 2)} H ${round(w)}`;
+    case "chartX": return `M 0 0 L ${round(w)} ${round(h)} M ${round(w)} 0 L 0 ${round(h)}`;
+    case "chartStar":
+      return `M ${round(w / 2)} 0 V ${round(h)} M ${round(w * 0.07)} ${round(h * 0.25)} L ${round(w * 0.93)} ${round(h * 0.75)}` +
+        ` M ${round(w * 0.07)} ${round(h * 0.75)} L ${round(w * 0.93)} ${round(h * 0.25)}`;
+    case "tabs": {
+      const [tw, th] = [round(w * 0.22), round(h * 0.22)];
+      return `M 0 ${th} V 0 H ${tw} M ${round(w - tw)} 0 H ${round(w)} V ${th}` +
+        ` M ${round(w)} ${round(h - th)} V ${round(h)} H ${round(w - tw)} M ${tw} ${round(h)} H 0 V ${round(h - th)}`;
+    }
     default: return null;
   }
 }

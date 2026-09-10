@@ -72,6 +72,27 @@ const PRESET_GEOM: Record<string, ShapeGeom> = {
   flowChartManualOperation: "trapezoidDown", flowChartManualInput: "manualInput",
   flowChartPunchedCard: "snipRect", flowChartOffpageConnector: "homePlate",
   flowChartMagneticDisk: "can", flowChartMagneticDrum: "can", flowChartOnlineStorage: "can",
+  flowChartDocument: "flowDocument", flowChartMultidocument: "flowMultidocument",
+  flowChartPunchedTape: "flowPunchedTape", flowChartCollate: "flowCollate",
+  flowChartOfflineStorage: "flowOfflineStorage", flowChartMagneticTape: "flowMagneticTape",
+  flowChartDisplay: "flowDisplay", flowChartPredefinedProcess: "flowPredefined",
+  flowChartInternalStorage: "flowStorage",
+  // A process box really is a rectangle; saying so beats falling through to one.
+  flowChartProcess: "rect",
+  // --- banners, scrolls and the rest ---
+  ribbon: "ribbon", ribbon2: "ribbon", leftRightRibbon: "ribbon",
+  ellipseRibbon: "ribbon", ellipseRibbon2: "ribbon",
+  horizontalScroll: "scrollH", verticalScroll: "scrollV",
+  gear6: "gear6", gear9: "gear9", funnel: "funnel",
+  chartPlus: "chartPlus", chartStar: "chartStar", chartX: "chartX",
+  cornerTabs: "tabs", squareTabs: "tabs", plaqueTabs: "tabs",
+  // Action buttons are bevelled rounded rectangles carrying an icon. The icon is a picture on
+  // top rather than the geometry, so the shape is what we draw.
+  actionButtonBlank: "roundRect", actionButtonHome: "roundRect", actionButtonHelp: "roundRect",
+  actionButtonInformation: "roundRect", actionButtonForwardNext: "roundRect",
+  actionButtonBackPrevious: "roundRect", actionButtonEnd: "roundRect",
+  actionButtonBeginning: "roundRect", actionButtonReturn: "roundRect",
+  actionButtonDocument: "roundRect", actionButtonSound: "roundRect", actionButtonMovie: "roundRect",
 };
 
 /** Map an OOXML preset geometry to one we render; unknowns fall back to a rectangle. */

@@ -88,12 +88,12 @@ describe("drawing shapes", () => {
     expect(readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0].geom).toBe("star");
   });
 
-  it("maps an unknown preset to a rect but keeps the original preset name", () => {
-    // gear9 is one of the presets with no drawing of its own; the name is still carried so a
-    // round-trip re-emits the shape exactly as the file had it.
-    const sh = readWorkbook(base(spAnchor("gear9"))).sheets[0].shapes ?? [];
+  it("maps a preset it does not know to a rect but keeps the original name", () => {
+    // Every preset ECMA-376 defines is mapped, so this stands in for a future one. The name is
+    // carried either way, so a round-trip re-emits the shape exactly as the file had it.
+    const sh = readWorkbook(base(spAnchor("someFutureShape"))).sheets[0].shapes ?? [];
     expect(sh[0].geom).toBe("rect");
-    expect(sh[0].preset).toBe("gear9");
+    expect(sh[0].preset).toBe("someFutureShape");
   });
 
   it("authors a new shape into a drawing that did not exist, and round-trips it", () => {
@@ -378,8 +378,29 @@ describe("preset geometries", () => {
     for (const [prst, geom] of same) expect(geomOfPreset(prst).geom, prst).toBe(geom);
   });
 
-  it("still falls back to a rectangle for one it does not know", () => {
-    expect(geomOfPreset("gear9").geom).toBe("rect");
-    expect(geomOfPreset("flowChartProcess").geom).toBe("rect"); // which a process box actually is
+  // One per category of ECMA-376's ST_ShapeType, so a whole family going missing shows up here.
+  it("draws something of its own for every family of preset", () => {
+    const sample: [string, string][] = [
+      ["ribbon2", "ribbon"], ["horizontalScroll", "scrollH"], ["verticalScroll", "scrollV"],
+      ["gear6", "gear6"], ["gear9", "gear9"], ["funnel", "funnel"],
+      ["flowChartDocument", "flowDocument"], ["flowChartCollate", "flowCollate"],
+      ["flowChartDisplay", "flowDisplay"], ["flowChartInternalStorage", "flowStorage"],
+      ["chartX", "chartX"], ["chartStar", "chartStar"], ["cornerTabs", "tabs"],
+      ["heart", "heart"], ["cloud", "cloud"], ["donut", "donut"], ["cube", "cube"],
+      ["bracketPair", "bracketPair"], ["quadArrow", "quadArrow"],
+      // An action button is a bevelled rounded rectangle; its icon is drawn on top, not by it.
+      ["actionButtonHome", "roundRect"],
+      // And the one whose rectangle is the right answer.
+      ["flowChartProcess", "rect"],
+    ];
+    for (const [prst, geom] of sample) expect(geomOfPreset(prst).geom, prst).toBe(geom);
+  });
+
+  it("gives the line-only marks strokes and no fill", () => {
+    for (const prst of ["chartPlus", "chartX", "chartStar", "squareTabs"]) {
+      const svg = shapeSvg(geomOfPreset(prst), 100, 60);
+      expect(svg, prst).toContain('fill="none"');
+      expect(svg, prst).not.toContain("<rect");
+    }
   });
 });
