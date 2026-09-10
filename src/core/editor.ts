@@ -11,7 +11,7 @@ import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
-import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook, SheetControl } from "./model";
+import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, StyleChange, Workbook, SheetControl } from "./model";
 import { cellDisplay, colToLetters, ensureCell, fontStack, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
@@ -37,7 +37,8 @@ import { computeCondVisuals, type CfVisual } from "../adapters/xlsx/condformat";
 import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
-import { setupShapeLayer } from "./ui/shape-layer";
+import { setupShapeLayer, shapeSvg } from "./ui/shape-layer";
+import { POLY_GEOMS, SHAPE_GALLERY } from "./shape-geom";
 import { setupSlicerLayer } from "./ui/slicer-layer";
 import { setupTimelineLayer } from "./ui/timeline-layer";
 import { outlineGutterWidth, setupOutlineLayer } from "./ui/outline-layer";
@@ -2426,6 +2427,77 @@ export function createSheetEditor(
     });
   };
 
+  /**
+   * The shape gallery: pick a shape and it lands on the sheet. Every geometry the grid can draw is
+   * offered, drawn as itself - a picture of a cloud needs no translating, and naming sixty shapes
+   * in eight languages would buy nothing a preview does not already say. The eleven that already
+   * have names keep them as the accessible label; the rest fall back to their English name.
+   *
+   * ODF is offered only the shapes its writer can express. The others would be saved as plain
+   * rectangles, and a shape that turns into a box on save is worse than one never offered.
+   */
+  let shapeGallery: HTMLElement | null = null;
+  const closeShapeGallery = (): void => { shapeGallery?.remove(); shapeGallery = null; };
+  const GEOM_LABEL: Partial<Record<ShapeGeom, string>> = {
+    rect: "shapeRect", roundRect: "shapeRoundRect", ellipse: "shapeEllipse", triangle: "shapeTriangle",
+    diamond: "shapeDiamond", parallelogram: "shapeParallelogram", pentagon: "shapePentagon",
+    hexagon: "shapeHexagon", star: "shapeStar", rightArrow: "shapeArrow", line: "shapeLine",
+  };
+  /** "leftRightArrow" -> "Left right arrow", for the shapes with no translated name of their own. */
+  const geomName = (geom: ShapeGeom): string => {
+    const key = GEOM_LABEL[geom];
+    if (key) return t(key);
+    const words = geom.replace(/([A-Z])/g, " $1").toLowerCase().trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  };
+  /** What the ODF writer can put in a file: its own primitives, plus anything we can hand it as a
+      polygon. A curved shape would go in as a rectangle, so it is not offered. */
+  const odfCanWrite = (geom: ShapeGeom): boolean =>
+    geom === "rect" || geom === "roundRect" || geom === "ellipse" || geom === "line" || POLY_GEOMS.includes(geom);
+  const openShapeGallery = (anchor: HTMLElement): void => {
+    if (shapeGallery) { closeShapeGallery(); return; }
+    const odf = wb.kind === "ods";
+    const pop = document.createElement("div");
+    pop.className = "sheetedit-pop sheetedit-shapegallery";
+    pop.setAttribute("role", "menu");
+    pop.setAttribute("aria-label", t("shapeInsert"));
+    for (const cat of SHAPE_GALLERY) {
+      const geoms = cat.geoms.filter((g) => !odf || odfCanWrite(g));
+      if (!geoms.length) continue;
+      const head = document.createElement("div");
+      head.className = "sheetedit-gallery-head";
+      head.textContent = t(cat.label);
+      pop.appendChild(head);
+      const grid = document.createElement("div");
+      grid.className = "sheetedit-gallery-grid";
+      for (const geom of geoms) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sheetedit-gallery-item";
+        b.setAttribute("role", "menuitem");
+        b.innerHTML = shapeSvg({ geom, stroke: "currentColor", strokeWidth: 1, anchor: { fromCol: 1, fromRow: 1, fromColOff: 0, fromRowOff: 0, toCol: 1, toRow: 1, toColOff: 0, toRowOff: 0 } }, 22, 18);
+        b.title = geomName(geom);
+        b.setAttribute("aria-label", geomName(geom));
+        b.addEventListener("click", () => { closeShapeGallery(); insertShape(geom); });
+        grid.appendChild(b);
+      }
+      pop.appendChild(grid);
+    }
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 320))}px`;
+    pop.style.top = `${r.bottom + 4}px`;
+    document.body.appendChild(pop);
+    shapeGallery = pop;
+    (pop.querySelector("button") as HTMLElement | null)?.focus();
+    pop.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeShapeGallery(); anchor.focus(); } });
+    setTimeout(() => {
+      const away = (e: MouseEvent): void => {
+        if (shapeGallery && !shapeGallery.contains(e.target as Node)) { closeShapeGallery(); document.removeEventListener("mousedown", away); }
+      };
+      document.addEventListener("mousedown", away);
+    });
+  };
+
   const openLineMenu = (e: MouseEvent, axisOf: "row" | "col", line: number) => {
     const axis = axisOf;
     e.preventDefault();
@@ -3857,7 +3929,8 @@ export function createSheetEditor(
   }
   if (caps.shapes) {
     const SHAPE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="7" height="7" rx="1"/><circle cx="11.5" cy="10.5" r="3.5"/></svg>`;
-    trailingIcons.push(tbIcon(SHAPE_ICON, t("shapeInsert"), () => openShapeDialog()));
+    const shapeBtn = tbIcon(SHAPE_ICON, t("shapeInsert"), () => openShapeGallery(shapeBtn));
+    trailingIcons.push(shapeBtn);
   }
   toolbarHandle.setTrailing(trailingIcons);
   syncToolbar = () => toolbarHandle.syncActive();
@@ -4878,13 +4951,15 @@ export function createSheetEditor(
     mark(); renderGrid();
   };
 
-  const { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, openNoteDialog } = setupDialogs({
+  const { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, insertShape, openNoteDialog } = setupDialogs({
     wb, wrap,
     active: () => active,
     getSelRect,
     mark: () => mark(),
     renderGrid: () => renderGrid(),
     refreshShapes: () => shapeLayer.refresh(),
+    colWidth: (c) => { const sh = wb.sheets[active]; return sh ? effColW(sh, c) : COL_W; },
+    rowHeight: (r) => { const sh = wb.sheets[active]; return sh ? effRowH(sh, r) : ROW_H; },
     applySparkline: (sheet, host, spec) => sparkSingle(sheet, host, spec),
   });
 

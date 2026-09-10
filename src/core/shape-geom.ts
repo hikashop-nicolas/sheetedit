@@ -156,25 +156,23 @@ function calloutTail(w: number, h: number): string {
 }
 
 /**
- * A cloud: one closed outline of bumps round an ellipse, not a pile of circles. Each pair of
- * neighbouring points on the ellipse is joined by an arc that bulges outward, so the result is a
- * single scalloped edge that fills and strokes as one shape.
+ * A cloud. Evenly sized bumps all the way round an ellipse do not read as one: the shape needs a
+ * near-flat underside with a few big billows above it, so the silhouette is drawn directly rather
+ * than generated. Proportions of the box, so it stretches with the shape.
  */
 function cloud(w: number, h: number): string {
-  const bumps = 9;
-  const [cx, cy, rx, ry] = [w / 2, h / 2, w * 0.42, h * 0.4];
-  const at = (i: number): [number, number] => {
-    const a = (i / bumps) * Math.PI * 2 - Math.PI / 2;
-    return [round(cx + rx * Math.cos(a)), round(cy + ry * Math.sin(a))];
-  };
-  let d = `M ${at(0)[0]} ${at(0)[1]}`;
-  for (let i = 1; i <= bumps; i++) {
-    const [x, y] = at(i);
-    const [px, py] = at(i - 1);
-    const r = round((Math.hypot(x - px, y - py) / 2) * 1.25);
-    d += ` A ${r} ${r} 0 0 1 ${x} ${y}`;
-  }
-  return `${d} Z`;
+  const X = (f: number): number => round(w * f), Y = (f: number): number => round(h * f);
+  const c = (x1: number, y1: number, x2: number, y2: number, x: number, y: number): string =>
+    `C ${X(x1)} ${Y(y1)} ${X(x2)} ${Y(y2)} ${X(x)} ${Y(y)}`;
+  return [
+    `M ${X(0.19)} ${Y(0.96)}`,
+    c(0.06, 0.96, 0.0, 0.79, 0.1, 0.66),   // up the left side
+    c(0.02, 0.5, 0.14, 0.33, 0.29, 0.37),  // the small billow at the top left
+    c(0.33, 0.15, 0.58, 0.1, 0.66, 0.29),  // the tall one over the middle
+    c(0.79, 0.2, 0.95, 0.31, 0.91, 0.5),   // and the one on the right
+    c(1.02, 0.58, 0.99, 0.87, 0.85, 0.96), // down the right side
+    "Z",                                    // closed along a flat underside
+  ].join(" ");
 }
 
 /** A pie / arc slice from `from` to `to` degrees (clockwise from east), as a closed wedge. */
@@ -377,6 +375,71 @@ function star5(w: number, h: number): [number, number][] {
 }
 
 const round = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * The insert gallery, in Excel's own grouping so it is where people expect it. `label` is an i18n
+ * key for the heading; the shapes themselves need no label, being pictures of what they are.
+ */
+export const SHAPE_GALLERY: { label: string; geoms: ShapeGeom[] }[] = [
+  { label: "shapeCatLines", geoms: ["line", "elbow", "curve", "arc"] },
+  {
+    label: "shapeCatBasic",
+    geoms: [
+      "rect", "roundRect", "snipRect", "ellipse", "triangle", "triangleDown", "diamond",
+      "parallelogram", "trapezoid", "trapezoidDown", "pentagon", "hexagon", "heptagon", "octagon",
+      "decagon", "dodecagon", "plus", "chevron", "homePlate", "corner", "diagStripe", "frame",
+      "halfFrame", "can", "cube", "pie", "chord", "donut", "moon", "teardrop", "cloud", "heart",
+      "lightningBolt", "noSmoking", "gear6", "gear9", "funnel",
+      "leftBrace", "rightBrace", "bracePair", "leftBracket", "rightBracket", "bracketPair",
+    ],
+  },
+  {
+    label: "shapeCatArrows",
+    geoms: ["rightArrow", "leftArrow", "upArrow", "downArrow", "leftRightArrow", "upDownArrow", "notchedArrow", "bentArrow", "quadArrow"],
+  },
+  {
+    label: "shapeCatFlow",
+    geoms: ["flowDocument", "flowMultidocument", "flowPunchedTape", "flowCollate", "flowOfflineStorage", "flowMagneticTape", "flowDisplay", "flowPredefined", "flowStorage", "manualInput"],
+  },
+  { label: "shapeCatCallouts", geoms: ["callout", "roundCallout", "ovalCallout"] },
+  { label: "shapeCatBanners", geoms: ["star", "ribbon", "scrollH", "scrollV", "wave", "chartPlus", "chartX", "chartStar", "tabs"] },
+];
+
+/**
+ * The OOXML preset to write for a geometry authored in the editor.
+ *
+ * Reading folds many presets onto one drawing; writing has to pick one back, and it has to pick
+ * the RIGHT one. Without an entry here a shape saves as `prst="rect"`, so a cloud the user just
+ * drew would be a rectangle the next time the file is opened. A shape read from a file carries its
+ * own preset name and never comes through this.
+ */
+export const GEOM_PRESET: Record<ShapeGeom, string> = {
+  rect: "rect", roundRect: "roundRect", ellipse: "ellipse", line: "line",
+  triangle: "triangle", triangleDown: "flowChartMerge", diamond: "diamond",
+  parallelogram: "parallelogram", hexagon: "hexagon", pentagon: "pentagon",
+  heptagon: "heptagon", octagon: "octagon", decagon: "decagon", dodecagon: "dodecagon",
+  star: "star5", trapezoid: "trapezoid", trapezoidDown: "flowChartManualOperation",
+  chevron: "chevron", homePlate: "homePlate", plus: "plus", corner: "corner",
+  diagStripe: "diagStripe", manualInput: "flowChartManualInput", snipRect: "snip1Rect",
+  rightArrow: "rightArrow", leftArrow: "leftArrow", upArrow: "upArrow", downArrow: "downArrow",
+  leftRightArrow: "leftRightArrow", upDownArrow: "upDownArrow",
+  notchedArrow: "notchedRightArrow", bentArrow: "bentArrow", quadArrow: "quadArrow",
+  callout: "wedgeRectCallout", roundCallout: "wedgeRoundRectCallout", ovalCallout: "wedgeEllipseCallout",
+  leftBrace: "leftBrace", rightBrace: "rightBrace", bracePair: "bracePair",
+  leftBracket: "leftBracket", rightBracket: "rightBracket", bracketPair: "bracketPair",
+  elbow: "bentConnector3", curve: "curvedConnector3", arc: "arc",
+  pie: "pie", chord: "chord", donut: "donut", moon: "moon", teardrop: "teardrop",
+  frame: "frame", halfFrame: "halfFrame", can: "can", cube: "cube",
+  cloud: "cloud", wave: "wave", heart: "heart", lightningBolt: "lightningBolt", noSmoking: "noSmoking",
+  ribbon: "ribbon2", scrollH: "horizontalScroll", scrollV: "verticalScroll",
+  gear6: "gear6", gear9: "gear9", funnel: "funnel",
+  flowDocument: "flowChartDocument", flowMultidocument: "flowChartMultidocument",
+  flowPunchedTape: "flowChartPunchedTape", flowCollate: "flowChartCollate",
+  flowOfflineStorage: "flowChartOfflineStorage", flowMagneticTape: "flowChartMagneticTape",
+  flowDisplay: "flowChartDisplay", flowPredefined: "flowChartPredefinedProcess",
+  flowStorage: "flowChartInternalStorage",
+  chartX: "chartX", chartStar: "chartStar", chartPlus: "chartPlus", tabs: "cornerTabs",
+};
 
 /** The polygon shapes (rendered / written via a path); the rest are primitives or closed paths. */
 export const POLY_GEOMS: ShapeGeom[] = [

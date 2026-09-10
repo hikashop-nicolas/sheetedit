@@ -259,6 +259,16 @@ display:block; padding:3px 8px; white-space:pre-wrap; word-break:break-word; lin
 .sheetedit-pop { position:fixed; z-index:30; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:8px; padding:4px; box-shadow:0 6px 18px rgba(0,0,0,0.45); display:flex; flex-direction:column; min-width:130px; }
 .sheetedit-pop-item { font:inherit; font-size:13px; text-align:left; background:transparent; color:var(--sheetedit-text, #e6e6e6); border:0; border-radius:5px; padding:7px 11px; cursor:pointer; }
 .sheetedit-pop-item:hover { background:var(--sheetedit-btn, #3a3f47); }
+.sheetedit-shapegallery { width:300px; max-height:min(70vh, 460px); overflow-y:auto; }
+.sheetedit-gallery-head { padding:6px 6px 2px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--sheetedit-muted, #aab2bf); }
+.sheetedit-gallery-grid { display:grid; grid-template-columns:repeat(8, 1fr); gap:2px; padding:0 2px 4px; }
+.sheetedit-gallery-item {
+display:flex; align-items:center; justify-content:center; height:30px; padding:0; cursor:pointer;
+background:transparent; border:1px solid transparent; border-radius:5px; color:var(--sheetedit-text, #e6e6e6);
+}
+.sheetedit-gallery-item:hover { background:var(--sheetedit-btn, #3a3f47); border-color:var(--sheetedit-btn-border, #4a4f57); }
+.sheetedit-gallery-item:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:-2px; }
+.sheetedit-gallery-item svg { width:22px; height:18px; overflow:visible; pointer-events:none; }
 .sheetedit-gridarea { flex:1; min-height:0; display:flex; flex-direction:row; }
 .sheetedit-colband { min-width:0; display:flex; flex-direction:column; }
 .sheetedit-colband:first-child { flex:1; }

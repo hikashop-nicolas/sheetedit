@@ -5,6 +5,7 @@ import { writeXlsx } from "./write";
 import { deleteXlsxShape } from "./shape-write";
 import { writeWorkbook } from "../../core/workbook";
 import { shapeSvg } from "../../core/ui/shape-layer";
+import { GEOM_PRESET, SHAPE_GALLERY } from "../../core/shape-geom";
 
 const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -402,5 +403,34 @@ describe("preset geometries", () => {
       expect(svg, prst).toContain('fill="none"');
       expect(svg, prst).not.toContain("<rect");
     }
+  });
+});
+
+// Authoring. Reading folds many presets onto one drawing, so writing has to pick one back, and it
+// has to pick the right one: without a mapping every shape the user drew was saved as prst="rect",
+// and the cloud they just placed was a rectangle the next time they opened the file.
+describe("a shape authored in the editor", () => {
+  it("saves as its own preset and comes back as itself, for every shape on offer", () => {
+    const offered = SHAPE_GALLERY.flatMap((c) => c.geoms);
+    expect(offered.length).toBeGreaterThan(50);
+    // All of them on one sheet, so this is one round trip rather than sixty.
+    const wb = readWorkbook(base(spAnchor("rect")));
+    const sheet = wb.sheets[0];
+    sheet.shapes = offered.map((geom, i) => ({
+      geom,
+      anchor: { fromCol: 2, fromRow: 2 + i * 5, fromColOff: 0, fromRowOff: 0, toCol: 5, toRow: 6 + i * 5, toColOff: 0, toRowOff: 0 },
+      fill: "#4c8bf5", stroke: "#1f3a5f", strokeWidth: 1, created: true, dirty: true,
+    }));
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes ?? [];
+    // The fixture already held one shape; the authored ones follow it, in order.
+    expect(re.length).toBe(offered.length + 1);
+    expect(re.slice(1).map((sh) => sh.geom)).toEqual(offered);
+  });
+
+  it("offers every geometry it can draw, so none is unreachable", () => {
+    const offered = new Set(SHAPE_GALLERY.flatMap((c) => c.geoms));
+    const drawn = Object.keys(GEOM_PRESET) as (keyof typeof GEOM_PRESET)[];
+    const missing = drawn.filter((g) => !offered.has(g));
+    expect(missing, "in the gallery, or deliberately left out").toEqual([]);
   });
 });

@@ -21,6 +21,11 @@ export interface DialogCtx {
   mark: () => void;
   renderGrid: () => void;
   refreshShapes: () => void;
+  /** A column's width and a row's height on screen, so a new shape can be sized in pixels rather
+      than in cells: three columns of a wide sheet is a very different shape from three of a narrow
+      one, and a cloud stretched over 900px does not look like a cloud. */
+  colWidth: (c: number) => number;
+  rowHeight: (r: number) => number;
   applySparkline: (sheet: Sheet, host: { r: number; c: number }, spec: SparkSpec) => void;
 }
 
@@ -41,6 +46,7 @@ export function setupDialogs(ctx: DialogCtx): {
   openCfDialog: () => void;
   openSparkDialog: () => void;
   openShapeDialog: (existing?: SheetShape) => void;
+  insertShape: (geom: ShapeGeom) => void;
   openNoteDialog: () => void;
 } {
   const { wb } = ctx;
@@ -235,6 +241,38 @@ export function setupDialogs(ctx: DialogCtx): {
   };
 
   // Insert a new shape (no argument) or edit an existing one's geometry/fill/outline/text.
+  /** Put a shape of this geometry on the sheet: over the selection, or a box at the active cell. */
+  const insertShape = (geom: ShapeGeom): void => {
+    const sheet = sheetNow();
+    const s = ctx.getSelRect();
+    const twoD = s.r2 > s.r1 || s.c2 > s.c1;
+    // A selection says where AND how big. Without one, a shape gets a sensible box of its own:
+    // walk out from the active cell until it is about 160x110 px, so the default is the same
+    // shape whatever the columns under it happen to be.
+    const spanTo = (start: number, want: number, size: (i: number) => number): { line: number; off: number } => {
+      let used = 0;
+      for (let i = start; i < start + 200; i++) {
+        const next = used + Math.max(1, size(i));
+        if (next >= want) return { line: i, off: Math.round(want - used) };
+        used = next;
+      }
+      return { line: start + 1, off: 0 };
+    };
+    const wide = spanTo(s.c1, 160, ctx.colWidth);
+    const tall = spanTo(s.r1, 110, ctx.rowHeight);
+    const anchor = twoD
+      ? { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c2 + 1, toRow: s.r2 + 1, toColOff: 0, toRowOff: 0 }
+      : { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: wide.line, toRow: tall.line, toColOff: wide.off, toRowOff: tall.off };
+    const line = geom === "line" || geom === "elbow" || geom === "curve" || geom === "arc";
+    (sheet.shapes ??= []).push({
+      cid: newDrawingId(), geom, anchor,
+      fill: line ? undefined : "#4c8bf5",
+      stroke: "#1f3a5f", strokeWidth: 1, created: true, dirty: true,
+    });
+    ctx.mark();
+    ctx.refreshShapes();
+  };
+
   const openShapeDialog = (existing?: SheetShape): void => {
     const sheet = sheetNow();
     const s = ctx.getSelRect();
@@ -301,5 +339,5 @@ export function setupDialogs(ctx: DialogCtx): {
     });
   };
 
-  return { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, openNoteDialog };
+  return { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, insertShape, openNoteDialog };
 }

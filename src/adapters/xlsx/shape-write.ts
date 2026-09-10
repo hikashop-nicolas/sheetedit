@@ -1,4 +1,5 @@
 import { parseXmlOpt, serializeXml, type Sheet, type SheetShape, type Workbook } from "../../core/model";
+import { GEOM_PRESET } from "../../core/shape-geom";
 import { pxToEmu } from "../../core/chart-model";
 import { ensureSheetDrawing } from "./chart-write";
 
@@ -13,10 +14,8 @@ const kid = (p: Element, local: string): Element | undefined => Array.from(p.chi
 const hex = (c: string): string => c.replace(/^#/, "").toUpperCase();
 
 /** The preset geometry name to write (round-trips the file's original when we kept it). */
-const PRST: Record<string, string> = { roundRect: "roundRect", ellipse: "ellipse", triangle: "triangle", line: "line", diamond: "diamond", parallelogram: "parallelogram", hexagon: "hexagon", pentagon: "pentagon", star: "star5", rightArrow: "rightArrow" };
 function prstOf(sh: SheetShape): string {
-  if (sh.preset) return sh.preset;
-  return PRST[sh.geom] ?? "rect";
+  return sh.preset ?? GEOM_PRESET[sh.geom] ?? "rect";
 }
 
 /** Inner spPr / txBody markup shared by the new-shape and restyle paths. */
