@@ -104,3 +104,37 @@ export function allowRawRefs(parser: unknown): void {
     p.funsNeedContextAndNoDataRetrieve.push("OFFSET");
   }
 }
+
+/** The sheet an INDEX source argument belongs to: a cell/range reference, or the chosen area of a
+    multi-area reference like INDEX((A1:A9,Other!C1:C9), n, 1, 2). */
+function sourceSheet(src: unknown, areaNum: unknown): string | undefined {
+  const areas = (src as { refs?: RefArg[] })?.refs;
+  if (Array.isArray(areas)) {
+    const n = Math.trunc(Number((areaNum as { value?: unknown })?.value ?? areaNum ?? 1));
+    return areas[(Number.isFinite(n) && n > 0 ? n : 1) - 1]?.ref?.sheet;
+  }
+  return (src as RefArg)?.ref?.sheet;
+}
+
+/**
+ * fast-formula-parser's INDEX builds its result reference out of the source range's row and
+ * column and drops the sheet, so `INDEX(Other!$D$5:$D$35, n)` is read back off whichever sheet
+ * the formula lives on. Every INDEX+MATCH lookup into another sheet silently returns the wrong
+ * cell. Wrap the built-in and put the sheet back.
+ */
+export function fixIndexSheet(parser: unknown): void {
+  const p = parser as { functions?: Record<string, (...args: unknown[]) => unknown> };
+  const orig = p.functions?.INDEX;
+  if (typeof orig !== "function" || (orig as { sheetFixed?: boolean }).sheetFixed) return;
+  const fixed = (...args: unknown[]): unknown => {
+    const out = orig(...args);
+    const ref = (out as RefArg)?.ref;
+    if (ref && ref.sheet == null) {
+      const sheet = sourceSheet(args[1], args[4]); // (context, ranges, rowNum, colNum, areaNum)
+      if (sheet) ref.sheet = sheet;
+    }
+    return out;
+  };
+  fixed.sheetFixed = true;
+  p.functions!.INDEX = fixed;
+}

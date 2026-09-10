@@ -5,7 +5,7 @@ import { isDateFmt } from "./dates";
 import { dynamicArrayFunctions } from "./dynamic-arrays";
 import { extraFunctions } from "./functions";
 import { financialFunctions } from "./financial";
-import { allowRawRefs, referenceFunctions } from "./reference-fns";
+import { allowRawRefs, fixIndexSheet, referenceFunctions } from "./reference-fns";
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 
@@ -375,6 +375,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     functions: { ...fastAggregates(), ...dynamicArrayFunctions(), ...extraFunctions(), ...financialFunctions(), ...referenceFunctions() },
   });
   allowRawRefs(parser);
+  fixIndexSheet(parser);
 
   // Dynamic-array spill: a plain formula (no legacy arrayRef) whose result is a 2-D array with
   // more than one cell spills into the anchor + the range below/right of it. A non-empty obstacle
@@ -546,6 +547,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     functions: { ...fastAggregates(), ...dynamicArrayFunctions(), ...extraFunctions(), ...financialFunctions(), ...referenceFunctions() },
   });
   allowRawRefs(parser);
+  fixIndexSheet(parser);
   return {
     at(formula, r0, c0, r, c, sheetName) {
       let f = shiftFormula(formula.replace(/^=/, ""), r - r0, c - c0);
