@@ -80,6 +80,10 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
       if (cp.getAttribute("fo:wrap-option") === "wrap") s.wrap = true;
       const va = cp.getAttribute("style:vertical-align");
       if (va === "top" || va === "middle" || va === "bottom") s.valign = va;
+      // ODF states the rotation as anticlockwise degrees, which is OOXML's 1..90 range; past 90 it
+      // keeps counting anticlockwise where OOXML switches to clockwise, so fold it into that.
+      const rot = Number(cp.getAttribute("style:rotation-angle") ?? "0") % 360;
+      if (rot > 0) s.rot = rot <= 90 ? rot : rot >= 270 ? 360 - rot + 90 : 90;
       // style:cell-protect is a space-separated set; "none" (or no "protected") = unlocked.
       const cprot = cp.getAttribute("style:cell-protect");
       if (cprot != null) {
@@ -151,10 +155,12 @@ export function parseOdsStyles(docs: Document[]): OdsStyles {
   return { cell, colW, rowH, cfMap, displayName, text };
 }
 
-// Frozen panes live in settings.xml (ODF view settings), keyed by sheet name. SplitMode 2 =
-// "frozen" (1 = split, 0 = none); the SplitPosition is the count of frozen columns / rows.
-function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: number; cols: number; split?: boolean }> {
-  const out = new Map<string, { rows: number; cols: number; split?: boolean }>();
+// Per-sheet view settings live in settings.xml (ODF view settings), keyed by sheet name: what is
+// frozen, and whether the grid is drawn. SplitMode 2 = "frozen" (1 = split, 0 = none); the
+// SplitPosition is the count of frozen columns / rows.
+interface OdsView { rows: number; cols: number; split?: boolean; hideGrid?: boolean }
+function readOdsViews(files: Record<string, Uint8Array>): Map<string, OdsView> {
+  const out = new Map<string, OdsView>();
   const f = files["settings.xml"];
   if (!f) return out;
   const doc = parseXmlOpt(f);
@@ -167,11 +173,14 @@ function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: n
       if (entry.localName !== "config-item-map-entry") continue;
       const name = entry.getAttribute("config:name");
       if (!name) continue;
-      const item = (key: string): number => {
+      const text = (key: string): string | undefined => {
         for (const ci of Array.from(entry.children))
-          if (ci.localName === "config-item" && ci.getAttribute("config:name") === key) return Number(ci.textContent || "0");
-        return 0;
+          if (ci.localName === "config-item" && ci.getAttribute("config:name") === key) return ci.textContent ?? undefined;
+        return undefined;
       };
+      const item = (key: string): number => Number(text(key) || "0");
+      // ShowGrid false: the sheet is laid out as a document, so only its own borders are drawn.
+      const hideGrid = text("ShowGrid") === "false";
       const hMode = item("HorizontalSplitMode"), vMode = item("VerticalSplitMode");
       // Mode 2 = frozen: the position IS the line count. Mode 1 = a draggable split, whose position
       // is a view-pixel offset; PositionRight / PositionBottom name the trailing pane's first line,
@@ -179,7 +188,7 @@ function readOdsFreeze(files: Record<string, Uint8Array>): Map<string, { rows: n
       const cols = hMode === 2 ? Math.max(0, Math.floor(item("HorizontalSplitPosition"))) : hMode === 1 ? Math.max(0, Math.floor(item("PositionRight"))) : 0;
       const rows = vMode === 2 ? Math.max(0, Math.floor(item("VerticalSplitPosition"))) : vMode === 1 ? Math.max(0, Math.floor(item("PositionBottom"))) : 0;
       const split = hMode === 1 || vMode === 1;
-      if (rows > 0 || cols > 0) out.set(name, { rows, cols, split });
+      if (rows > 0 || cols > 0 || hideGrid) out.set(name, { rows, cols, split, ...(hideGrid ? { hideGrid } : {}) });
     }
   }
   return out;
@@ -238,7 +247,7 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   const odsStylesDoc = files["styles.xml"] ? parseXmlOpt(files["styles.xml"]) : undefined;
   if (odsStylesDoc) docs.push(odsStylesDoc);
   const styles = parseOdsStyles(docs);
-  const freezeByName = readOdsFreeze(files);
+  const viewByName = readOdsViews(files);
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
   // Defined names: <table:named-range table:name="X" table:cell-range-address="$Sheet1.$A$1:.$B$2"/>.
   // Convert the ODF address to an A1 reference ("Sheet1!A1:B2") for recalc.
@@ -263,8 +272,12 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
     // ODF keeps sheet visibility in the TABLE STYLE, not on the table element: LibreOffice ignores
     // a table:display attribute written directly on <table:table>. There is no "very hidden".
     if (tableHidden(contentDoc, table)) sheet.visibility = "hidden";
-    const fz = freezeByName.get(name);
-    if (fz) { sheet.freeze = { rows: fz.rows, cols: fz.cols }; if (fz.split) sheet.paneSplit = true; }
+    const view = viewByName.get(name);
+    if (view) {
+      if (view.rows > 0 || view.cols > 0) sheet.freeze = { rows: view.rows, cols: view.cols };
+      if (view.split) sheet.paneSplit = true;
+      if (view.hideGrid) sheet.hideGridLines = true;
+    }
     const prot = readOdsProtection(table);
     if (prot) sheet.protection = prot;
     readOdsTable(sheet, table, styles);

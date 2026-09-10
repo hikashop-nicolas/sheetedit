@@ -2970,10 +2970,20 @@ export function createSheetEditor(
 
   const computeWrapHeights = (sheet: Sheet): void => {
     wrapH.clear();
+    // A merged cell's text has the whole merge to wrap in, and the rows it covers already provide
+    // the height, so a merge spanning rows is never grown: Excel's auto-fit skips merged cells for
+    // exactly that reason. Measuring one against its top-left column alone turned an eleven-row
+    // text box into a page of blank grid.
+    const mergeAt = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
+    for (const m of sheet.merges ?? []) mergeAt.set(key(m.r1, m.c1), m);
     for (const cell of sheet.cells.values()) {
       if (!cell.cellStyle?.wrap || cell.value === "") continue;
       if (sheet.hiddenRows?.has(cell.row) || sheet.hiddenCols?.has(cell.col)) continue;
-      const h = measureWrap(cellDisplay(cell) ?? cell.value, effColW(sheet, cell.col), cell.cellStyle) + 2; // gridline buffer
+      const merge = mergeAt.get(key(cell.row, cell.col));
+      if (merge && merge.r2 > merge.r1) continue; // spans rows: those rows are the space it gets
+      let width = effColW(sheet, cell.col);
+      if (merge) for (let c = merge.c1 + 1; c <= merge.c2; c++) width += effColW(sheet, c);
+      const h = measureWrap(cellDisplay(cell) ?? cell.value, width, cell.cellStyle) + 2; // gridline buffer
       if (h > (sheet.defaultRowHeight ?? ROW_H)) wrapH.set(cell.row, Math.max(wrapH.get(cell.row) ?? 0, h));
     }
   };
@@ -3905,7 +3915,9 @@ export function createSheetEditor(
     }
     if (cs.borders) {
       const bd = cs.borders;
-      const g = "#e3e3e6";
+      // The right/bottom fallback stands in for the gridline the cell's own borders paint over.
+      // On a sheet that hides its gridlines there is none to stand in for.
+      const g = wb.sheets[active]?.hideGridLines ? "transparent" : "#e3e3e6";
       const sh = [`inset -1px 0 0 0 ${bd.right ?? g}`, `inset 0 -1px 0 0 ${bd.bottom ?? g}`];
       if (bd.top) sh.push(`inset 0 1px 0 0 ${bd.top}`);
       if (bd.left) sh.push(`inset 1px 0 0 0 ${bd.left}`);
@@ -4198,12 +4210,34 @@ export function createSheetEditor(
         }
       });
       td.appendChild(input);
-      // Rich text: a display overlay of per-run styled spans (the input keeps the plain text for
-      // editing; CSS hides the overlay while the cell is focused).
-      if (cell?.richRuns?.length) {
+      // Rotated text: a text input cannot be turned, so the rotation is drawn on an overlay and
+      // the input (still upright) takes over on focus. Column headings set sideways to fit a
+      // narrow column are the usual case; read flat they are just clipped to two letters.
+      if (cell?.cellStyle?.rot && cell.value !== "") {
+        td.classList.add("has-rot");
+        const cs = cell.cellStyle;
+        const rot = cs.rot ?? 0;
+        const ov = document.createElement("div");
+        // 255 is OOXML's "stacked": upright characters, one under the next, not a turned line.
+        ov.className = rot === 255 ? "sheetedit-cellrot stacked" : "sheetedit-cellrot";
+        ov.setAttribute("aria-hidden", "true");
+        const sp = document.createElement("span");
+        sp.textContent = cellDisplay(cell);
+        // 1..90 is anticlockwise by that many degrees; 91..180 is clockwise by (value - 90).
+        if (rot !== 255) sp.style.transform = `rotate(${rot <= 90 ? -rot : rot - 90}deg)`;
+        if (cs.color) ov.style.color = cs.color;
+        if (cs.bold) ov.style.fontWeight = "700";
+        if (cs.italic) ov.style.fontStyle = "italic";
+        if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+        if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
+        ov.appendChild(sp);
+        td.appendChild(ov);
+      } else if (cell?.richRuns?.length) {
         td.classList.add("has-rich");
         const ov = document.createElement("div");
-        ov.className = "sheetedit-cellrich";
+        // A multi-format cell wraps if its style says so, like any other: the runs are how the
+        // text is painted, not a reason to draw it on one clipped line.
+        ov.className = cell.cellStyle?.wrap ? "sheetedit-cellrich wrapped" : "sheetedit-cellrich";
         ov.setAttribute("aria-hidden", "true");
         for (const run of cell.richRuns) {
           // A run carrying its own link is drawn as one and follows it on click. The overlay is
@@ -4305,7 +4339,14 @@ export function createSheetEditor(
     rn.className = "rownum";
     rn.dataset.r = String(r); // the outline gutter measures rows off these
     if (brkRows.has(r)) rn.classList.add("pgbrk-top"); // carry the break line into the gutter
-    rn.textContent = String(r);
+    // The number is laid over the header cell, not put inside it: in flow, a line of text is a
+    // floor under the row, so a sheet's short spacer rows all came out ~18px tall. The rows then
+    // no longer matched the geometry the shape / image / chart overlays are positioned with, and
+    // every one of them drifted further down the sheet.
+    const rnLabel = document.createElement("span");
+    rnLabel.className = "sheetedit-rownum-label";
+    rnLabel.textContent = String(r);
+    rn.appendChild(rnLabel);
     rn.title = t("selectRow", { row: r });
     rn.addEventListener("click", () => {
       if (resizing) return;
@@ -4881,6 +4922,8 @@ export function createSheetEditor(
     const sheet = wb.sheets[active];
     if (!sheet) return;
     for (const p of panes) { p.inputs = new Map(); p.tds = new Map(); }
+    // A sheet laid out as a document turns its gridlines off; only the borders it draws itself stay.
+    wrap.classList.toggle("sheetedit-nogrid", !!sheet.hideGridLines);
     const keepTop = gridScroll.scrollTop;
     const keepLeft = gridScroll.scrollLeft;
     gridScroll.innerHTML = "";
@@ -5087,6 +5130,9 @@ export function createSheetEditor(
       b.type = "button";
       b.className = "sheetedit-tab";
       b.textContent = sheet.name;
+      // A coloured tab is how a workbook singles a sheet out; drawn as an underline so the tab
+      // keeps the UI's own contrast whatever colour the file picked.
+      if (sheet.tabColor) b.style.setProperty("--sheetedit-tabcolor", sheet.tabColor);
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(i === active));
       b.tabIndex = i === active ? 0 : -1; // roving tabindex for the tablist

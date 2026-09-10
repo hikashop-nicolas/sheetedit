@@ -317,6 +317,8 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
       else if (valign === "center") st.valign = "middle";
       const wrap = alignEl?.getAttribute("wrapText");
       if (wrap === "1" || wrap === "true") st.wrap = true;
+      const rot = Number(alignEl?.getAttribute("textRotation") ?? "0");
+      if (Number.isFinite(rot) && rot > 0 && rot <= 255) st.rot = rot;
       // Cell protection: both default to locked / not hidden, so only the explicit opt-outs matter.
       const protEl = firstByLocal(xf, "protection");
       if (protEl) {
@@ -491,6 +493,15 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
       // that is BLOCKED, and each has its own default, so only the stated ones are recorded.
       const spEl = doc.getElementsByTagName("sheetProtection")[0];
       if (spEl) sheet.protection = readSheetProtection(spEl);
+      // <sheetView showGridLines="0">: the author laid this sheet out as a document rather than a
+      // grid, so only the borders the cells carry are meant to be drawn.
+      const viewEl = doc.getElementsByTagName("sheetView")[0];
+      if (viewEl && xmlBool(viewEl, "showGridLines") === false) sheet.hideGridLines = true;
+      // <sheetPr><tabColor rgb="FFFFFF00"/>: a coloured tab is how a workbook flags one sheet
+      // among many, so it has to survive the trip to the tab strip.
+      const tabEl = doc.getElementsByTagName("tabColor")[0];
+      const tabCss = resolveColor(tabEl, theme);
+      if (tabCss) sheet.tabColor = tabCss;
       // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
       // xSplit / ySplit are the counts of frozen leading columns / rows.
       const pane = doc.getElementsByTagName("pane")[0];

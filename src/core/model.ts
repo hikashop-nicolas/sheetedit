@@ -25,6 +25,9 @@ export interface CellStyle {
   valign?: "top" | "middle" | "bottom";
   /** Wrap text within the cell. */
   wrap?: boolean;
+  /** Text rotation, in OOXML's terms: 1..90 turns the text anticlockwise by that many degrees,
+      91..180 turns it clockwise by (value - 90), and 255 stacks the characters vertically. */
+  rot?: number;
   /** Border presence + CSS colour per side. */
   borders?: { top?: string; right?: string; bottom?: string; left?: string };
   /** Theme colour references kept alongside the resolved colours, so switching the workbook's
@@ -297,6 +300,11 @@ export interface Sheet {
   visibility?: "hidden" | "veryHidden";
   /** The visibility changed in the UI -> the workbook part is rewritten on save. */
   visibilityDirty?: boolean;
+  /** xlsx `<sheetView showGridLines="0">`: the sheet is laid out as a document, so the grid is
+      off and only the borders the cells carry are drawn. Absent = the gridlines show. */
+  hideGridLines?: boolean;
+  /** The sheet tab's colour (xlsx `<sheetPr><tabColor>`), as CSS. */
+  tabColor?: string;
   cells: Map<string, Cell>;
   maxRow: number; // 1-based extent of used cells (0 = empty)
   maxCol: number;
@@ -663,6 +671,18 @@ export interface SheetShape {
   strokeWidth?: number; // px (default 1)
   text?: string;
   textColor?: string;
+  /** How the text sits in the shape: the paragraphs' alignment (xlsx <a:pPr algn>) and the body's
+      vertical anchor (<a:bodyPr anchor>). A callout's label is written to a corner, not centred. */
+  textAlign?: "left" | "center" | "right";
+  textValign?: "top" | "middle" | "bottom";
+  /** Line ends, as the file names them (triangle / stealth / arrow / oval / diamond / none): the
+      start of the line is its head end, the finish its tail end. */
+  headEnd?: string;
+  tailEnd?: string;
+  /** The shape is mirrored on the axis (xlsx <a:xfrm flipH/flipV>). For a line that is the whole
+      geometry: a flipped line runs from the other corner of its box. */
+  flipH?: boolean;
+  flipV?: boolean;
   /** The macro assigned to the shape (xlsx <xdr:sp macro>). A shape with one is a button: clicking
       it runs the macro, exactly as a form control's button does. */
   macro?: string;
@@ -888,6 +908,7 @@ export function mergeCellStyle(cur: CellStyle, change: StyleChange): CellStyle {
     align: change.align ?? cur.align,
     valign: change.valign ?? cur.valign,
     wrap: change.wrap ?? cur.wrap,
+    rot: cur.rot, // no UI control sets it; carried so a style edit does not straighten the text
     // `locked` is stated the way the formats state it; the model keeps the explicit-unlock flag.
     unlocked: change.locked === undefined ? cur.unlocked : !change.locked,
     formulaHidden: cur.formulaHidden,

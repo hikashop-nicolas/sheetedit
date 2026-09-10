@@ -170,3 +170,56 @@ describe("drawing shapes", () => {
     expect(new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"])).toBe(before);
   });
 });
+
+// A shape's text is paragraphs, and a connector's ends carry arrowheads. Both were dropped on the
+// way in: every paragraph's runs were concatenated into one string, and the line ends were never
+// looked at, so a two-line callout came out as one clipped line at the end of an arrow with no
+// point on it.
+describe("shape text and line ends", () => {
+  const textBox = (paras: string, bodyPr = '<a:bodyPr anchor="t"/>') =>
+    `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="T"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody>${bodyPr}<a:lstStyle/>${paras}</xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("keeps each paragraph on its own line", () => {
+    // Two paragraphs, the first split across two runs (Excel splits on a formatting boundary).
+    const paras = `<a:p><a:pPr algn="l"/><a:r><a:t>Montant a inscrir</a:t></a:r><a:r><a:t>e au contrat.</a:t></a:r></a:p><a:p><a:pPr algn="l"/><a:r><a:t>Second line.</a:t></a:r></a:p>`;
+    const sh = readWorkbook(base(textBox(paras))).sheets[0].shapes![0]!;
+    expect(sh.text).toBe("Montant a inscrire au contrat.\nSecond line.");
+    expect(sh.textAlign).toBe("left");
+    expect(sh.textValign).toBe("top");
+  });
+
+  it("does not leave a trailing blank line for an empty last paragraph", () => {
+    const sh = readWorkbook(base(textBox(`<a:p><a:r><a:t>One</a:t></a:r></a:p><a:p><a:endParaRPr lang="en-GB"/></a:p>`))).sheets[0].shapes![0]!;
+    expect(sh.text).toBe("One");
+  });
+
+  it("draws the text as wrapping HTML, positioned as the file asks", () => {
+    const sh = readWorkbook(base(textBox(`<a:p><a:pPr algn="l"/><a:r><a:t>a\nb</a:t></a:r></a:p>`))).sheets[0].shapes![0]!;
+    const svg = shapeSvg(sh, 120, 40);
+    expect(svg).toContain("<foreignObject");
+    expect(svg).toContain("white-space:pre-wrap");
+    expect(svg).toContain("text-align:left");
+    expect(svg).toContain("justify-content:flex-start"); // anchor="t"
+  });
+
+  const connector = (ln: string, flip = "") =>
+    `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:cxnSp><xdr:nvCxnSpPr><xdr:cNvPr id="3" name="C"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr><xdr:spPr><a:xfrm${flip}/><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom><a:ln><a:solidFill><a:srgbClr val="0070C0"/></a:solidFill>${ln}</a:ln></xdr:spPr></xdr:cxnSp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("reads the line ends and draws an arrowhead for them", () => {
+    const sh = readWorkbook(base(connector(`<a:headEnd type="none"/><a:tailEnd type="triangle"/>`))).sheets[0].shapes![0]!;
+    expect(sh.tailEnd).toBe("triangle");
+    const svg = shapeSvg(sh, 100, 50);
+    expect(svg).toContain("<marker");
+    expect(svg).toMatch(/marker-end="url\(#sheetedit-marker-\d+\)"/);
+    expect(svg).not.toContain("marker-start="); // headEnd "none" draws nothing
+    expect(svg).toContain('fill="#0070C0"'); // the marker takes the line's colour
+  });
+
+  it("runs a flipped line from the other corner of its box", () => {
+    const plain = shapeSvg(readWorkbook(base(connector(""))).sheets[0].shapes![0]!, 100, 50);
+    expect(plain).toMatch(/x1="0\.5" y1="0\.5" x2="99\.5" y2="49\.5"/);
+    const sh = readWorkbook(base(connector("", ' flipH="1"'))).sheets[0].shapes![0]!;
+    expect(sh.flipH).toBe(true);
+    expect(shapeSvg(sh, 100, 50)).toMatch(/x1="99\.5" y1="0\.5" x2="0\.5" y2="49\.5"/);
+  });
+});

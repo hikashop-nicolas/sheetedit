@@ -54,6 +54,7 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
   const align = change.align ?? cur.align;
   const valign = change.valign ?? cur.valign;
   const wrap = change.wrap ?? cur.wrap;
+  const rot = cur.rot; // not editable in the UI; carried so a style edit does not straighten it
   // Border sides: start from the current borders, apply the all-sides toggle and/or per-side change.
   const curSides = {
     top: !!cur.borders?.top,
@@ -139,12 +140,13 @@ export function setXlsxCellStyle(wb: Workbook, sheet: Sheet, cell: Cell, change:
   xf.setAttribute("applyFont", "1");
   if (bg) xf.setAttribute("applyFill", "1");
   if (borderId) xf.setAttribute("applyBorder", "1");
-  if (align || valign || wrap) {
+  if (align || valign || wrap || rot) {
     xf.setAttribute("applyAlignment", "1");
     const a = ce("alignment");
     if (align) a.setAttribute("horizontal", align);
     if (valign) a.setAttribute("vertical", valign === "middle" ? "center" : valign);
     if (wrap) a.setAttribute("wrapText", "1");
+    if (rot) a.setAttribute("textRotation", String(rot));
     xf.appendChild(a);
   }
   // Cell protection: the xf is rebuilt from scratch, so the current lock state has to be carried

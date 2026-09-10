@@ -183,7 +183,18 @@ export function readShapes(
       const styleStroke = style && styleScheme ? styleRefPaint(kid(style, "lnRef"), styleScheme.lines, theme) : undefined;
       const stroke = colorFrom(ln ? kid(ln, "solidFill") : undefined, theme) ?? (ln && kid(ln, "noFill") ? undefined : styleStroke?.color);
       const lw = ln?.getAttribute("w");
-      const txt = descend(sp, "t").map((t) => t.textContent ?? "").join("");
+      // Text: one line per <a:p>. Joining every <a:t> in the shape ran the paragraphs together,
+      // so a two-line label came out as one line that then had to be clipped.
+      const body = descend(sp, "txBody")[0];
+      const paras = body ? Array.from(body.children).filter((c) => c.localName === "p") : [];
+      const txt = paras
+        .map((para) => descend(para, "t").map((t) => t.textContent ?? "").join(""))
+        .join("\n")
+        .replace(/\n+$/, "");
+      const bodyPr = body ? kid(body, "bodyPr") : undefined;
+      const anchor2 = bodyPr?.getAttribute("anchor");
+      const algn = paras.map((para) => kid(para, "pPr")?.getAttribute("algn")).find(Boolean);
+      const xfrm = spPr ? kid(spPr, "xfrm") : undefined;
       const rPr = descend(sp, "r")[0] ? kid(descend(sp, "r")[0], "rPr") : undefined;
       const styleText = style ? colorFrom(kid(style, "fontRef"), theme) : undefined;
       out.push({
@@ -195,6 +206,12 @@ export function readShapes(
         stroke,
         strokeWidth: lw ? Math.max(1, Math.round(Number(lw) / 9525)) : undefined,
         text: txt || undefined,
+        ...(algn === "ctr" ? { textAlign: "center" as const } : algn === "r" ? { textAlign: "right" as const } : algn === "l" || algn === "just" ? { textAlign: "left" as const } : {}),
+        ...(anchor2 === "t" ? { textValign: "top" as const } : anchor2 === "b" ? { textValign: "bottom" as const } : anchor2 === "ctr" ? { textValign: "middle" as const } : {}),
+        ...(ln && kid(ln, "headEnd")?.getAttribute("type") ? { headEnd: kid(ln, "headEnd")!.getAttribute("type")! } : {}),
+        ...(ln && kid(ln, "tailEnd")?.getAttribute("type") ? { tailEnd: kid(ln, "tailEnd")!.getAttribute("type")! } : {}),
+        ...(xfrm?.getAttribute("flipH") === "1" ? { flipH: true } : {}),
+        ...(xfrm?.getAttribute("flipV") === "1" ? { flipV: true } : {}),
         ...(sp.getAttribute("macro") ? { macro: sp.getAttribute("macro")! } : {}),
         textColor: colorFrom(rPr ? kid(rPr, "solidFill") : undefined, theme) ?? styleText,
         drawingPath: drawPath,

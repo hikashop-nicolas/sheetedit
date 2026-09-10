@@ -46,6 +46,28 @@ function gradientDef(g: NonNullable<SheetShape["fillGradient"]>): { def: string;
   };
 }
 
+// Line ends. DrawingML names a shape (triangle, stealth, ...) and the renderer draws it at the
+// line's end, in the line's colour, scaled to its width. A connector with no marker reads as a
+// plain rule, which is the wrong statement entirely: an arrow points at something.
+const MARKER_PATHS: Record<string, string> = {
+  triangle: "M0,0 L6,3 L0,6 z",
+  arrow: "M0,0 L6,3 L0,6 z",
+  stealth: "M0,0 L6,3 L0,6 L1.6,3 z",
+  diamond: "M0,3 L3,0 L6,3 L3,6 z",
+  oval: "M0,3 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0",
+};
+
+/** A <marker> def for one line end, plus the url() that names it, or null for "none". */
+function markerDef(type: string | undefined, color: string): { def: string; url: string } | null {
+  const path = type ? MARKER_PATHS[type] : undefined;
+  if (!path) return null;
+  const id = `sheetedit-marker-${++gradSeq}`;
+  return {
+    def: `<marker id="${id}" viewBox="0 0 6 6" refX="5.4" refY="3" markerWidth="4" markerHeight="4" markerUnits="strokeWidth" orient="auto"><path d="${path}" fill="${color}"/></marker>`,
+    url: `url(#${id})`,
+  };
+}
+
 /** Build the SVG markup for one shape at the given pixel size. */
 export function shapeSvg(sh: SheetShape, w: number, h: number): string {
   const grad = sh.fillGradient?.stops.length ? gradientDef(sh.fillGradient) : undefined;
@@ -55,6 +77,7 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
   const inset = sw / 2; // keep the stroke inside the box
   const iw = Math.max(0, w - sw), ih = Math.max(0, h - sw);
   let body: string;
+  let markerDefs = "";
   switch (sh.geom) {
     case "ellipse":
       body = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${iw / 2}" ry="${ih / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
@@ -64,9 +87,20 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
       body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" rx="${r}" ry="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
       break;
     }
-    case "line":
-      body = `<line x1="${inset}" y1="${inset}" x2="${w - inset}" y2="${h - inset}" stroke="${stroke === "none" ? "#000000" : stroke}" stroke-width="${sw}"/>`;
+    case "line": {
+      // A line is the diagonal of its box; flipH/flipV say which diagonal, so a flipped connector
+      // runs from the other corner instead of doubling back on itself.
+      const colour = stroke === "none" ? "#000000" : stroke;
+      const [x1, x2] = sh.flipH ? [w - inset, inset] : [inset, w - inset];
+      const [y1, y2] = sh.flipV ? [h - inset, inset] : [inset, h - inset];
+      const head = markerDef(sh.headEnd, colour);
+      const tail = markerDef(sh.tailEnd, colour);
+      const ends = [head, tail].filter(Boolean).map((m) => m!.def).join("");
+      if (ends) markerDefs = `<defs>${ends}</defs>`;
+      const attrs = `${head ? ` marker-start="${head.url}"` : ""}${tail ? ` marker-end="${tail.url}"` : ""}`;
+      body = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colour}" stroke-width="${sw}"${attrs}/>`;
       break;
+    }
     default: {
       // Polygon shapes (triangle / diamond / hexagon / pentagon / star / arrow / parallelogram),
       // inset a touch so the stroke stays inside the box; else a plain rectangle.
@@ -77,10 +111,21 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
   }
   let label = "";
   if (sh.text && sh.geom !== "line") {
+    // The text goes in a foreignObject rather than an <svg:text>: a single text node cannot wrap
+    // and cannot hold the shape's paragraphs, so a label longer than its box was drawn as one
+    // line running out of both sides of it. HTML in the box wraps, keeps the line breaks, and
+    // can be selected and copied like any other text on the page.
     const esc = sh.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    label = `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" dominant-baseline="central" fill="${sh.textColor ?? "#000000"}" font-size="13" font-family="sans-serif">${esc}</text>`;
+    const justify = sh.textValign === "top" ? "flex-start" : sh.textValign === "bottom" ? "flex-end" : "center";
+    const style = [
+      "width:100%", "height:100%", "box-sizing:border-box", "padding:2px 5px",
+      "display:flex", "flex-direction:column", `justify-content:${justify}`,
+      `text-align:${sh.textAlign ?? "center"}`, "white-space:pre-wrap", "overflow-wrap:break-word",
+      "font:13px sans-serif", "line-height:1.25", `color:${sh.textColor ?? "#000000"}`,
+    ].join(";");
+    label = `<foreignObject x="0" y="0" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" class="sheetedit-shapetext" style="${style}">${esc}</div></foreignObject>`;
   }
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grad?.def ?? ""}${body}${label}</svg>`;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grad?.def ?? ""}${markerDefs}${body}${label}</svg>`;
 }
 
 export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
@@ -153,7 +198,12 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     };
-    box.addEventListener("pointerdown", (e) => { if (e.target !== handle) start(e, "move"); });
+    // Dragging from the text of a shape that is already selected selects the text instead, the
+    // way clicking into a shape twice does elsewhere: the first click picks the shape up, the
+    // second one gets at what it says. Otherwise a text box could never be read out of.
+    const onText = (e: PointerEvent): boolean =>
+      sh === selected && e.target instanceof Element && !!e.target.closest(".sheetedit-shapetext");
+    box.addEventListener("pointerdown", (e) => { if (e.target !== handle && !onText(e)) start(e, "move"); });
     handle.addEventListener("pointerdown", (e) => start(e, "resize"));
   };
 

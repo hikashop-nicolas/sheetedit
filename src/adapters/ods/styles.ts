@@ -66,6 +66,9 @@ export function applyCellStyleToOds(doc: Document, st: Element, cs: CellStyle): 
   odsSetOrRemove(cp, "fo:border-left", bv(cs.borders?.left));
   odsSetOrRemove(cp, "fo:wrap-option", cs.wrap ? "wrap" : undefined);
   odsSetOrRemove(cp, "style:vertical-align", cs.valign, ODS.style);
+  // Carried, not authored: no toolbar control sets a rotation, so an edit through the ones that
+  // do must not straighten text the file set sideways. ODF counts anticlockwise throughout.
+  odsSetOrRemove(cp, "style:rotation-angle", cs.rot ? String(cs.rot <= 90 ? cs.rot : 360 - (cs.rot - 90)) : undefined, ODS.style);
   // Cell protection: ODF states the whole state in one attribute, and "protected" is the default.
   const protect = cs.unlocked ? (cs.formulaHidden ? "formula-hidden" : "none") : cs.formulaHidden ? "protected formula-hidden" : "protected";
   odsSetOrRemove(cp, "style:cell-protect", protect, ODS.style);
