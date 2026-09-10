@@ -1,7 +1,7 @@
 import { setupOverlayHosts } from "./overlay-hosts";
 import type { Sheet, SheetShape } from "../model";
 import type { ChartGeom } from "./chart-overlay";
-import { shapeOutlinePath, shapePoints } from "../shape-geom";
+import { shapeFilledPath, shapeOutlinePath, shapePoints } from "../shape-geom";
 
 // An overlay that floats a sheet's drawing shapes over the grid as SVG, anchored to cells and glued
 // while scrolling (the same layer pattern as the image / chart overlays). Shapes can be selected,
@@ -130,6 +130,15 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
         if (ends) markerDefs = `<defs>${ends}</defs>`;
         const marks = `${head ? ` marker-start="${head.url}"` : ""}${tail ? ` marker-end="${tail.url}"` : ""}`;
         body = `<path d="${path}" transform="translate(${inset},${inset})" fill="none" stroke="${colour}" stroke-width="${sw}"${dash} stroke-linecap="round" stroke-linejoin="round"${marks}/>`;
+        break;
+      }
+      // Curved / hollow shapes and callouts: a closed path. evenodd so a frame or a donut keeps
+      // its hole, and the path is NOT inset - a callout's tail deliberately hangs outside the box.
+      const filled = shapeFilledPath(sh.geom, iw, ih);
+      if (filled) {
+        const shift = `transform="translate(${inset},${inset})"`;
+        const edges = filled.lines ? `<path d="${filled.lines}" ${shift} fill="none" stroke="${stroke}" stroke-width="${sw}"${dash}/>` : "";
+        body = `<path d="${filled.d}" ${shift} fill-rule="evenodd" fill="${fill}"${fillOp} stroke="${stroke}" stroke-width="${sw}"${dash} stroke-linejoin="round"/>${edges}`;
         break;
       }
       // Polygon shapes (triangle / diamond / hexagon / pentagon / star / arrow / parallelogram),

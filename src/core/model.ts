@@ -654,14 +654,32 @@ export interface SheetControl {
 
 /** A supported drawing shape geometry. Anything else read from a file maps to "rect" for rendering
     but keeps its original preset name so it round-trips. */
+/**
+ * A geometry the grid can draw. This is the set of SHAPES, not of presets: OOXML names 187 of the
+ * latter and many are the same drawing (every flowchart decision is a diamond, every star is a
+ * star), so the reader folds them onto these. What is left over falls back to a rectangle, which
+ * is honest for a decorative shape and misleading for one that means something by its outline -
+ * hence the arrows, callouts and connectors below, which are here precisely because a box says
+ * the wrong thing.
+ */
 export type ShapeGeom =
-  | "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "diamond" | "parallelogram"
-  | "hexagon" | "pentagon" | "star" | "rightArrow"
+  | "rect" | "roundRect" | "ellipse" | "line" | "triangle" | "triangleDown" | "diamond"
+  | "parallelogram" | "hexagon" | "pentagon" | "heptagon" | "octagon" | "decagon" | "dodecagon"
+  | "star" | "trapezoid" | "trapezoidDown" | "chevron" | "homePlate" | "plus" | "corner"
+  | "diagStripe" | "manualInput" | "snipRect"
+  // Arrows. Direction is part of the meaning, so each one is its own geometry.
+  | "rightArrow" | "leftArrow" | "upArrow" | "downArrow" | "leftRightArrow" | "upDownArrow"
+  | "notchedArrow" | "bentArrow" | "quadArrow"
+  // Callouts: a box with a tail pointing at whatever the note is about.
+  | "callout" | "roundCallout" | "ovalCallout"
   // Braces and brackets: open outlines rather than closed shapes, used to bracket a range of
   // rows or columns. Rendered, not offered for authoring.
   | "leftBrace" | "rightBrace" | "bracePair" | "leftBracket" | "rightBracket" | "bracketPair"
-  // An elbow connector: right-angled turns between its two ends.
-  | "elbow";
+  // Connectors between two points: right-angled turns, a curve, or an arc.
+  | "elbow" | "curve" | "arc"
+  // Curved and hollow shapes, drawn as closed paths.
+  | "pie" | "chord" | "donut" | "moon" | "teardrop" | "frame" | "halfFrame" | "can" | "cube"
+  | "cloud" | "wave" | "heart" | "lightningBolt" | "noSmoking";
 
 /** A linear gradient fill. `angle` is in degrees clockwise from the positive x axis, as DrawingML
     measures it, and `pos` runs 0..1 along that direction. */

@@ -8,30 +8,75 @@ import { anchorOf, relMap, resolvePart } from "./chart-read";
 const descend = (root: Element, local: string): Element[] => Array.from(root.getElementsByTagName("*")).filter((e) => e.localName === local);
 const kid = (parent: Element, local: string): Element | undefined => Array.from(parent.children).find((c) => c.localName === local);
 
+// OOXML names 187 preset geometries. Most are the same few drawings under different names, and a
+// rectangle is a fair stand-in for a decorative one. It is NOT a fair stand-in for a shape whose
+// outline carries the meaning: an arrow that points nowhere, a callout with no tail to say what it
+// is about, a connector drawn as the box around it. Those are the ones listed here.
+const PRESET_GEOM: Record<string, ShapeGeom> = {
+  // --- primitives and polygons ---
+  ellipse: "ellipse", oval: "ellipse", circle: "ellipse",
+  roundRect: "roundRect", round1Rect: "roundRect", round2SameRect: "roundRect", round2DiagRect: "roundRect",
+  snip1Rect: "snipRect", snip2SameRect: "snipRect", snip2DiagRect: "snipRect", snipRoundRect: "snipRect",
+  triangle: "triangle", isoscelesTriangle: "triangle", rtTriangle: "triangle",
+  diamond: "diamond", parallelogram: "parallelogram", trapezoid: "trapezoid",
+  nonIsoscelesTrapezoid: "trapezoid", hexagon: "hexagon", pentagon: "pentagon",
+  heptagon: "heptagon", octagon: "octagon", decagon: "decagon", dodecagon: "dodecagon",
+  chevron: "chevron", homePlate: "homePlate", plaque: "roundRect", bevel: "rect",
+  corner: "corner", diagStripe: "diagStripe", foldedCorner: "snipRect",
+  frame: "frame", halfFrame: "halfFrame", can: "can", cube: "cube",
+  plus: "plus", mathPlus: "plus", mathMultiply: "plus", mathMinus: "rect", mathEqual: "rect",
+  mathDivide: "rect", mathNotEqual: "rect",
+  // Every star is a star; the point count is detail this does not model.
+  star4: "star", star5: "star", star6: "star", star7: "star", star8: "star", star10: "star",
+  star12: "star", star16: "star", star24: "star", star32: "star",
+  irregularSeal1: "star", irregularSeal2: "star",
+  // --- arrows: the direction IS the message ---
+  rightArrow: "rightArrow", leftArrow: "leftArrow", upArrow: "upArrow", downArrow: "downArrow",
+  leftRightArrow: "leftRightArrow", upDownArrow: "upDownArrow",
+  notchedRightArrow: "notchedArrow", stripedRightArrow: "rightArrow",
+  bentArrow: "bentArrow", bentUpArrow: "bentArrow", uturnArrow: "bentArrow",
+  curvedRightArrow: "rightArrow", curvedLeftArrow: "leftArrow",
+  curvedUpArrow: "upArrow", curvedDownArrow: "downArrow",
+  leftUpArrow: "bentArrow", leftRightUpArrow: "upArrow", swooshArrow: "rightArrow",
+  quadArrow: "quadArrow", quadArrowCallout: "quadArrow",
+  circularArrow: "arc", leftCircularArrow: "arc", leftRightCircularArrow: "arc",
+  // --- callouts: a box (or oval) with a tail pointing at the cell it talks about ---
+  wedgeRectCallout: "callout", wedgeRoundRectCallout: "roundCallout", wedgeEllipseCallout: "ovalCallout",
+  cloudCallout: "ovalCallout",
+  callout1: "callout", callout2: "callout", callout3: "callout",
+  borderCallout1: "callout", borderCallout2: "callout", borderCallout3: "callout",
+  accentCallout1: "callout", accentCallout2: "callout", accentCallout3: "callout",
+  accentBorderCallout1: "callout", accentBorderCallout2: "callout", accentBorderCallout3: "callout",
+  leftArrowCallout: "leftArrow", rightArrowCallout: "rightArrow",
+  upArrowCallout: "upArrow", downArrowCallout: "downArrow",
+  leftRightArrowCallout: "leftRightArrow", upDownArrowCallout: "upDownArrow",
+  // --- connectors ---
+  line: "line", lineInv: "line", straightConnector1: "line",
+  bentConnector2: "elbow", bentConnector3: "elbow", bentConnector4: "elbow", bentConnector5: "elbow",
+  curvedConnector2: "curve", curvedConnector3: "curve", curvedConnector4: "curve", curvedConnector5: "curve",
+  arc: "arc",
+  // --- braces and brackets ---
+  leftBrace: "leftBrace", rightBrace: "rightBrace", bracePair: "bracePair",
+  leftBracket: "leftBracket", rightBracket: "rightBracket", bracketPair: "bracketPair",
+  // --- curved and hollow ---
+  pie: "pie", pieWedge: "pie", chord: "chord", blockArc: "donut", donut: "donut",
+  moon: "moon", teardrop: "teardrop", cloud: "cloud", wave: "wave", doubleWave: "wave",
+  heart: "heart", lightningBolt: "lightningBolt", noSmoking: "noSmoking",
+  sun: "star", smileyFace: "ellipse",
+  // --- flowchart symbols, which are these same drawings by another name ---
+  flowChartDecision: "diamond", flowChartSort: "diamond",
+  flowChartConnector: "ellipse", flowChartOr: "ellipse", flowChartSummingJunction: "ellipse",
+  flowChartTerminator: "roundRect", flowChartAlternateProcess: "roundRect", flowChartDelay: "roundRect",
+  flowChartInputOutput: "parallelogram", flowChartPreparation: "hexagon",
+  flowChartExtract: "triangle", flowChartMerge: "triangleDown",
+  flowChartManualOperation: "trapezoidDown", flowChartManualInput: "manualInput",
+  flowChartPunchedCard: "snipRect", flowChartOffpageConnector: "homePlate",
+  flowChartMagneticDisk: "can", flowChartMagneticDrum: "can", flowChartOnlineStorage: "can",
+};
+
 /** Map an OOXML preset geometry to one we render; unknowns fall back to a rectangle. */
 function geomOf(prst: string | null): ShapeGeom {
-  switch (prst) {
-    case "ellipse": case "oval": return "ellipse";
-    case "roundRect": case "round1Rect": case "round2SameRect": return "roundRect";
-    case "triangle": case "isoscelesTriangle": case "rtTriangle": return "triangle";
-    case "line": case "straightConnector1": return "line";
-    // An elbow connector: two right-angled turns between its ends. Drawn as a box, it read as a
-    // rectangle sitting over the cells rather than an arrow pointing at one of them.
-    case "bentConnector2": case "bentConnector3": case "bentConnector4": case "bentConnector5": return "elbow";
-    case "diamond": return "diamond";
-    case "parallelogram": return "parallelogram";
-    case "hexagon": return "hexagon";
-    case "pentagon": return "pentagon";
-    case "star4": case "star5": case "star6": case "star7": case "star8": return "star";
-    case "rightArrow": case "leftArrow": case "upArrow": case "downArrow": return "rightArrow";
-    case "leftBrace": return "leftBrace";
-    case "rightBrace": return "rightBrace";
-    case "bracePair": return "bracePair";
-    case "leftBracket": return "leftBracket";
-    case "rightBracket": return "rightBracket";
-    case "bracketPair": return "bracketPair";
-    default: return "rect";
-  }
+  return (prst && PRESET_GEOM[prst]) || "rect";
 }
 
 /** A CSS colour from a fill / line element (srgbClr direct, schemeClr via the theme). */

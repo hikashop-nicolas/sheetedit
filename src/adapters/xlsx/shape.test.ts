@@ -89,9 +89,11 @@ describe("drawing shapes", () => {
   });
 
   it("maps an unknown preset to a rect but keeps the original preset name", () => {
-    const sh = readWorkbook(base(spAnchor("cloud"))).sheets[0].shapes ?? [];
+    // gear9 is one of the presets with no drawing of its own; the name is still carried so a
+    // round-trip re-emits the shape exactly as the file had it.
+    const sh = readWorkbook(base(spAnchor("gear9"))).sheets[0].shapes ?? [];
     expect(sh[0].geom).toBe("rect");
-    expect(sh[0].preset).toBe("cloud");
+    expect(sh[0].preset).toBe("gear9");
   });
 
   it("authors a new shape into a drawing that did not exist, and round-trips it", () => {
@@ -322,5 +324,62 @@ describe("how a shape is painted", () => {
     expect(sh.extent!.w).toBeCloseTo(1118, 0);
     expect(sh.extent!.h).toBeCloseTo(162, 0);
     expect(shapeSvg(sh, 100, 50)).toContain("font:40pt sans-serif");
+  });
+});
+
+// OOXML names 187 preset geometries and an unrecognised one falls back to a rectangle. That is
+// fair for a decorative shape and wrong for one that means something by its outline: an arrow
+// pointing nowhere, a callout with no tail to say what it is about, a connector drawn as the box
+// around it. Those presets have to arrive as themselves.
+describe("preset geometries", () => {
+  const geomOfPreset = (prst: string) =>
+    readWorkbook(base(`<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`))
+      .sheets[0].shapes![0]!;
+
+  // An arrow's direction IS its message. All four used to share the right-pointing drawing, so a
+  // left arrow pointed right, which reads as deliberate rather than as an approximation.
+  it("points each arrow the way the file points it", () => {
+    const at = (prst: string) => shapeSvg(geomOfPreset(prst), 100, 100);
+    const right = at("rightArrow"), left = at("leftArrow"), up = at("upArrow"), down = at("downArrow");
+    expect(new Set([right, left, up, down]).size, "four directions, four drawings").toBe(4);
+    expect(geomOfPreset("leftArrow").geom).toBe("leftArrow");
+    expect(geomOfPreset("upArrow").geom).toBe("upArrow");
+    expect(geomOfPreset("downArrow").geom).toBe("downArrow");
+  });
+
+  it("gives a callout its tail", () => {
+    for (const prst of ["wedgeRectCallout", "wedgeRoundRectCallout", "wedgeEllipseCallout", "borderCallout1", "accentCallout2"]) {
+      const sh = geomOfPreset(prst);
+      expect(sh.geom, prst).toMatch(/allout$|^callout$/i);
+      const svg = shapeSvg(sh, 100, 60);
+      expect(svg, prst).toContain("<path");
+      // The tail reaches below the box, which is how it points at the cell it is about.
+      const below = [...svg.matchAll(/[ML] [\d.]+ ([\d.]+)/g)].some((m) => Number(m[1]) > 60);
+      expect(below, prst).toBe(true);
+    }
+  });
+
+  it("draws every connector as a line of some kind, never as a box", () => {
+    for (const prst of ["straightConnector1", "lineInv", "bentConnector2", "bentConnector3", "curvedConnector3", "curvedConnector5", "arc"]) {
+      const svg = shapeSvg(geomOfPreset(prst), 100, 60);
+      expect(svg, prst).not.toContain("<rect");
+      expect(svg, prst).toMatch(/<line|<path/);
+    }
+  });
+
+  it("folds the presets that really are one of our shapes", () => {
+    const same: [string, string][] = [
+      ["flowChartDecision", "diamond"], ["flowChartConnector", "ellipse"],
+      ["flowChartInputOutput", "parallelogram"], ["flowChartPreparation", "hexagon"],
+      ["flowChartTerminator", "roundRect"], ["flowChartManualOperation", "trapezoidDown"],
+      ["star32", "star"], ["irregularSeal1", "star"], ["octagon", "octagon"],
+      ["snip2DiagRect", "snipRect"], ["cloudCallout", "ovalCallout"], ["pieWedge", "pie"],
+    ];
+    for (const [prst, geom] of same) expect(geomOfPreset(prst).geom, prst).toBe(geom);
+  });
+
+  it("still falls back to a rectangle for one it does not know", () => {
+    expect(geomOfPreset("gear9").geom).toBe("rect");
+    expect(geomOfPreset("flowChartProcess").geom).toBe("rect"); // which a process box actually is
   });
 });
