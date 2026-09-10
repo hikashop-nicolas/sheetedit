@@ -13,3 +13,6 @@ test/corpus/local/
 .cache/
 scripts/openxml-validate/bin/
 scripts/openxml-validate/obj/
+
+# Scratch fixtures with real-world data, never committed.
+demo/local-*

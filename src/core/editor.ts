@@ -385,9 +385,9 @@ export function createSheetEditor(
     assignDrawingIds(wb);
     readTables(wb);
     // A workbook whose producer stored formulas without results renders as an empty grid,
-    // because the grid draws cached values. Compute once here when there is nothing cached
-    // to draw; a file that already carries its results skips this entirely.
-    if (needsCalcOnLoad(wb)) recalc(wb);
+    // because the grid draws cached values. Fill in those blanks once here; a file that
+    // already carries its results skips this entirely, and a cached result is never replaced.
+    if (needsCalcOnLoad(wb)) recalc(wb, { keepCached: true });
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.

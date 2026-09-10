@@ -442,9 +442,6 @@ export interface Workbook {
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */
   protectionDirty?: boolean;
-  /** xlsx <calcPr fullCalcOnLoad="1">: the producer is asking for the whole workbook to be
-      recomputed when it opens, because it did not compute the results itself. */
-  fullCalcOnLoad?: boolean;
 }
 
 /** A style change to apply to a cell (only the set fields change). */

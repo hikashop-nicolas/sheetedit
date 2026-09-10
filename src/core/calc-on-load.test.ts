@@ -3,10 +3,11 @@ import { strToU8, zipSync } from "fflate";
 import { getCell, readWorkbook } from "../index";
 import { needsCalcOnLoad, recalc } from "./recalc";
 
-// A workbook may legally carry formulas with no cached results: openpyxl and other
-// generators write the <f> and leave the <v> out, and set calcPr fullCalcOnLoad to ask the
-// reader to compute. The grid draws cached values, so without a calculation on load every
-// one of those cells renders empty. See issue #37.
+// A workbook may legally carry formulas with no cached results: openpyxl and other generators
+// write the <f> and leave the <v> out. The grid draws cached values, so without a calculation on
+// load every one of those cells renders empty. See issue #37. The load pass fills those blanks
+// and only those: a result the file came with is the producer's, computed by a real engine, and
+// must survive opening untouched.
 
 const sheetXml = (rows: string): string =>
   `<?xml version="1.0"?>
@@ -14,13 +15,12 @@ const sheetXml = (rows: string): string =>
  <sheetData>${rows}</sheetData>
 </worksheet>`;
 
-function makeXlsx(rows: string, opts: { fullCalcOnLoad?: boolean } = {}): Uint8Array {
-  const calcPr = opts.fullCalcOnLoad ? `<calcPr fullCalcOnLoad="1"/>` : "";
+function makeXlsx(rows: string): Uint8Array {
   return zipSync({
     "[Content_Types].xml": strToU8("<Types/>"),
     "_rels/.rels": strToU8("<Relationships/>"),
     "xl/workbook.xml": strToU8(
-      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>${calcPr}</workbook>`,
+      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
     ),
     "xl/_rels/workbook.xml.rels": strToU8(
       `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
@@ -39,10 +39,6 @@ describe("deciding whether a workbook needs computing on load", () => {
     expect(needsCalcOnLoad(readWorkbook(makeXlsx(UNCACHED)))).toBe(true);
   });
 
-  it("says yes when the producer asked for a full recalculation", () => {
-    expect(needsCalcOnLoad(readWorkbook(makeXlsx(CACHED, { fullCalcOnLoad: true })))).toBe(true);
-  });
-
   // The point of asking at all: a workbook that carries its results must not be recomputed
   // on the way in, which on a large file is the difference between opening and hanging.
   it("says no for an ordinary workbook whose results are all cached", () => {
@@ -57,12 +53,12 @@ describe("deciding whether a workbook needs computing on load", () => {
 
 describe("computing a workbook that shipped without results", () => {
   it("fills in the formula cells, following the chain between them", () => {
-    const wb = readWorkbook(makeXlsx(UNCACHED, { fullCalcOnLoad: true }));
+    const wb = readWorkbook(makeXlsx(UNCACHED));
     const sheet = wb.sheets[0]!;
     expect(getCell(sheet, 1, 3)?.value).toBe(""); // nothing cached to show
     expect(getCell(sheet, 2, 1)?.value).toBe("");
 
-    recalc(wb);
+    recalc(wb, { keepCached: true });
 
     expect(getCell(sheet, 1, 3)?.value).toBe("7"); // A1+B1
     expect(getCell(sheet, 2, 1)?.value).toBe("70"); // C1*10, so the chain resolved in order
@@ -70,9 +66,48 @@ describe("computing a workbook that shipped without results", () => {
 
   it("leaves the formulas themselves untouched", () => {
     const wb = readWorkbook(makeXlsx(UNCACHED));
-    recalc(wb);
+    recalc(wb, { keepCached: true });
     const sheet = wb.sheets[0]!;
     expect(getCell(sheet, 1, 3)?.formula).toBe("A1+B1");
     expect(getCell(sheet, 2, 1)?.formula).toBe("C1*10");
+  });
+
+  // The load pass must not become a rewrite. A result this engine gets wrong (an unsupported
+  // function, a reference form it reads differently) would otherwise replace a correct value
+  // the producer computed, on a file the user only meant to look at.
+  it("keeps a cached result even when recomputing would give a different one", () => {
+    // B1's cached 99 disagrees with A1+1; loading must not "correct" it.
+    const wb = readWorkbook(makeXlsx(`<row r="1"><c r="A1"><v>2</v></c><c r="B1"><f>A1+1</f><v>99</v></c><c r="C1"><f>B1*2</f></c></row>`));
+    recalc(wb, { keepCached: true });
+    const sheet = wb.sheets[0]!;
+    expect(getCell(sheet, 1, 2)?.value).toBe("99");
+    expect(getCell(sheet, 1, 3)?.value).toBe("198"); // the blank is filled, from the cached 99
+  });
+
+  // An explicit recalculation (an edit, or the user asking) still recomputes everything.
+  it("does replace cached results when not in load mode", () => {
+    const wb = readWorkbook(makeXlsx(`<row r="1"><c r="A1"><v>2</v></c><c r="B1"><f>A1+1</f><v>99</v></c></row>`));
+    recalc(wb);
+    expect(getCell(wb.sheets[0]!, 1, 2)?.value).toBe("3");
+  });
+});
+
+// The load pass is not something the user asked for, so it must not decorate the grid with its
+// own complaints about cells it was never going to change.
+describe("what the load pass reports", () => {
+  it("does not flag a cell that carries a result when the formula will not evaluate", () => {
+    // NOTSAFUNCTION does not exist; B1 has a cached value all the same.
+    const wb = readWorkbook(makeXlsx(`<row r="1"><c r="B1"><f>NOTSAFUNCTION(1)</f><v>5</v></c><c r="C1"><f>B1+1</f></c></row>`));
+    recalc(wb, { keepCached: true });
+    const sheet = wb.sheets[0]!;
+    expect(getCell(sheet, 1, 2)?.calcFailed).toBeUndefined();
+    expect(getCell(sheet, 1, 2)?.value).toBe("5");
+    expect(getCell(sheet, 1, 3)?.value).toBe("6"); // the blank still gets filled
+  });
+
+  it("still flags one with nothing to show instead", () => {
+    const wb = readWorkbook(makeXlsx(`<row r="1"><c r="B1"><f>NOTSAFUNCTION(1)</f></c></row>`));
+    recalc(wb, { keepCached: true });
+    expect(getCell(wb.sheets[0]!, 1, 2)?.calcFailed).toBe("name");
   });
 });

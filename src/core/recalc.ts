@@ -174,20 +174,18 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
   };
 }
 
-/** Recompute every formula cell's cached value, in dependency order. */
 /**
- * Whether opening this workbook needs a full recalculation before anything is shown.
+ * Whether opening this workbook needs a calculation pass before anything is shown.
  *
- * True when the producer asked for one (calcPr fullCalcOnLoad), or when a formula cell has
- * no cached result: openpyxl and other libraries write the formula and leave the value out,
- * and a file is allowed to ship that way. Without this the grid renders those cells empty,
- * because rendering reads the cached value and only an edit ever triggers the engine.
+ * True when a formula cell has no cached result: openpyxl and other libraries write the
+ * formula and leave the value out, and a file is allowed to ship that way. Without this the
+ * grid renders those cells empty, because rendering reads the cached value and only an edit
+ * ever triggers the engine.
  *
  * False for the common case, where the producer stored every result, so a large workbook is
  * not recomputed for nothing on the way in.
  */
 export function needsCalcOnLoad(wb: Workbook): boolean {
-  if (wb.fullCalcOnLoad) return true;
   for (const sheet of wb.sheets) {
     for (const cell of sheet.cells.values()) {
       if (cell.formula !== undefined && cell.value === "") return true;
@@ -196,7 +194,15 @@ export function needsCalcOnLoad(wb: Workbook): boolean {
   return false;
 }
 
-export function recalc(wb: Workbook): void {
+export interface RecalcOptions {
+  /** Leave every formula cell that already carries a result alone, computing only the blanks.
+      The load pass uses this: this engine is not Excel, and a disagreement on a formula it
+      renders differently would silently replace the file's own numbers with worse ones. */
+  keepCached?: boolean;
+}
+
+/** Recompute every formula cell's cached value, in dependency order. */
+export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
   const FP = FormulaParser as unknown as {
     new (config: unknown): { parse(f: string, pos: unknown, allowReturnArray?: boolean): unknown };
     DepParser: new (config: unknown) => { parse(f: string, pos: unknown): Array<Record<string, unknown>> };
@@ -431,7 +437,10 @@ export function recalc(wb: Workbook): void {
       res = parser.parse(f, { row: node.cell.row, col: node.cell.col, sheet: node.sheet.name }, wantArray);
     } catch (err) {
       // Unsupported function / parse error: keep the file's cached value, but
-      // say so in the grid instead of silently showing a stale number.
+      // say so in the grid instead of silently showing a stale number. On the load pass a cell
+      // that came with a result is not stale and nobody asked for it to be computed, so it is
+      // not flagged: a blank template sheet whose dates are empty would open covered in badges.
+      if (opts.keepCached && node.cell.value !== "") continue;
       if (node.cell.calcFailed !== "circular") {
         // The library throws "#ERROR! Function X is not implemented." for unknown names.
         const msg = `${String(err)} ${(err as { message?: string })?.message ?? ""}`;
@@ -439,6 +448,8 @@ export function recalc(wb: Workbook): void {
       }
       continue;
     }
+    // The load pass fills the blanks and nothing else: a cell that arrived with a result keeps it.
+    if (opts.keepCached && node.cell.value !== "") continue;
     // A fresh recompute can error on blank inputs (e.g. DATEDIF on an empty date) even
     // though the file holds a valid cached result; keep that result rather than show an
     // error. A #NAME? is different: the function does not exist, so the stale value can
