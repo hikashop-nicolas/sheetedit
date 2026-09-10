@@ -17,9 +17,9 @@ export function setupFloatBar(deps: {
   applyStyle: (change: StyleChange) => void;
   /** Sparkline actions: shown only when the focused single cell hosts a sparkline. */
   spark?: { has: () => boolean; edit: () => void; remove: () => void };
-}): { teardown(): void } {
+}): { teardown(): void; setSuppressed(on: boolean): void } {
   const coarse = typeof window.matchMedia === "function" && window.matchMedia("(hover: none), (pointer: coarse)").matches;
-  if (coarse) return { teardown: () => undefined };
+  if (coarse) return { teardown: () => undefined, setSuppressed: () => undefined };
 
   const bar = document.createElement("div");
   bar.className = "sheetedit-floatbar";
@@ -100,6 +100,9 @@ export function setupFloatBar(deps: {
   }
   deps.wrap.appendChild(bar);
 
+  // While a toolbar menu is open the bar stays away: it offers the same controls the menu does,
+  // and two stacks of buttons over each other is noise whichever one wins the z-order.
+  let suppressed = false;
   const hide = () => {
     bar.hidden = true;
   };
@@ -110,6 +113,7 @@ export function setupFloatBar(deps: {
     }, 350);
   };
   const showAt = (rect: DOMRect) => {
+    if (suppressed) return;
     const showSpark = !!deps.spark?.has();
     for (const el of sparkGroup) el.hidden = !showSpark;
     bar.hidden = false;
@@ -156,6 +160,11 @@ export function setupFloatBar(deps: {
   });
 
   return {
+    /** Keep the bar down while something else owns the screen (a toolbar menu). */
+    setSuppressed(on: boolean) {
+      suppressed = on;
+      if (on) hide();
+    },
     teardown() {
       document.removeEventListener("mousemove", onMove);
       window.clearTimeout(hideTimer);

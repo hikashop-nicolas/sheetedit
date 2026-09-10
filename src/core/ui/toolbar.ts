@@ -50,6 +50,8 @@ export interface ToolbarHandle {
   setTrailing(elements: HTMLElement[]): void;
   /** Reflect the active cell's style as pressed states on the toggle buttons (bold, align, ...). */
   syncActive(): void;
+  /** The colours the toolbar's two swatches are currently showing. */
+  colours(): { text: string; fill: string };
 }
 
 export function buildToolbar(ctx: {
@@ -71,6 +73,9 @@ export function buildToolbar(ctx: {
   toggleMerge(): void;
   /** Open the furigana (phonetic reading) editor for the active cell, anchored at `btn`. */
   editFurigana(btn: HTMLElement): void;
+  /** A toolbar menu opened or closed. The host uses it to keep the cell float bar out of the way:
+      it offers the same controls, and two stacks of buttons over each other is just noise. */
+  onMenuToggle?(open: boolean): void;
 }): ToolbarHandle {
   const { toolbar, wrap } = ctx;
   toolbar.innerHTML = "";
@@ -79,14 +84,17 @@ export function buildToolbar(ctx: {
     d.className = "sheetedit-tb-sep";
     return d;
   };
-  const colorInput = (title: string, def: string, apply: (v: string) => void) => {
+  // The two colour swatches, kept to hand: a new shape is drawn in the colours the toolbar is
+  // currently showing, which is what picking a colour and then a shape looks like it should do.
+  let textColour = "#000000", fillColour = "#ffff00";
+  const colorInput = (title: string, def: string, apply: (v: string) => void, keep?: (v: string) => void) => {
     const i = document.createElement("input");
     i.type = "color";
     i.title = title;
     i.setAttribute("aria-label", title);
     i.className = "sheetedit-color";
     i.value = def;
-    i.addEventListener("change", () => apply(i.value));
+    i.addEventListener("change", () => { keep?.(i.value); apply(i.value); });
     return i;
   };
   const undoBtn = tbIcon(ICON.undo, t("undo"), ctx.onUndo);
@@ -103,7 +111,7 @@ export function buildToolbar(ctx: {
     tbIcon(ICON.find, t("findReplace"), ctx.findReplace),
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
-  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined };
+  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined, colours: () => ({ text: "#000000", fill: "#ffff00" }) };
 
   const bold = tbBtn("B", t("bold"), () => ctx.applyStyle({ bold: !ctx.curStyle()?.bold }));
   bold.style.fontWeight = "700";
@@ -117,30 +125,56 @@ export function buildToolbar(ctx: {
   // Furigana editor: a compact "ふ" button (the feature is inherently Japanese; the title explains).
   const furiBtn = tbBtn("ふ", t("furiganaTitle"), () => ctx.editFurigana(furiBtn));
 
-  // Font family / size: stateless menus (like the toolbar's other controls, they
-  // read nothing back); the placeholder row re-selects itself after each apply.
-  const picker = (title: string, placeholder: string, options: [string, string][], apply: (v: string) => void) => {
-    const s = document.createElement("select");
-    s.className = "sheetedit-tb-select";
-    s.title = title;
-    s.setAttribute("aria-label", title);
-    const ph = document.createElement("option");
-    ph.value = "";
-    ph.textContent = placeholder;
-    ph.disabled = true;
-    ph.selected = true;
-    s.appendChild(ph);
-    for (const [v, label] of options) {
-      const o = document.createElement("option");
-      o.value = v;
-      o.textContent = label;
-      s.appendChild(o);
-    }
-    s.addEventListener("change", () => {
-      if (s.value) apply(s.value);
-      s.selectedIndex = 0;
+  // Every dropdown in the toolbar is one of these: a button and a menu of our own. The font and
+  // size pickers used to be native <select>s, whose list the browser draws in its own layer - so
+  // they looked nothing like the rest and were the only two that never collided with anything.
+  const menus: HTMLElement[] = [];
+  /** Wire a button to its menu: position under the button, toggle, and tell the host it is open. */
+  const bindMenu = (btn: HTMLElement, menuEl: HTMLElement): void => {
+    menus.push(menuEl);
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", () => {
+      const open = menuEl.hidden;
+      for (const m of menus) if (m !== menuEl) m.hidden = true;
+      if (open) {
+        const r = btn.getBoundingClientRect();
+        const wr = wrap.getBoundingClientRect();
+        menuEl.style.top = `${r.bottom - wr.top + 2}px`;
+        menuEl.style.left = `${Math.max(0, Math.min(r.left - wr.left, wr.width - 200))}px`;
+      }
+      menuEl.hidden = !open;
+      ctx.onMenuToggle?.(menus.some((m) => !m.hidden));
     });
-    return s;
+    document.addEventListener("click", (e) => {
+      if (menuEl.hidden || menuEl.contains(e.target as Node) || btn.contains(e.target as Node)) return;
+      menuEl.hidden = true;
+      ctx.onMenuToggle?.(menus.some((m) => !m.hidden));
+    });
+  };
+  const closeMenus = (): void => {
+    for (const m of menus) m.hidden = true;
+    ctx.onMenuToggle?.(false);
+  };
+
+  const picker = (title: string, placeholder: string, options: [string, string][], apply: (v: string) => void) => {
+    const btn = tbBtn(`${placeholder} ▾`, title, () => {});
+    const menuEl = document.createElement("div");
+    menuEl.className = "sheetedit-tb-groupmenu sheetedit-tb-listmenu";
+    menuEl.hidden = true;
+    menuEl.setAttribute("role", "menu");
+    for (const [v, label] of options) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "sheetedit-btn sheetedit-more-item";
+      item.setAttribute("role", "menuitem");
+      item.textContent = label;
+      item.addEventListener("mousedown", (e) => e.preventDefault());
+      item.addEventListener("click", () => { closeMenus(); apply(v); });
+      menuEl.appendChild(item);
+    }
+    wrap.append(menuEl);
+    bindMenu(btn, menuEl);
+    return btn;
   };
   const FAMILIES = ["Arial", "Calibri", "Courier New", "Georgia", "Helvetica", "Times New Roman", "Verdana"];
   const famSel = picker(t("fontFamily"), "Aa", FAMILIES.map((f) => [f, f]), (v) => ctx.applyStyle({ fontFamily: v }));
@@ -149,14 +183,7 @@ export function buildToolbar(ctx: {
 
   // Number-format picker: a button opening a preset menu (General, number,
   // percent, currency, date, time), shapes localized via numFmtPresets.
-  const fmtBtn = tbBtn("123 ▾", t("numFormat"), () => {
-    const r = fmtBtn.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    fmtMenu.style.top = `${r.bottom - wr.top + 2}px`;
-    fmtMenu.style.left = `${r.left - wr.left}px`;
-    fmtMenu.hidden = !fmtMenu.hidden;
-  });
-  fmtBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  const fmtBtn = tbBtn("123 ▾", t("numFormat"), () => {});
   const fmtMenu = document.createElement("div");
   fmtMenu.className = "sheetedit-tb-groupmenu sheetedit-fmtmenu";
   fmtMenu.hidden = true;
@@ -167,16 +194,13 @@ export function buildToolbar(ctx: {
     item.textContent = t(preset.key);
     item.addEventListener("mousedown", (e) => e.preventDefault());
     item.addEventListener("click", () => {
-      fmtMenu.hidden = true;
+      closeMenus();
       ctx.applyNumFmt(preset.fmt, preset.currency);
     });
     fmtMenu.appendChild(item);
   }
   wrap.append(fmtMenu);
-  const closeFmtMenu = (e: MouseEvent) => {
-    if (!fmtMenu.hidden && !fmtMenu.contains(e.target as Node) && !fmtBtn.contains(e.target as Node)) fmtMenu.hidden = true;
-  };
-  document.addEventListener("click", closeFmtMenu);
+  bindMenu(fmtBtn, fmtMenu);
 
   const alignL = tbIcon(ICON.left, t("alignLeft"), () => ctx.applyStyle({ align: "left" }));
   const alignC = tbIcon(ICON.center, t("alignCentre"), () => ctx.applyStyle({ align: "center" }));
@@ -195,8 +219,8 @@ export function buildToolbar(ctx: {
     italic,
     underline,
     strike,
-    colorInput(t("textColour"), "#000000", (v) => ctx.applyStyle({ color: v })),
-    colorInput(t("fillColour"), "#ffff00", (v) => ctx.applyStyle({ bg: v })),
+    colorInput(t("textColour"), textColour, (v) => ctx.applyStyle({ color: v }), (v) => { textColour = v; }),
+    colorInput(t("fillColour"), fillColour, (v) => ctx.applyStyle({ bg: v }), (v) => { fillColour = v; }),
     sep(),
     alignL, alignC, alignR,
     valignT, valignM, valignB,
@@ -228,14 +252,7 @@ export function buildToolbar(ctx: {
   // Collapsible cluster: inline when it fits, otherwise one "Aa" button + popover.
   const slot = document.createElement("span");
   slot.className = "sheetedit-tb-slot";
-  const groupBtn = tbBtn("Aa ▾", t("formatting"), () => {
-    const r = groupBtn.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    menu.style.top = `${r.bottom - wr.top + 2}px`;
-    menu.style.left = `${r.left - wr.left}px`;
-    menu.hidden = !menu.hidden;
-  });
-  groupBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  const groupBtn = tbBtn("Aa ▾", t("formatting"), () => {});
   const menu = document.createElement("div");
   menu.className = "sheetedit-tb-groupmenu";
   menu.hidden = true;
@@ -255,22 +272,12 @@ export function buildToolbar(ctx: {
   slot.replaceChildren(...styleControls);
   toolbar.append(sep(), slot);
   wrap.append(menu);
-  const closeMenu = (e: MouseEvent) => {
-    if (!menu.hidden && !menu.contains(e.target as Node) && !groupBtn.contains(e.target as Node)) menu.hidden = true;
-  };
-  document.addEventListener("click", closeMenu);
+  bindMenu(groupBtn, menu);
 
   // Overflow "⋯" menu: trailing authoring controls (added by the editor) that don't fit fold into a
   // dropdown, each shown as an icon + label row that forwards to the original (hidden) button.
   let trailing: HTMLElement[] = [];
-  const moreBtn = tbBtn("⋯", t("more"), () => {
-    const r = moreBtn.getBoundingClientRect();
-    const wr = wrap.getBoundingClientRect();
-    moreMenu.style.top = `${r.bottom - wr.top + 2}px`;
-    moreMenu.style.left = `${Math.max(0, r.right - wr.left - 180)}px`;
-    moreMenu.hidden = !moreMenu.hidden;
-  });
-  moreBtn.addEventListener("mousedown", (e) => e.preventDefault());
+  const moreBtn = tbBtn("⋯", t("more"), () => {});
   moreBtn.style.display = "none";
   const moreMenu = document.createElement("div");
   moreMenu.className = "sheetedit-tb-groupmenu sheetedit-tb-moremenu";
@@ -282,11 +289,16 @@ export function buildToolbar(ctx: {
     row.className = "sheetedit-btn sheetedit-more-item";
     row.innerHTML = `${btn.innerHTML}<span>${btn.getAttribute("aria-label") ?? btn.title ?? ""}</span>`;
     row.addEventListener("mousedown", (e) => e.preventDefault());
-    row.addEventListener("click", () => { moreMenu.hidden = true; (btn as HTMLElement).click(); });
+    // The folded button is hidden, so anything that positions itself against its own rectangle
+    // would land at 0,0. Hand it the row's place on screen to open against instead.
+    row.addEventListener("click", () => {
+      closeMenus();
+      (btn as HTMLElement & { openAt?: DOMRect }).openAt = row.getBoundingClientRect();
+      (btn as HTMLElement).click();
+    });
     return row;
   };
-  const closeMoreMenu = (e: MouseEvent) => { if (!moreMenu.hidden && !moreMenu.contains(e.target as Node) && !moreBtn.contains(e.target as Node)) moreMenu.hidden = true; };
-  document.addEventListener("click", closeMoreMenu);
+  bindMenu(moreBtn, moreMenu);
   const setTrailing = (els: HTMLElement[]) => {
     for (const el of trailing) el.remove();
     trailing = els;
@@ -323,14 +335,10 @@ export function buildToolbar(ctx: {
     relayout,
     setTrailing,
     syncActive,
+    colours: () => ({ text: textColour, fill: fillColour }),
     teardown() {
       observer.disconnect();
-      document.removeEventListener("click", closeMenu);
-      document.removeEventListener("click", closeFmtMenu);
-      document.removeEventListener("click", closeMoreMenu);
-      menu.remove();
-      fmtMenu.remove();
-      moreMenu.remove();
+      for (const m of menus) m.remove();
     },
   };
 }

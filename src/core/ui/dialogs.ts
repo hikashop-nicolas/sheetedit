@@ -46,7 +46,7 @@ export function setupDialogs(ctx: DialogCtx): {
   openCfDialog: () => void;
   openSparkDialog: () => void;
   openShapeDialog: (existing?: SheetShape) => void;
-  insertShape: (geom: ShapeGeom) => void;
+  insertShape: (geom: ShapeGeom, colours?: { text: string; fill: string }) => void;
   openNoteDialog: () => void;
 } {
   const { wb } = ctx;
@@ -241,8 +241,10 @@ export function setupDialogs(ctx: DialogCtx): {
   };
 
   // Insert a new shape (no argument) or edit an existing one's geometry/fill/outline/text.
-  /** Put a shape of this geometry on the sheet: over the selection, or a box at the active cell. */
-  const insertShape = (geom: ShapeGeom): void => {
+  /** Put a shape of this geometry on the sheet: over the selection, or a box at the active cell.
+      `colours` are the toolbar's current swatches, so picking a colour then a shape does what it
+      looks like it should. */
+  const insertShape = (geom: ShapeGeom, colours?: { text: string; fill: string }): void => {
     const sheet = sheetNow();
     const s = ctx.getSelRect();
     const twoD = s.r2 > s.r1 || s.c2 > s.c1;
@@ -266,8 +268,8 @@ export function setupDialogs(ctx: DialogCtx): {
     const line = geom === "line" || geom === "elbow" || geom === "curve" || geom === "arc";
     (sheet.shapes ??= []).push({
       cid: newDrawingId(), geom, anchor,
-      fill: line ? undefined : "#4c8bf5",
-      stroke: "#1f3a5f", strokeWidth: 1, created: true, dirty: true,
+      fill: line ? undefined : colours?.fill ?? "#4c8bf5",
+      stroke: colours?.text ?? "#1f3a5f", strokeWidth: 1, created: true, dirty: true,
     });
     ctx.mark();
     ctx.refreshShapes();

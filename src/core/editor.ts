@@ -1284,6 +1284,8 @@ export function createSheetEditor(
     openBorderPopover,
     toggleMerge,
     editFurigana: openFuriganaPopover,
+    // A toolbar menu owns the screen while it is open; the float bar offers the same controls.
+    onMenuToggle: (open) => floatBar?.setSuppressed(open),
   });
   // Authoring controls the editor appends after the style cluster; collected so the toolbar can
   // fold the ones that don't fit into its "⋯" overflow menu.
@@ -2478,14 +2480,19 @@ export function createSheetEditor(
         b.innerHTML = shapeSvg({ geom, stroke: "currentColor", strokeWidth: 1, anchor: { fromCol: 1, fromRow: 1, fromColOff: 0, fromRowOff: 0, toCol: 1, toRow: 1, toColOff: 0, toRowOff: 0 } }, 22, 18);
         b.title = geomName(geom);
         b.setAttribute("aria-label", geomName(geom));
-        b.addEventListener("click", () => { closeShapeGallery(); insertShape(geom); });
+        b.addEventListener("click", () => { closeShapeGallery(); insertShape(geom, toolbarHandle.colours()); });
         grid.appendChild(b);
       }
       pop.appendChild(grid);
     }
-    const r = anchor.getBoundingClientRect();
-    pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 320))}px`;
-    pop.style.top = `${r.bottom + 4}px`;
+    // A button folded into the "⋯" menu is hidden, so its own rectangle is 0x0 and the gallery
+    // would open in the top-left corner of the screen. The menu row hands over its place instead.
+    const handed = (anchor as HTMLElement & { openAt?: DOMRect }).openAt;
+    (anchor as HTMLElement & { openAt?: DOMRect }).openAt = undefined;
+    const own = anchor.getBoundingClientRect();
+    const r = own.width > 0 ? own : handed ?? toolbar.getBoundingClientRect();
+    pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 312))}px`;
+    pop.style.top = `${Math.min(r.bottom + 4, window.innerHeight - 120)}px`;
     document.body.appendChild(pop);
     shapeGallery = pop;
     (pop.querySelector("button") as HTMLElement | null)?.focus();
@@ -4148,7 +4155,12 @@ export function createSheetEditor(
       // two-run title rendered in the grid's default face and colour while the other half was
       // right, and it only looked correct once the cell was selected and the input showed.
       const cs = cell.cellStyle;
+      // Unwrapped, the overlay lays its runs out as flex items, and text-align does nothing to
+      // those: a centred title sat hard left until the cell was clicked and the (correctly
+      // aligned) input took over. Wrapped, it is block flow, where text-align is the one that works.
       if (cs?.align) ov.style.textAlign = cs.align;
+      if (cs?.align && !cs.wrap) ov.style.justifyContent = cs.align === "center" ? "center" : cs.align === "right" ? "flex-end" : "flex-start";
+      if (cs?.valign && !cs.wrap) ov.style.alignItems = cs.valign === "top" ? "flex-start" : cs.valign === "bottom" ? "flex-end" : "center";
       if (cs?.color) ov.style.color = cs.color;
       if (cs?.bold) ov.style.fontWeight = "700";
       if (cs?.italic) ov.style.fontStyle = "italic";
@@ -5330,7 +5342,7 @@ export function createSheetEditor(
         applyStyle,
         spark: caps.sparklines ? { has: () => !!focusedSparkline(), edit: () => openSparkDialog(), remove: () => deleteFocusedSparkline() } : undefined,
       })
-    : { teardown: () => undefined };
+    : { teardown: () => undefined, setSuppressed: () => undefined };
 
   renderTabs();
   renderGrid();
