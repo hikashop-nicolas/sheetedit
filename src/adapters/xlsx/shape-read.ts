@@ -15,6 +15,9 @@ function geomOf(prst: string | null): ShapeGeom {
     case "roundRect": case "round1Rect": case "round2SameRect": return "roundRect";
     case "triangle": case "isoscelesTriangle": case "rtTriangle": return "triangle";
     case "line": case "straightConnector1": return "line";
+    // An elbow connector: two right-angled turns between its ends. Drawn as a box, it read as a
+    // rectangle sitting over the cells rather than an arrow pointing at one of them.
+    case "bentConnector2": case "bentConnector3": case "bentConnector4": case "bentConnector5": return "elbow";
     case "diamond": return "diamond";
     case "parallelogram": return "parallelogram";
     case "hexagon": return "hexagon";
@@ -117,6 +120,9 @@ function colorOfClr(clr: Element | undefined, theme: Record<string, string>, phC
 export interface ShapePaint {
   color?: string;
   gradient?: ShapeGradient;
+  /** 0..1 from <a:alpha>, when the fill is see-through. Kept apart from the colour so anything
+      wanting a plain hex (the property editor, the writer) still gets one. */
+  opacity?: number;
 }
 
 /** <a:solidFill> / <a:gradFill> / <a:noFill> -> a paint. */
@@ -138,7 +144,11 @@ function paintOf(el: Element | undefined, theme: Record<string, string>, phClr?:
   // solidFill, or an element that simply wraps a colour (a style ref, an <a:ln>).
   const clr = Array.from(el.children).find((c) => c.localName === "srgbClr" || c.localName === "schemeClr");
   const color = colorOfClr(clr, theme, phClr);
-  return color ? { color } : undefined;
+  if (!color) return undefined;
+  // <a:alpha val="68000"> is a 68% opaque fill: a watermark laid over the grid has to let the
+  // cells under it show through, or it is just a grey slab covering them.
+  const alpha = clr ? pct(Array.from(clr.children).find((c) => c.localName === "alpha")) : undefined;
+  return alpha != null && alpha < 1 ? { color, opacity: alpha } : { color };
 }
 
 /** The paint an <a:fillRef>/<a:lnRef> resolves to: its colour, poured into the theme recipe its
@@ -201,6 +211,16 @@ export function readShapes(
       const anchor2 = bodyPr?.getAttribute("anchor");
       const algn = paras.map((para) => kid(para, "pPr")?.getAttribute("algn")).find(Boolean);
       const xfrm = spPr ? kid(spPr, "xfrm") : undefined;
+      // <a:avLst><a:gd name="adj1" fmla="val 112661"/>: where an elbow turns, in 1000ths of a
+      // percent of the run between its ends.
+      // <a:ext cx cy> is the shape's size before any rotation, in EMU (1px = 9525).
+      const extEl = xfrm ? kid(xfrm, "ext") : undefined;
+      const extW = Number(extEl?.getAttribute("cx") ?? 0) / 9525;
+      const extH = Number(extEl?.getAttribute("cy") ?? 0) / 9525;
+      const ext = extW > 0 && extH > 0 ? { w: extW, h: extH } : undefined;
+      const gd = spPr ? descend(spPr, "gd").find((g) => g.getAttribute("name") === "adj1") : undefined;
+      const adjVal = Number(/val\s+(-?\d+)/.exec(gd?.getAttribute("fmla") ?? "")?.[1] ?? NaN);
+      const adj = Number.isFinite(adjVal) ? adjVal / 100000 : undefined;
       const rPr = descend(sp, "r")[0] ? kid(descend(sp, "r")[0], "rPr") : undefined;
       const styleText = style ? colorFrom(kid(style, "fontRef"), theme) : undefined;
       out.push({
@@ -219,8 +239,13 @@ export function readShapes(
         ...(xfrm?.getAttribute("flipH") === "1" ? { flipH: true } : {}),
         ...(xfrm?.getAttribute("flipV") === "1" ? { flipV: true } : {}),
         ...(Number(xfrm?.getAttribute("rot") ?? "0") ? { rotation: Number(xfrm!.getAttribute("rot")) / 60000 } : {}),
+        ...(ext ? { extent: ext } : {}),
+        ...(ln && kid(ln, "prstDash")?.getAttribute("val") ? { dash: kid(ln, "prstDash")!.getAttribute("val")! } : {}),
+        ...(paint?.opacity != null ? { fillOpacity: paint.opacity } : {}),
+        ...(adj != null ? { adjust: adj } : {}),
         ...(sp.getAttribute("macro") ? { macro: sp.getAttribute("macro")! } : {}),
         textColor: colorFrom(rPr ? kid(rPr, "solidFill") : undefined, theme) ?? styleText,
+        ...(Number(rPr?.getAttribute("sz") ?? 0) ? { textSize: Number(rPr!.getAttribute("sz")) / 100 } : {}),
         drawingPath: drawPath,
         anchorIndex,
       });

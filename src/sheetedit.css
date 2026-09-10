@@ -57,6 +57,8 @@
   --sheetedit-zebra: #f6f6f8;
   /* Set per tab from the file's own tab colour; no colour of our own when the file names none. */
   --sheetedit-tabcolor: transparent;
+  /* Replaced per workbook with the file's own Normal-style font. */
+  --sheetedit-cell-font: ui-sans-serif, system-ui, sans-serif;
   --sheetedit-tabcolor-fg: inherit;
 
   /* in-cell affordances */
@@ -321,7 +323,7 @@
 .sheetedit-comauthor { font-weight:600; margin-bottom:2px; }
 .sheetedit-comtext { white-space:pre-wrap; color:var(--sheetedit-muted, #cfd3da); }
 /* Chart overlay: a layer over the data area, its content translated by the scroll offset. */
-.sheetedit-chartlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-chartlayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-chartlayer-inner { position:absolute; top:0; left:0; }
 .sheetedit-chartbox { position:absolute; pointer-events:auto; background:var(--sheetedit-cell-bg); border:1px solid var(--sheetedit-overlay-border); border-radius:3px; box-shadow:0 1px 5px rgba(0,0,0,.15); padding:5px; box-sizing:border-box; }
 .sheetedit-chartbox.sel { border-color:var(--sheetedit-accent, #6e7bff); box-shadow:0 0 0 2px var(--sheetedit-accent, #6e7bff); }
@@ -340,14 +342,18 @@
 .sheetedit-colband { min-width:0; display:flex; flex-direction:column; }
 .sheetedit-colband:first-child { flex:1; }
 .sheetedit-colband-right { flex:1; display:none; }
-.sheetedit-grid { flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
+/* Positioned, because the floating layers live inside it: that is what makes them scroll with
+   the cells instead of being dragged along a frame late by a scroll listener. */
+.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
 /* The viewports past a boundary, on the side the divider sits on. */
 .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid-right { border-left:1px solid var(--sheetedit-border, #c8ccd2); }
 /* Chrome makes overflow:auto containers keyboard-focusable and paints a rounded focus ring;
    the selected cell is the real focus indicator, so suppress the container's own ring. */
 .sheetedit-grid:focus { outline:none; }
-table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; }
+/* The grid is set in the workbook's own default font where it names one (--sheetedit-cell-font,
+   filled in per file), because that is the font its column widths were measured against. */
+table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif); }
 .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
 .sheetedit-table th { border:1px solid var(--sheetedit-head-border); }
 /* Cell gridlines as box-shadows (not borders) so the file's own borders sit flush
@@ -616,7 +622,7 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 }
 
 /* --- slicers ----------------------------------------------------------- */
-.sheetedit-slicerlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-slicerlayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-slicerlayer-inner { position:absolute; inset:0; }
 .sheetedit-slicerbox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
   background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
@@ -644,7 +650,7 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-slicerbox.readonly .sheetedit-slicer-clear { display:none; }
 
 /* --- images ------------------------------------------------------------ */
-.sheetedit-imagelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
+.sheetedit-imagelayer { position:absolute; pointer-events:none; z-index:2; }
 .sheetedit-imagelayer-inner { position:absolute; inset:0; }
 .sheetedit-imagebox { position:absolute; }
 .sheetedit-imagebox img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
@@ -662,13 +668,13 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-image-del:hover { filter:brightness(1.1); }
 
 /* --- pivot outlines ---------------------------------------------------- */
-.sheetedit-pivotlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:4; }
+.sheetedit-pivotlayer { position:absolute; pointer-events:none; z-index:1; }
 .sheetedit-pivotlayer-inner { position:absolute; inset:0; }
 .sheetedit-pivotbox { position:absolute; box-sizing:border-box; border:1.5px dashed var(--sheetedit-accent,#3b82f6); border-radius:3px; background:color-mix(in srgb, var(--sheetedit-accent,#3b82f6) 6%, transparent); }
 .sheetedit-pivottag { position:absolute; top:0; left:0; transform:translateY(-100%); pointer-events:auto; font:600 10px/1.4 system-ui,sans-serif; color:var(--sheetedit-accent-fg); background:var(--sheetedit-accent,#3b82f6); padding:1px 6px; border-radius:3px 3px 0 0; white-space:nowrap; cursor:default; }
 
 /* --- shapes ------------------------------------------------------------ */
-.sheetedit-shapelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
+.sheetedit-shapelayer { position:absolute; pointer-events:none; z-index:2; }
 .sheetedit-shapelayer-inner { position:absolute; inset:0; }
 .sheetedit-shapebox { position:absolute; }
 .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
@@ -711,7 +717,7 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-outline-btn:hover { border-color:var(--sheetedit-accent,#6e7bff); }
 
 /* --- timelines --------------------------------------------------------- */
-.sheetedit-timelinelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-timelinelayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-timelinelayer-inner { position:absolute; inset:0; }
 .sheetedit-timelinebox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
   background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
@@ -917,14 +923,17 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 /* --- measurement --------------------------------------------------------- */
 /* Off-screen twin of a wrapped cell, measured to find the row height it needs. Its font is set
    per measurement from the cell's own style, which is file data rather than styling. */
+/* Measured in the grid's own font, not the surrounding UI's, or every wrapped row is sized
+   against a face the cells are not drawn in. */
 .sheetedit-measure {
   position:absolute; visibility:hidden; left:-9999px; top:0;
-  white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box; line-height:1.3; font:inherit;
+  white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box;
+  font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif);
 }
 /* The same twin, on one line, measured to find whether a text is too wide for its column. */
 .sheetedit-measure1 {
   position:absolute; visibility:hidden; left:-9999px; top:0;
-  white-space:pre; padding:0; line-height:1.3; font:inherit;
+  white-space:pre; padding:0; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif);
 }
 
 /* --- theme picker -------------------------------------------------------- */
@@ -979,7 +988,7 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 /* --- form controls ------------------------------------------------------- */
 /* Checkboxes, dropdowns and spinners drawn over the grid. Their linked cell is what they are for,
    so they stay interactive; buttons run macros and are drawn disabled instead. */
-.sheetedit-ctrllayer { position:absolute; overflow:hidden; pointer-events:none; z-index:14; }
+.sheetedit-ctrllayer { position:absolute; pointer-events:none; z-index:4; }
 .sheetedit-ctrllayer-inner { position:absolute; left:0; top:0; }
 .sheetedit-ctrlbox {
   position:absolute; pointer-events:auto; display:flex; align-items:center; overflow:hidden;

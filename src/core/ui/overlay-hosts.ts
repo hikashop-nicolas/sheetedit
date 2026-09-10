@@ -1,12 +1,19 @@
 // Multi-pane plumbing for the floating layers (charts, images, shapes, slicers, timelines, pivot
-// tags). Every one of them is the same shape: a box laid over the grid area with an inner element
-// translated by the grid's scroll, and children positioned in sheet coordinates.
+// tags). Every one of them is the same shape: a box inside the grid's own scroller, positioned in
+// sheet coordinates, with children placed relative to it.
+//
+// The layer lives INSIDE the viewport it belongs to, so the browser scrolls it with the cells for
+// free. Laying it over the grid and translating it from a scroll listener meant it moved a frame
+// or more after the content did: on any real scroll the shapes and images visibly trailed the
+// sheet, and no amount of listener tuning closes that gap, because the content is scrolled on the
+// compositor while the correction is a main-thread style change.
 //
 // With a row split there are two scrolling viewports, so each layer gets one box PER pane and an
 // object is appended to the pane that currently shows its anchor row. Only the top pane carries the
 // column header, so the lower box starts at its own top edge.
 
 export interface OverlayHostDeps {
+  /** The editor root. Kept for callers that place their own chrome against it. */
   wrap: HTMLElement;
   /** The grid's viewports: the element plus whether it draws the header / row numbers. */
   panes: () => { el: HTMLElement; header: boolean; rowHeader: boolean }[];
@@ -26,7 +33,7 @@ export interface OverlayHosts {
   clear: () => void;
   /** Show or hide the whole overlay. */
   setVisible: (on: boolean) => void;
-  /** Re-place the boxes over their panes and re-apply each pane's scroll offset. */
+  /** Re-place the boxes at their pane's grid origin (past the header and row numbers). */
   layout: () => void;
   /** Subscribe to an event on every pane's scroll container. */
   onPanes: (type: string, fn: (e: Event) => void, opts?: AddEventListenerOptions) => void;
@@ -36,15 +43,9 @@ export interface OverlayHosts {
 }
 
 export function setupOverlayHosts(deps: OverlayHostDeps): OverlayHosts {
-  const { wrap } = deps;
   const boxes: { pane: HTMLElement; layer: HTMLElement; inner: HTMLElement; header: boolean; rowHeader: boolean }[] = [];
   const listeners: { type: string; fn: (e: Event) => void; opts?: AddEventListenerOptions }[] = [];
   let visible = true;
-
-  const sync = (b: { pane: HTMLElement; inner: HTMLElement }): void => {
-    b.inner.style.transform = `translate(${-b.pane.scrollLeft}px, ${-b.pane.scrollTop}px)`;
-  };
-  const onScroll = (): void => { for (const b of boxes) sync(b); };
 
   /** Match the boxes to the current pane list, creating and dropping as the split comes and goes. */
   const build = (): void => {
@@ -53,15 +54,20 @@ export function setupOverlayHosts(deps: OverlayHostDeps): OverlayHosts {
     while (boxes.length > panes.length) {
       const b = boxes.pop()!;
       for (const l of listeners) b.pane.removeEventListener(l.type, l.fn, l.opts);
-      b.pane.removeEventListener("scroll", onScroll);
       b.layer.remove();
     }
     panes.forEach((pane, i) => {
-      if (boxes[i] && boxes[i]!.pane === pane) { boxes[i]!.header = specs[i]!.header; boxes[i]!.rowHeader = specs[i]!.rowHeader; return; }
+      if (boxes[i] && boxes[i]!.pane === pane) {
+        boxes[i]!.header = specs[i]!.header;
+        boxes[i]!.rowHeader = specs[i]!.rowHeader;
+        // A full grid render empties the scroller, which now holds the layer too. Re-attach it
+        // rather than rebuild: the boxes and their listeners are still good.
+        if (!boxes[i]!.layer.isConnected) pane.appendChild(boxes[i]!.layer);
+        return;
+      }
       if (boxes[i]) {
         const old = boxes[i]!;
         for (const l of listeners) old.pane.removeEventListener(l.type, l.fn, l.opts);
-        old.pane.removeEventListener("scroll", onScroll);
         old.layer.remove();
       }
       const layer = document.createElement("div");
@@ -69,10 +75,9 @@ export function setupOverlayHosts(deps: OverlayHostDeps): OverlayHosts {
       const inner = document.createElement("div");
       inner.className = deps.innerClassName;
       layer.appendChild(inner);
-      wrap.appendChild(layer);
+      pane.appendChild(layer); // inside the scroller: the browser moves it with the cells
       const box = { pane, layer, inner, header: specs[i]!.header, rowHeader: specs[i]!.rowHeader };
       boxes[i] = box;
-      pane.addEventListener("scroll", onScroll, { passive: true });
       for (const l of listeners) pane.addEventListener(l.type, l.fn, l.opts);
     });
   };
@@ -80,19 +85,15 @@ export function setupOverlayHosts(deps: OverlayHostDeps): OverlayHosts {
   const layout = (): void => {
     build();
     const g = deps.geom();
-    const wr = wrap.getBoundingClientRect();
     boxes.forEach((b) => {
-      const pr = b.pane.getBoundingClientRect();
-      // Each band carries only its own chrome: the header on the top band, the row numbers on the
-      // left one, so the boxes past a boundary start flush with their pane.
+      // In the scroller's own content coordinates, so the offsets are the chrome each band draws:
+      // the header on the top band, the row numbers on the left one. The scroller does the
+      // clipping, and the sticky header and row numbers outrank the layers and cover them.
       const headerH = b.header ? g.headerH : 0;
       const rnW = b.rowHeader ? g.rnW : 0;
       b.layer.style.display = visible ? "block" : "none";
-      b.layer.style.left = `${pr.left - wr.left + rnW}px`;
-      b.layer.style.top = `${pr.top - wr.top + headerH}px`;
-      b.layer.style.width = `${Math.max(0, b.pane.clientWidth - rnW)}px`;
-      b.layer.style.height = `${Math.max(0, b.pane.clientHeight - headerH)}px`;
-      sync(b);
+      b.layer.style.left = `${rnW}px`;
+      b.layer.style.top = `${headerH}px`;
     });
   };
 
@@ -143,7 +144,6 @@ export function setupOverlayHosts(deps: OverlayHostDeps): OverlayHosts {
     teardown: () => {
       for (const b of boxes) {
         for (const l of listeners) b.pane.removeEventListener(l.type, l.fn, l.opts);
-        b.pane.removeEventListener("scroll", onScroll);
         b.layer.remove();
       }
       boxes.length = 0;

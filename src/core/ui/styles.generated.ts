@@ -28,6 +28,7 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-cell-focus-bg: #eef0ff;
 --sheetedit-zebra: #f6f6f8;
 --sheetedit-tabcolor: transparent;
+--sheetedit-cell-font: ui-sans-serif, system-ui, sans-serif;
 --sheetedit-tabcolor-fg: inherit;
 --sheetedit-link: #2563eb;
 --sheetedit-flat-bg: #eef0f4;
@@ -247,7 +248,7 @@ display:block; padding:3px 8px; white-space:pre-wrap; word-break:break-word; lin
 .sheetedit-comitem + .sheetedit-comitem { margin-top:7px; padding-top:7px; border-top:1px solid var(--sheetedit-border, #1c1f24); }
 .sheetedit-comauthor { font-weight:600; margin-bottom:2px; }
 .sheetedit-comtext { white-space:pre-wrap; color:var(--sheetedit-muted, #cfd3da); }
-.sheetedit-chartlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-chartlayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-chartlayer-inner { position:absolute; top:0; left:0; }
 .sheetedit-chartbox { position:absolute; pointer-events:auto; background:var(--sheetedit-cell-bg); border:1px solid var(--sheetedit-overlay-border); border-radius:3px; box-shadow:0 1px 5px rgba(0,0,0,.15); padding:5px; box-sizing:border-box; }
 .sheetedit-chartbox.sel { border-color:var(--sheetedit-accent, #6e7bff); box-shadow:0 0 0 2px var(--sheetedit-accent, #6e7bff); }
@@ -262,11 +263,11 @@ display:block; padding:3px 8px; white-space:pre-wrap; word-break:break-word; lin
 .sheetedit-colband { min-width:0; display:flex; flex-direction:column; }
 .sheetedit-colband:first-child { flex:1; }
 .sheetedit-colband-right { flex:1; display:none; }
-.sheetedit-grid { flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
+.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
 .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid-right { border-left:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid:focus { outline:none; }
-table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 ui-sans-serif, system-ui, sans-serif; }
+table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif); }
 .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
 .sheetedit-table th { border:1px solid var(--sheetedit-head-border); }
 .sheetedit-table td { background:var(--sheetedit-cell-bg); box-shadow: inset -1px -1px 0 0 var(--sheetedit-gridline); }
@@ -499,7 +500,7 @@ background:none; color:var(--sheetedit-muted, #aab2bf); cursor:pointer;
 font:inherit; font-size:13px; line-height:1; padding:2px 6px; border-radius:4px; cursor:pointer;
 background:var(--sheetedit-btn, #3a3f47); color:inherit; border:1px solid var(--sheetedit-btn-border, #4a4f57);
 }
-.sheetedit-slicerlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-slicerlayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-slicerlayer-inner { position:absolute; inset:0; }
 .sheetedit-slicerbox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
 background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
@@ -523,7 +524,7 @@ border-color:var(--se-slicer-accent,var(--sheetedit-accent,#4c8bf5)); }
 .sheetedit-slicerbox.styled .sheetedit-slicer-item { opacity:1; }
 .sheetedit-slicerbox.readonly .sheetedit-slicer-item { cursor:default; }
 .sheetedit-slicerbox.readonly .sheetedit-slicer-clear { display:none; }
-.sheetedit-imagelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
+.sheetedit-imagelayer { position:absolute; pointer-events:none; z-index:2; }
 .sheetedit-imagelayer-inner { position:absolute; inset:0; }
 .sheetedit-imagebox { position:absolute; }
 .sheetedit-imagebox img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
@@ -537,11 +538,11 @@ border-radius:50%; border:1.5px solid var(--sheetedit-handle-border); background
 color:var(--sheetedit-accent-fg,#fff); font:600 11px/1 system-ui,sans-serif; cursor:pointer; pointer-events:auto; display:none; }
 .sheetedit-imagebox.selected .sheetedit-image-del { display:block; }
 .sheetedit-image-del:hover { filter:brightness(1.1); }
-.sheetedit-pivotlayer { position:absolute; overflow:hidden; pointer-events:none; z-index:4; }
+.sheetedit-pivotlayer { position:absolute; pointer-events:none; z-index:1; }
 .sheetedit-pivotlayer-inner { position:absolute; inset:0; }
 .sheetedit-pivotbox { position:absolute; box-sizing:border-box; border:1.5px dashed var(--sheetedit-accent,#3b82f6); border-radius:3px; background:color-mix(in srgb, var(--sheetedit-accent,#3b82f6) 6%, transparent); }
 .sheetedit-pivottag { position:absolute; top:0; left:0; transform:translateY(-100%); pointer-events:auto; font:600 10px/1.4 system-ui,sans-serif; color:var(--sheetedit-accent-fg); background:var(--sheetedit-accent,#3b82f6); padding:1px 6px; border-radius:3px 3px 0 0; white-space:nowrap; cursor:default; }
-.sheetedit-shapelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:5; }
+.sheetedit-shapelayer { position:absolute; pointer-events:none; z-index:2; }
 .sheetedit-shapelayer-inner { position:absolute; inset:0; }
 .sheetedit-shapebox { position:absolute; }
 .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
@@ -575,7 +576,7 @@ font:9px/9px system-ui,sans-serif; text-align:center; cursor:pointer;
 border:1px solid var(--sheetedit-muted,#8b93a1); border-radius:2px;
 background:var(--sheetedit-chrome,#2b2f36); color:var(--sheetedit-text,#e6e6e6); }
 .sheetedit-outline-btn:hover { border-color:var(--sheetedit-accent,#6e7bff); }
-.sheetedit-timelinelayer { position:absolute; overflow:hidden; pointer-events:none; z-index:6; }
+.sheetedit-timelinelayer { position:absolute; pointer-events:none; z-index:3; }
 .sheetedit-timelinelayer-inner { position:absolute; inset:0; }
 .sheetedit-timelinebox { position:absolute; pointer-events:auto; display:flex; flex-direction:column;
 background:var(--sheetedit-chrome,#fff); color:var(--sheetedit-text,#1c1f24);
@@ -766,11 +767,12 @@ content:""; position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.35);
 }
 .sheetedit-measure {
 position:absolute; visibility:hidden; left:-9999px; top:0;
-white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box; line-height:1.3; font:inherit;
+white-space:pre-wrap; word-break:break-word; padding:3px 8px; box-sizing:border-box;
+font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif);
 }
 .sheetedit-measure1 {
 position:absolute; visibility:hidden; left:-9999px; top:0;
-white-space:pre; padding:0; line-height:1.3; font:inherit;
+white-space:pre; padding:0; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif);
 }
 .sheetedit-theme-list { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
 .sheetedit-theme-opt {
@@ -807,7 +809,7 @@ html.sheetedit-printing body > *:not(.sheetedit-print) { display:none !important
 .sheetedit-print { position:static !important; left:auto !important; }
 .sheetedit-print-page { break-after:page; }
 }
-.sheetedit-ctrllayer { position:absolute; overflow:hidden; pointer-events:none; z-index:14; }
+.sheetedit-ctrllayer { position:absolute; pointer-events:none; z-index:4; }
 .sheetedit-ctrllayer-inner { position:absolute; left:0; top:0; }
 .sheetedit-ctrlbox {
 position:absolute; pointer-events:auto; display:flex; align-items:center; overflow:hidden;

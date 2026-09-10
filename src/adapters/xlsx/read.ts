@@ -89,6 +89,7 @@ export function parseRichString(el: Element): RichString {
       const run: import("../../core/model").TextRun = { text: rtext };
       if (rPr) {
         styledRuns++;
+        run.own = true;
         const has = (n: string): boolean => { const e = Array.from(rPr.children).find((x) => x.localName === n); return e != null && e.getAttribute("val") !== "0" && e.getAttribute("val") !== "false"; };
         if (has("b")) run.bold = true;
         if (has("i")) run.italic = true;
@@ -124,6 +125,7 @@ export interface XlsxStyles {
   xfNumFmtIds: number[]; // cellXfs index (the cell @s) -> numFmtId
   xfStyles: (CellStyle | undefined)[]; // cellXfs index (the cell @s) -> resolved style
   normalFontSize?: number; // <fonts>' first entry, which is the Normal style's font
+  normalFontName?: string; // and its family: what every cell that states no font of its own uses
 }
 
 // ARGB ("FFRRGGBB" or "RRGGBB") -> CSS "#rrggbb".
@@ -330,7 +332,7 @@ export function readXlsxStyles(doc: Document | undefined, theme: string[]): Xlsx
       xfStyles.push(Object.keys(st).length ? st : undefined);
     }
   }
-  return { customFmt, xfNumFmtIds, xfStyles, normalFontSize: fonts[0]?.size };
+  return { customFmt, xfNumFmtIds, xfStyles, normalFontSize: fonts[0]?.size, normalFontName: fonts[0]?.name };
 }
 
 /** Resolve a cell's number format (code or built-in id), or undefined for General. */
@@ -383,6 +385,9 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const styles = readXlsxStyles(wb.stylesDoc, theme);
   const dxfs = parseDxfs(wb.stylesDoc, theme);
   const mdw = maxDigitWidth(styles.normalFontSize);
+  // The Normal style's font is what every cell that names none is set in. Rendering those in the
+  // UI's own face instead sizes the text against columns the file measured for a different font.
+  if (styles.normalFontName) wb.defaultFontName = styles.normalFontName;
 
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {

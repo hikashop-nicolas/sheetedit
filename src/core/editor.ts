@@ -12,7 +12,7 @@ import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, Sheet, StyleChange, Workbook, SheetControl } from "./model";
-import { cellDisplay, colToLetters, ensureCell, getCell, key, parseA1Ref } from "./model";
+import { cellDisplay, colToLetters, ensureCell, fontStack, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
@@ -2881,6 +2881,8 @@ export function createSheetEditor(
 
   let coveredSet = new Set<string>();
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
+  /** A merge's rectangle, by its top-left cell: what the border composition needs. */
+  let mergeAtMap = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
 
   // Wrap: computed extra height (px) so a wrapped cell's text fits, measured against the
   // column width. Keyed by row for the active sheet; recomputed on render / resize / edit.
@@ -2898,7 +2900,7 @@ export function createSheetEditor(
     measureEl.style.fontWeight = cs?.bold ? "700" : "";
     measureEl.style.fontStyle = cs?.italic ? "italic" : "";
     measureEl.style.fontSize = cs?.fontSize ? `${cs.fontSize}pt` : "";
-    measureEl.style.fontFamily = cs?.fontFamily ?? "";
+    measureEl.style.fontFamily = fontStack(cs?.fontFamily);
     measureEl.textContent = text || " ";
     return measureEl.offsetHeight;
   };
@@ -2913,7 +2915,7 @@ export function createSheetEditor(
     measureLineEl.style.fontWeight = f.bold ? "700" : "";
     measureLineEl.style.fontStyle = f.italic ? "italic" : "";
     measureLineEl.style.fontSize = f.size ? `${f.size}pt` : "";
-    measureLineEl.style.fontFamily = f.font ?? "";
+    measureLineEl.style.fontFamily = fontStack(f.font);
     measureLineEl.textContent = text;
     return measureLineEl.offsetWidth;
   };
@@ -3892,7 +3894,23 @@ export function createSheetEditor(
     return L > 0.4 ? "#1a1a1a" : "#f5f5f5";
   };
 
-  const applyCellVisualStyle = (td: HTMLElement, input: HTMLInputElement, cell: Cell | undefined): void => {
+  /**
+   * The borders to draw around a merged range. Excel keeps each covered cell's own border, and the
+   * merge shows the ones on its outside edge, so a box drawn round C6:C7 has its bottom edge on
+   * C7 - the cell the grid never renders. Reading only the top-left cell dropped that edge.
+   */
+  const mergedBorders = (sheet: Sheet, m: { r1: number; c1: number; r2: number; c2: number }): NonNullable<CellStyle["borders"]> => {
+    const out: NonNullable<CellStyle["borders"]> = {};
+    const edge = (r: number, c: number, side: "top" | "right" | "bottom" | "left"): void => {
+      const b = getCell(sheet, r, c)?.cellStyle?.borders?.[side];
+      if (b && !out[side]) out[side] = b;
+    };
+    for (let c = m.c1; c <= m.c2; c++) { edge(m.r1, c, "top"); edge(m.r2, c, "bottom"); }
+    for (let r = m.r1; r <= m.r2; r++) { edge(r, m.c1, "left"); edge(r, m.c2, "right"); }
+    return out;
+  };
+
+  const applyCellVisualStyle = (td: HTMLElement, input: HTMLInputElement, cell: Cell | undefined, merge?: { r1: number; c1: number; r2: number; c2: number }): void => {
     td.style.background = "";
     td.style.boxShadow = "";
     td.classList.remove("va-top", "va-bottom");
@@ -3913,8 +3931,10 @@ export function createSheetEditor(
       // fill in dark mode puts light text on light ground and the value disappears.
       if (!cs.color) input.style.color = readableOn(cs.bg);
     }
-    if (cs.borders) {
-      const bd = cs.borders;
+    const sheetNow = wb.sheets[active];
+    const merged = merge && sheetNow ? mergedBorders(sheetNow, merge) : undefined;
+    const bd = merged && Object.keys(merged).length ? { ...cs.borders, ...merged } : cs.borders;
+    if (bd) {
       // The right/bottom fallback stands in for the gridline the cell's own borders paint over.
       // On a sheet that hides its gridlines there is none to stand in for.
       const g = wb.sheets[active]?.hideGridLines ? "transparent" : "#e3e3e6";
@@ -3930,7 +3950,7 @@ export function createSheetEditor(
       if (cs.underline && cs.underlineStyle) input.style.textDecorationStyle = cs.underlineStyle;
     }
     if (cs.fontSize) input.style.fontSize = `${cs.fontSize}pt`;
-    if (cs.fontFamily) input.style.fontFamily = cs.fontFamily;
+    if (cs.fontFamily) input.style.fontFamily = fontStack(cs.fontFamily);
     if (cs.color) input.style.color = cs.color;
     if (cs.align) input.style.textAlign = cs.align;
     if (cs.valign === "top") td.classList.add("va-top");
@@ -3945,7 +3965,11 @@ export function createSheetEditor(
     for (const pos of positions) {
       const td = tdAt(key(pos.r, pos.c));
       const input = inputAt(key(pos.r, pos.c));
-      if (td && input) applyCellVisualStyle(td, input, getCell(sheet, pos.r, pos.c));
+      if (td && input) {
+        const cell = getCell(sheet, pos.r, pos.c);
+        applyCellVisualStyle(td, input, cell, mergeAtMap.get(key(pos.r, pos.c)));
+        buildCellOverlay(td, sheet, cell, pos.r, pos.c);
+      }
     }
   };
 
@@ -3980,6 +4004,127 @@ export function createSheetEditor(
 
   // Build one data cell's <td> (input, styles, listeners). Extracted from buildRow so a
   // frozen column can reuse it outside the horizontal window loop.
+  /**
+   * (Re)build a cell's display overlay: the layer that actually draws the text for a rotated,
+   * multi-format, ruby, wrapped or spilling cell. The plain <input> under it only shows while the
+   * cell has focus, so a style change that patched the input alone left every one of those cells
+   * looking exactly as before until something forced a full re-render.
+   */
+  const buildCellOverlay = (td: HTMLElement, sheet: Sheet, cell: Cell | undefined, r: number, c: number): void => {
+    for (const cls of ["has-rot", "has-rich", "has-ruby", "has-wrap", "has-spill"]) td.classList.remove(cls);
+    for (const old of Array.from(td.querySelectorAll(".sheetedit-cellrot, .sheetedit-cellrich, .sheetedit-ruby, .sheetedit-cellwrap, .sheetedit-cellspill"))) old.remove();
+    // Rotated text: a text input cannot be turned, so the rotation is drawn on an overlay and
+    // the input (still upright) takes over on focus. Column headings set sideways to fit a
+    // narrow column are the usual case; read flat they are just clipped to two letters.
+    if (cell?.cellStyle?.rot && cell.value !== "") {
+      td.classList.add("has-rot");
+      const cs = cell.cellStyle;
+      const rot = cs.rot ?? 0;
+      const ov = document.createElement("div");
+      // 255 is OOXML's "stacked": upright characters, one under the next, not a turned line.
+      ov.className = rot === 255 ? "sheetedit-cellrot stacked" : "sheetedit-cellrot";
+      ov.setAttribute("aria-hidden", "true");
+      const sp = document.createElement("span");
+      sp.textContent = cellDisplay(cell);
+      // 1..90 is anticlockwise by that many degrees; 91..180 is clockwise by (value - 90).
+      if (rot !== 255) sp.style.transform = `rotate(${rot <= 90 ? -rot : rot - 90}deg)`;
+      if (cs.color) ov.style.color = cs.color;
+      if (cs.bold) ov.style.fontWeight = "700";
+      if (cs.italic) ov.style.fontStyle = "italic";
+      if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+      if (cs.fontFamily) ov.style.fontFamily = fontStack(cs.fontFamily);
+      ov.appendChild(sp);
+      td.appendChild(ov);
+    } else if (cell?.richRuns?.length) {
+      td.classList.add("has-rich");
+      const ov = document.createElement("div");
+      // A multi-format cell wraps if its style says so, like any other: the runs are how the
+      // text is painted, not a reason to draw it on one clipped line.
+      ov.className = cell.cellStyle?.wrap ? "sheetedit-cellrich wrapped" : "sheetedit-cellrich";
+      ov.setAttribute("aria-hidden", "true");
+      for (const run of cell.richRuns) {
+        // A run carrying its own link is drawn as one and follows it on click. The overlay is
+        // hidden from assistive tech (the input already carries the text), so the cell's link
+        // button is what reaches these without a mouse - it offers every link the cell has.
+        const sp = document.createElement(run.link ? "a" : "span");
+        if (run.link) {
+          sp.className = "sheetedit-runlink";
+          (sp as HTMLAnchorElement).href = run.link.internal ? "#" : run.link.href;
+          sp.title = run.link.href;
+          sp.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openLink(run.link!); });
+        }
+        sp.textContent = run.text;
+        // A run with a font of its own overrides the cell's outright, so what it does not state
+        // is off rather than inherited.
+        if (run.own) {
+          sp.style.fontWeight = run.bold ? "700" : "400";
+          sp.style.fontStyle = run.italic ? "italic" : "normal";
+        } else {
+          if (run.bold) sp.style.fontWeight = "700";
+          if (run.italic) sp.style.fontStyle = "italic";
+        }
+        const deco = `${run.underline ? "underline " : ""}${run.strike ? "line-through" : ""}`.trim();
+        if (deco) sp.style.textDecoration = deco;
+        if (run.size) sp.style.fontSize = `${run.size}pt`;
+        if (run.color) sp.style.color = run.color;
+        if (run.font) sp.style.fontFamily = fontStack(run.font);
+        ov.appendChild(sp);
+      }
+      // The runs style what they state and inherit the rest from the cell, as they do in the
+      // file: a run with no <rPr> of its own is the cell's own font. Without this base, half a
+      // two-run title rendered in the grid's default face and colour while the other half was
+      // right, and it only looked correct once the cell was selected and the input showed.
+      const cs = cell.cellStyle;
+      if (cs?.align) ov.style.textAlign = cs.align;
+      if (cs?.color) ov.style.color = cs.color;
+      if (cs?.bold) ov.style.fontWeight = "700";
+      if (cs?.italic) ov.style.fontStyle = "italic";
+      if (cs?.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+      if (cs?.fontFamily) ov.style.fontFamily = fontStack(cs.fontFamily);
+      applySpill(ov, r, spillOf(sheet, cell, r, c));
+      td.appendChild(ov);
+    } else if (cell?.phonetic?.length) {
+      // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
+      // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
+      td.classList.add("has-ruby");
+      td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
+    } else if (cell?.cellStyle?.wrap && cell.value !== "") {
+      // Wrap: the single-line input can't wrap, so show a wrapping display overlay (hidden
+      // while editing). The row was grown to fit by computeWrapHeights.
+      td.classList.add("has-wrap");
+      const ov = document.createElement("div");
+      ov.className = "sheetedit-cellwrap";
+      ov.setAttribute("aria-hidden", "true");
+      ov.textContent = cellDisplay(cell);
+      const cs = cell.cellStyle;
+      if (cs.align) ov.style.textAlign = cs.align;
+      if (cs.color) ov.style.color = cs.color;
+      if (cs.bold) ov.style.fontWeight = "700";
+      if (cs.italic) ov.style.fontStyle = "italic";
+      if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+      if (cs.fontFamily) ov.style.fontFamily = fontStack(cs.fontFamily);
+      td.appendChild(ov);
+    } else {
+      const spill = spillOf(sheet, cell, r, c);
+      if (spill) {
+        td.classList.add("has-spill");
+        const ov = document.createElement("div");
+        ov.className = "sheetedit-cellspill";
+        ov.setAttribute("aria-hidden", "true");
+        ov.textContent = cellDisplay(cell!);
+        const cs = cell?.cellStyle;
+        if (cs?.align) ov.style.textAlign = cs.align;
+        if (cs?.color) ov.style.color = cs.color;
+        if (cs?.bold) ov.style.fontWeight = "700";
+        if (cs?.italic) ov.style.fontStyle = "italic";
+        if (cs?.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
+        if (cs?.fontFamily) ov.style.fontFamily = fontStack(cs.fontFamily);
+        applySpill(ov, r, spill);
+        td.appendChild(ov);
+      }
+    }
+  };
+
   const buildCell = (sheet: Sheet, r: number, c: number): HTMLTableCellElement => {
       const td = document.createElement("td");
       td.dataset.rc = key(r, c);
@@ -4010,7 +4155,7 @@ export function createSheetEditor(
         input.title = t(cell.calcFailed === "circular" ? "calcCircular" : cell.calcFailed === "name" ? "calcName" : "calcEval");
       }
       // Apply the file's visual style (fill/borders on the cell, font/colour/align on the text).
-      applyCellVisualStyle(td, input, cell);
+      applyCellVisualStyle(td, input, cell, mergeAtMap.get(key(r, c)));
       // Hyperlink affordance: style the text as a link and add a small open button.
       // Every link the cell carries: the whole-cell one, or one per run for a cell whose links
       // belong to its pieces (which is an ODF shape - xlsx links cover whole cells).
@@ -4210,99 +4355,7 @@ export function createSheetEditor(
         }
       });
       td.appendChild(input);
-      // Rotated text: a text input cannot be turned, so the rotation is drawn on an overlay and
-      // the input (still upright) takes over on focus. Column headings set sideways to fit a
-      // narrow column are the usual case; read flat they are just clipped to two letters.
-      if (cell?.cellStyle?.rot && cell.value !== "") {
-        td.classList.add("has-rot");
-        const cs = cell.cellStyle;
-        const rot = cs.rot ?? 0;
-        const ov = document.createElement("div");
-        // 255 is OOXML's "stacked": upright characters, one under the next, not a turned line.
-        ov.className = rot === 255 ? "sheetedit-cellrot stacked" : "sheetedit-cellrot";
-        ov.setAttribute("aria-hidden", "true");
-        const sp = document.createElement("span");
-        sp.textContent = cellDisplay(cell);
-        // 1..90 is anticlockwise by that many degrees; 91..180 is clockwise by (value - 90).
-        if (rot !== 255) sp.style.transform = `rotate(${rot <= 90 ? -rot : rot - 90}deg)`;
-        if (cs.color) ov.style.color = cs.color;
-        if (cs.bold) ov.style.fontWeight = "700";
-        if (cs.italic) ov.style.fontStyle = "italic";
-        if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
-        if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
-        ov.appendChild(sp);
-        td.appendChild(ov);
-      } else if (cell?.richRuns?.length) {
-        td.classList.add("has-rich");
-        const ov = document.createElement("div");
-        // A multi-format cell wraps if its style says so, like any other: the runs are how the
-        // text is painted, not a reason to draw it on one clipped line.
-        ov.className = cell.cellStyle?.wrap ? "sheetedit-cellrich wrapped" : "sheetedit-cellrich";
-        ov.setAttribute("aria-hidden", "true");
-        for (const run of cell.richRuns) {
-          // A run carrying its own link is drawn as one and follows it on click. The overlay is
-          // hidden from assistive tech (the input already carries the text), so the cell's link
-          // button is what reaches these without a mouse - it offers every link the cell has.
-          const sp = document.createElement(run.link ? "a" : "span");
-          if (run.link) {
-            sp.className = "sheetedit-runlink";
-            (sp as HTMLAnchorElement).href = run.link.internal ? "#" : run.link.href;
-            sp.title = run.link.href;
-            sp.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openLink(run.link!); });
-          }
-          sp.textContent = run.text;
-          if (run.bold) sp.style.fontWeight = "700";
-          if (run.italic) sp.style.fontStyle = "italic";
-          const deco = `${run.underline ? "underline " : ""}${run.strike ? "line-through" : ""}`.trim();
-          if (deco) sp.style.textDecoration = deco;
-          if (run.size) sp.style.fontSize = `${run.size}pt`;
-          if (run.color) sp.style.color = run.color;
-          if (run.font) sp.style.fontFamily = run.font;
-          ov.appendChild(sp);
-        }
-        if (cell.cellStyle?.align) ov.style.textAlign = cell.cellStyle.align;
-        applySpill(ov, r, spillOf(sheet, cell, r, c));
-        td.appendChild(ov);
-      } else if (cell?.phonetic?.length) {
-        // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
-        // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
-        td.classList.add("has-ruby");
-        td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
-      } else if (cell?.cellStyle?.wrap && cell.value !== "") {
-        // Wrap: the single-line input can't wrap, so show a wrapping display overlay (hidden
-        // while editing). The row was grown to fit by computeWrapHeights.
-        td.classList.add("has-wrap");
-        const ov = document.createElement("div");
-        ov.className = "sheetedit-cellwrap";
-        ov.setAttribute("aria-hidden", "true");
-        ov.textContent = cellDisplay(cell);
-        const cs = cell.cellStyle;
-        if (cs.align) ov.style.textAlign = cs.align;
-        if (cs.color) ov.style.color = cs.color;
-        if (cs.bold) ov.style.fontWeight = "700";
-        if (cs.italic) ov.style.fontStyle = "italic";
-        if (cs.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
-        if (cs.fontFamily) ov.style.fontFamily = cs.fontFamily;
-        td.appendChild(ov);
-      } else {
-        const spill = spillOf(sheet, cell, r, c);
-        if (spill) {
-          td.classList.add("has-spill");
-          const ov = document.createElement("div");
-          ov.className = "sheetedit-cellspill";
-          ov.setAttribute("aria-hidden", "true");
-          ov.textContent = cellDisplay(cell!);
-          const cs = cell?.cellStyle;
-          if (cs?.align) ov.style.textAlign = cs.align;
-          if (cs?.color) ov.style.color = cs.color;
-          if (cs?.bold) ov.style.fontWeight = "700";
-          if (cs?.italic) ov.style.fontStyle = "italic";
-          if (cs?.fontSize) ov.style.fontSize = `${cs.fontSize}pt`;
-          if (cs?.fontFamily) ov.style.fontFamily = cs.fontFamily;
-          applySpill(ov, r, spill);
-          td.appendChild(ov);
-        }
-      }
+      buildCellOverlay(td, sheet, cell, r, c);
       cur.inputs.set(ki, input);
       return td;
   };
@@ -4924,6 +4977,9 @@ export function createSheetEditor(
     for (const p of panes) { p.inputs = new Map(); p.tds = new Map(); }
     // A sheet laid out as a document turns its gridlines off; only the borders it draws itself stay.
     wrap.classList.toggle("sheetedit-nogrid", !!sheet.hideGridLines);
+    // Draw the grid in the workbook's own default font, not the UI's: the column widths in the
+    // file were measured against that font, so a wider stand-in pushes text out of its cells.
+    wrap.style.setProperty("--sheetedit-cell-font", fontStack(wb.defaultFontName) || "");
     const keepTop = gridScroll.scrollTop;
     const keepLeft = gridScroll.scrollLeft;
     gridScroll.innerHTML = "";
@@ -4946,8 +5002,15 @@ export function createSheetEditor(
     // Merged ranges: the top-left cell spans; covered cells are not rendered.
     coveredSet = new Set<string>();
     spanAtMap = new Map<string, { rs: number; cs: number }>();
+    mergeAtMap = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
     for (const m of sheet.merges ?? []) {
-      spanAtMap.set(key(m.r1, m.c1), { rs: m.r2 - m.r1 + 1, cs: m.c2 - m.c1 + 1 });
+      // Span the lines that are DRAWN. A hidden column inside a merge is not rendered, so counting
+      // it pushes the merge one column too wide and shunts the rest of the row along with it.
+      let rs = 0, cs = 0;
+      for (let r = m.r1; r <= m.r2; r++) if (rowShown(sheet, r)) rs++;
+      for (let c = m.c1; c <= m.c2; c++) if (!sheet.hiddenCols?.has(c)) cs++;
+      spanAtMap.set(key(m.r1, m.c1), { rs: Math.max(1, rs), cs: Math.max(1, cs) });
+      mergeAtMap.set(key(m.r1, m.c1), m);
       for (let r = m.r1; r <= m.r2; r++)
         for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) coveredSet.add(key(r, c));
     }

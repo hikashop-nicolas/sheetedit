@@ -68,23 +68,40 @@ function markerDef(type: string | undefined, color: string): { def: string; url:
   };
 }
 
+// A dashed outline is a statement (planned, provisional, not yet), so the pattern has to survive.
+// Multiples of the stroke width, as DrawingML defines them.
+const DASH_PATTERNS: Record<string, number[]> = {
+  dash: [4, 3], sysDash: [3, 3], lgDash: [8, 3],
+  dot: [1, 3], sysDot: [1, 1],
+  dashDot: [4, 3, 1, 3], sysDashDot: [3, 3, 1, 3], lgDashDot: [8, 3, 1, 3],
+  lgDashDotDot: [8, 3, 1, 3, 1, 3], sysDashDotDot: [3, 3, 1, 3, 1, 3],
+};
+
+/** ` stroke-dasharray="..."` for a shape's dash style, or "" for a solid line. */
+function dashAttr(dash: string | undefined, sw: number): string {
+  const pattern = dash ? DASH_PATTERNS[dash] : undefined;
+  return pattern ? ` stroke-dasharray="${pattern.map((n) => n * sw).join(" ")}"` : "";
+}
+
 /** Build the SVG markup for one shape at the given pixel size. */
 export function shapeSvg(sh: SheetShape, w: number, h: number): string {
   const grad = sh.fillGradient?.stops.length ? gradientDef(sh.fillGradient) : undefined;
   const fill = grad?.url ?? sh.fill ?? "none";
+  const fillOp = sh.fillOpacity != null ? ` fill-opacity="${sh.fillOpacity}"` : "";
   const stroke = sh.stroke ?? (sh.fill ? "none" : "#000000");
   const sw = sh.strokeWidth ?? 1;
+  const dash = dashAttr(sh.dash, sw);
   const inset = sw / 2; // keep the stroke inside the box
   const iw = Math.max(0, w - sw), ih = Math.max(0, h - sw);
   let body: string;
   let markerDefs = "";
   switch (sh.geom) {
     case "ellipse":
-      body = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${iw / 2}" ry="${ih / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      body = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${iw / 2}" ry="${ih / 2}" fill="${fill}"${fillOp} stroke="${stroke}" stroke-width="${sw}"${dash}/>`;
       break;
     case "roundRect": {
       const r = Math.min(w, h) * 0.15;
-      body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" rx="${r}" ry="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" rx="${r}" ry="${r}" fill="${fill}"${fillOp} stroke="${stroke}" stroke-width="${sw}"${dash}/>`;
       break;
     }
     case "line": {
@@ -98,21 +115,28 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
       const ends = [head, tail].filter(Boolean).map((m) => m!.def).join("");
       if (ends) markerDefs = `<defs>${ends}</defs>`;
       const attrs = `${head ? ` marker-start="${head.url}"` : ""}${tail ? ` marker-end="${tail.url}"` : ""}`;
-      body = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colour}" stroke-width="${sw}"${attrs}/>`;
+      body = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${colour}" stroke-width="${sw}"${dash}${attrs}/>`;
       break;
     }
     default: {
-      // Braces and brackets: an open stroked outline, never filled.
-      const path = shapeOutlinePath(sh.geom, iw, ih);
+      // Braces, brackets and elbow connectors: an open stroked outline, never filled. An elbow
+      // carries the line ends a straight connector does, so its arrowhead comes along too.
+      const path = shapeOutlinePath(sh.geom, iw, ih, sh.adjust);
       if (path) {
-        body = `<path d="${path}" transform="translate(${inset},${inset})" fill="none" stroke="${stroke === "none" ? "#000000" : stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+        const colour = stroke === "none" ? "#000000" : stroke;
+        const head = markerDef(sh.headEnd, colour);
+        const tail = markerDef(sh.tailEnd, colour);
+        const ends = [head, tail].filter(Boolean).map((m) => m!.def).join("");
+        if (ends) markerDefs = `<defs>${ends}</defs>`;
+        const marks = `${head ? ` marker-start="${head.url}"` : ""}${tail ? ` marker-end="${tail.url}"` : ""}`;
+        body = `<path d="${path}" transform="translate(${inset},${inset})" fill="none" stroke="${colour}" stroke-width="${sw}"${dash} stroke-linecap="round" stroke-linejoin="round"${marks}/>`;
         break;
       }
       // Polygon shapes (triangle / diamond / hexagon / pentagon / star / arrow / parallelogram),
       // inset a touch so the stroke stays inside the box; else a plain rectangle.
       const pts = shapePoints(sh.geom, iw, ih);
-      if (pts) body = `<polygon points="${pts.map(([x, y]) => `${x + inset},${y + inset}`).join(" ")}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`;
-      else body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      if (pts) body = `<polygon points="${pts.map(([x, y]) => `${x + inset},${y + inset}`).join(" ")}" fill="${fill}"${fillOp} stroke="${stroke}" stroke-width="${sw}"${dash} stroke-linejoin="round"/>`;
+      else body = `<rect x="${inset}" y="${inset}" width="${iw}" height="${ih}" fill="${fill}"${fillOp} stroke="${stroke}" stroke-width="${sw}"${dash}/>`;
     }
   }
   let label = "";
@@ -127,9 +151,16 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
       "width:100%", "height:100%", "box-sizing:border-box", "padding:2px 5px",
       "display:flex", "flex-direction:column", `justify-content:${justify}`,
       `text-align:${sh.textAlign ?? "center"}`, "white-space:pre-wrap", "overflow-wrap:break-word",
-      "font:13px sans-serif", "line-height:1.25", `color:${sh.textColor ?? "#000000"}`,
+      `font:${sh.textSize ?? 9.75}pt sans-serif`, "line-height:1.25", `color:${sh.textColor ?? "#000000"}`,
     ].join(";");
     label = `<foreignObject x="0" y="0" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" class="sheetedit-shapetext" style="${style}">${esc}</div></foreignObject>`;
+  }
+  // flipH / flipV mirror the whole drawing. The line case bakes the flip into its endpoints (so
+  // its markers stay at the right ends); everything else is mirrored here as one.
+  if (sh.geom !== "line" && (sh.flipH || sh.flipV)) {
+    const sx = sh.flipH ? -1 : 1, sy = sh.flipV ? -1 : 1;
+    const tx = sh.flipH ? -w : 0, ty = sh.flipV ? -h : 0;
+    body = `<g transform="scale(${sx},${sy}) translate(${tx},${ty})">${body}</g>`;
   }
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grad?.def ?? ""}${markerDefs}${body}${label}</svg>`;
 }
@@ -148,8 +179,11 @@ function paintShape(box: HTMLElement, sh: SheetShape, w: number, h: number): voi
     box.innerHTML = shapeSvg(sh, w, h);
     return;
   }
+  // Draw the shape at its OWN size and turn it about the centre of the anchor. The file states
+  // that size in <a:ext>; without one, fall back to swapping the axes for a quarter turn, which
+  // is the case where the anchor and the shape differ most.
   const quarter = Math.abs((((rot % 180) + 180) % 180) - 90) < 1;
-  const [dw, dh] = quarter ? [h, w] : [w, h];
+  const [dw, dh] = sh.extent ? [sh.extent.w, sh.extent.h] : quarter ? [h, w] : [w, h];
   box.innerHTML = shapeSvg(sh, dw, dh);
   const svg = box.firstElementChild as HTMLElement | null;
   if (!svg) return;

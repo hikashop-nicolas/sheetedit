@@ -451,6 +451,8 @@ export interface Workbook {
       user can see what a workbook does. The bin itself is preserved untouched on save. */
   vba?: import("./vba").VbaProject;
   /** Workbook-level protection (locked sheet set / window layout). */
+  /** The workbook's Normal-style font family: the one cells fall back to. */
+  defaultFontName?: string;
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */
   protectionDirty?: boolean;
@@ -480,6 +482,10 @@ export interface StyleChange {
 export interface TextRun {
   text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean;
   size?: number; color?: string; font?: string;
+  /** The run states its own font in the file (xlsx <rPr>), rather than taking the cell's. It
+      therefore does NOT inherit what it leaves unsaid: a plain run inside a bold cell is bold,
+      one with a font of its own that says nothing about weight is not. */
+  own?: boolean;
   /** ODF can anchor a hyperlink to PART of a cell's text, and carry several in one cell, which
       xlsx cannot: there a hyperlink covers whole cells. A run that carries one is its own link. */
   link?: { href: string; internal?: boolean };
@@ -653,7 +659,9 @@ export type ShapeGeom =
   | "hexagon" | "pentagon" | "star" | "rightArrow"
   // Braces and brackets: open outlines rather than closed shapes, used to bracket a range of
   // rows or columns. Rendered, not offered for authoring.
-  | "leftBrace" | "rightBrace" | "bracePair" | "leftBracket" | "rightBracket" | "bracketPair";
+  | "leftBrace" | "rightBrace" | "bracePair" | "leftBracket" | "rightBracket" | "bracketPair"
+  // An elbow connector: right-angled turns between its two ends.
+  | "elbow";
 
 /** A linear gradient fill. `angle` is in degrees clockwise from the positive x axis, as DrawingML
     measures it, and `pos` runs 0..1 along that direction. */
@@ -684,6 +692,9 @@ export interface SheetShape {
       vertical anchor (<a:bodyPr anchor>). A callout's label is written to a corner, not centred. */
   textAlign?: "left" | "center" | "right";
   textValign?: "top" | "middle" | "bottom";
+  /** Text size in points, as the file states it. A 40pt watermark drawn at the default size is
+      not a watermark. */
+  textSize?: number;
   /** Line ends, as the file names them (triangle / stealth / arrow / oval / diamond / none): the
       start of the line is its head end, the finish its tail end. */
   headEnd?: string;
@@ -692,10 +703,19 @@ export interface SheetShape {
       geometry: a flipped line runs from the other corner of its box. */
   flipH?: boolean;
   flipV?: boolean;
-  /** Clockwise rotation in degrees (xlsx <a:xfrm rot>, in 60000ths of one). The anchor is the
-      shape's bounding box after the turn, so a quarter-turned shape is drawn in a box with its
-      width and height swapped and then rotated back into place. */
+  /** The outline's dash pattern, as the file names it (dash / sysDash / dot / dashDot / ...).
+      A dashed shaft usually means "planned" or "not yet"; drawn solid it says the opposite. */
+  dash?: string;
+  /** 0..1 fill opacity (<a:alpha>). A see-through watermark has to let the cells show through. */
+  fillOpacity?: number;
+  /** The first geometry adjustment (<a:gd name="adj1">), as a fraction: where an elbow turns. */
+  adjust?: number;
+  /** Clockwise rotation in degrees (xlsx <a:xfrm rot>, in 60000ths of one). */
   rotation?: number;
+  /** The shape's own size in px BEFORE the turn (<a:xfrm><a:ext>), which is not the anchor's:
+      a shape rotated a quarter turn is anchored across the cells it ends up covering. Only
+      meaningful together with `rotation`. */
+  extent?: { w: number; h: number };
   /** The macro assigned to the shape (xlsx <xdr:sp macro>). A shape with one is a button: clicking
       it runs the macro, exactly as a form control's button does. */
   macro?: string;
@@ -755,6 +775,22 @@ export function typedValue(cell: Cell | undefined): number | boolean | string | 
     default:
       return cell.value;
   }
+}
+
+/**
+ * A CSS font stack for a font the file names.
+ *
+ * A bare family name is a trap: when the font is not installed the browser drops to its default
+ * standard face, which is usually a serif and always a different width, so the text no longer fits
+ * the columns the file sized for it. A condensed face keeps a condensed fallback - substituting a
+ * full-width sans for "Aptos Narrow" was enough on its own to push a line 18% past its cell.
+ */
+export function fontStack(name: string | undefined): string {
+  if (!name) return "";
+  const quoted = `"${name.replace(/["\\]/g, "")}"`;
+  return /narrow|condensed/i.test(name)
+    ? `${quoted}, "Arial Narrow", "Liberation Sans Narrow", "Helvetica Neue", ui-sans-serif, sans-serif`
+    : `${quoted}, ui-sans-serif, system-ui, sans-serif`;
 }
 
 export const isNumeric = (s: string): boolean => {

@@ -267,3 +267,60 @@ describe("braces and brackets", () => {
     expect(readWorkbook(base(braceAnchor("rightBrace"))).sheets[0].shapes![0]!.rotation).toBeUndefined();
   });
 });
+
+// A connector says something with more than its position: a dashed shaft means provisional, an
+// elbow points around what is in the way, and a see-through fill is a watermark rather than a slab
+// over the cells. All of it was dropped on the way in.
+describe("how a shape is painted", () => {
+  const shape = (spPr: string, txBody = "") =>
+    `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>6</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>${spPr}</xdr:spPr>${txBody}</xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+  const read = (spPr: string, txBody = "") => readWorkbook(base(shape(spPr, txBody))).sheets[0].shapes![0]!;
+
+  it("keeps a dashed outline dashed", () => {
+    const sh = read(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln w="19050"><a:solidFill><a:srgbClr val="0F9ED5"/></a:solidFill><a:prstDash val="dash"/></a:ln>`);
+    expect(sh.dash).toBe("dash");
+    expect(shapeSvg(sh, 100, 50)).toContain('stroke-dasharray="8 6"'); // 4x and 3x the 2px stroke
+  });
+
+  it("leaves a solid outline undashed", () => {
+    const sh = read(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:prstDash val="solid"/></a:ln>`);
+    expect(shapeSvg(sh, 100, 50)).not.toContain("stroke-dasharray");
+  });
+
+  it("reads a see-through fill and paints it see-through", () => {
+    const sh = read(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="D9D9D9"><a:alpha val="68000"/></a:srgbClr></a:solidFill>`);
+    expect(sh.fillOpacity).toBeCloseTo(0.68, 5);
+    expect(sh.fill?.toLowerCase()).toBe("#d9d9d9"); // the colour itself stays a plain hex
+    expect(shapeSvg(sh, 100, 50)).toContain('fill-opacity="0.68"');
+  });
+
+  it("leaves an opaque fill alone", () => {
+    const sh = read(`<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill>`);
+    expect(sh.fillOpacity).toBeUndefined();
+    expect(shapeSvg(sh, 100, 50)).not.toContain("fill-opacity");
+  });
+
+  it("draws an elbow connector as a bent line, not a box", () => {
+    const sh = read(`<a:prstGeom prst="bentConnector3"><a:avLst><a:gd name="adj1" fmla="val 25000"/></a:avLst></a:prstGeom><a:ln><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:tailEnd type="triangle"/></a:ln>`);
+    expect(sh.geom).toBe("elbow");
+    expect(sh.adjust).toBeCloseTo(0.25, 5);
+    const svg = shapeSvg(sh, 100, 40);
+    expect(svg).not.toContain("<rect");
+    expect(svg).toContain('fill="none"');
+    expect(svg).toMatch(/d="M 0 0 L 24\.75 0 L 24\.75 39 L 99 39"/); // out, turn at a quarter, across
+    expect(svg).toMatch(/marker-end="url\(#sheetedit-marker-\d+\)"/); // the arrow survives the bend
+  });
+
+  it("sizes rotated text as the file does", () => {
+    const sh = read(
+      `<a:xfrm rot="1442775"><a:ext cx="10648950" cy="1543050"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`,
+      `<xdr:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="fr-FR" sz="4000"/><a:t>WATERMARK</a:t></a:r></a:p></xdr:txBody>`,
+    );
+    expect(sh.textSize).toBe(40);
+    expect(sh.rotation).toBeCloseTo(24.046, 2);
+    // The <a:ext> is the shape's own size; the anchor is where it lands once turned.
+    expect(sh.extent!.w).toBeCloseTo(1118, 0);
+    expect(sh.extent!.h).toBeCloseTo(162, 0);
+    expect(shapeSvg(sh, 100, 50)).toContain("font:40pt sans-serif");
+  });
+});

@@ -58,8 +58,18 @@ function bracket(x: number, w: number, h: number, left: boolean): string {
   return `M ${round(tip)} 0 L ${round(spine)} 0 L ${round(spine)} ${round(h)} L ${round(tip)} ${round(h)}`;
 }
 
+/**
+ * An elbow connector: out from the start, a right-angled turn, across, and back in to the end.
+ * `adjust` is where the turn falls along the run, as the file states it (it may sit outside 0..1,
+ * which is how Excel draws a connector that doubles back).
+ */
+function elbow(w: number, h: number, adjust: number): string {
+  const at = round(w * adjust);
+  return `M 0 0 L ${at} 0 L ${at} ${round(h)} L ${round(w)} ${round(h)}`;
+}
+
 /** The stroked path for a brace / bracket geometry, or null for anything else. */
-export function shapeOutlinePath(geom: ShapeGeom, w: number, h: number): string | null {
+export function shapeOutlinePath(geom: ShapeGeom, w: number, h: number, adjust?: number): string | null {
   // A pair puts one on each edge; a single one gets the whole width, as the presets do.
   const band = Math.min(w / 2, h / 4);
   switch (geom) {
@@ -69,6 +79,7 @@ export function shapeOutlinePath(geom: ShapeGeom, w: number, h: number): string 
     case "leftBracket": return bracket(0, w, h, true);
     case "rightBracket": return bracket(0, w, h, false);
     case "bracketPair": return `${bracket(0, band, h, true)} ${bracket(w - band, band, h, false)}`;
+    case "elbow": return elbow(w, h, adjust ?? 0.5);
     default: return null;
   }
 }
