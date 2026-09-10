@@ -28,6 +28,7 @@ export const SHEETEDIT_CSS = `:root {
 --sheetedit-cell-focus-bg: #eef0ff;
 --sheetedit-zebra: #f6f6f8;
 --sheetedit-tabcolor: transparent;
+--sheetedit-tabcolor-fg: inherit;
 --sheetedit-link: #2563eb;
 --sheetedit-flat-bg: #eef0f4;
 --sheetedit-flat-hover: #e3e6ec;
@@ -406,7 +407,13 @@ font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-mu
 border-radius:5px 5px 0 0; padding:4px 12px; cursor:pointer; white-space:nowrap;
 }
 .sheetedit-tab[aria-selected="true"] { background:var(--sheetedit-accent, #6e7bff); color:var(--sheetedit-accent-fg); border-color:var(--sheetedit-accent, #6e7bff); }
-.sheetedit-tab[style*="--sheetedit-tabcolor"] { box-shadow: inset 0 -3px 0 0 var(--sheetedit-tabcolor); }
+.sheetedit-tab[style*="--sheetedit-tabcolor"] {
+background:var(--sheetedit-tabcolor); color:var(--sheetedit-tabcolor-fg); border-color:var(--sheetedit-tabcolor);
+}
+.sheetedit-tab[style*="--sheetedit-tabcolor"][aria-selected="true"] {
+background:var(--sheetedit-accent, #6e7bff); color:var(--sheetedit-accent-fg); border-color:var(--sheetedit-accent, #6e7bff);
+box-shadow: inset 0 -3px 0 0 var(--sheetedit-tabcolor);
+}
 .sheetedit-tab:focus-visible { outline:2px solid var(--sheetedit-accent-fg); outline-offset:1px; }
 .sheetedit-tab-rename { font:inherit; width:9ch; min-width:60px; box-sizing:border-box; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-accent, #6e7bff); border-radius:4px; padding:2px 5px; }
 .sheetedit-tab-add { display:inline-flex; align-items:center; justify-content:center; flex:none; width:26px; height:26px; margin-left:4px; padding:0; cursor:pointer; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }

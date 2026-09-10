@@ -5130,9 +5130,14 @@ export function createSheetEditor(
       b.type = "button";
       b.className = "sheetedit-tab";
       b.textContent = sheet.name;
-      // A coloured tab is how a workbook singles a sheet out; drawn as an underline so the tab
-      // keeps the UI's own contrast whatever colour the file picked.
-      if (sheet.tabColor) b.style.setProperty("--sheetedit-tabcolor", sheet.tabColor);
+      // A coloured tab is how a workbook singles a sheet out. Excel fills the tab with the colour
+      // and drops to a band along its edge once the tab is current; do the same, so the active
+      // tab still reads as active and the colour is never lost. The text colour is picked against
+      // the fill: a file is free to choose a yellow no default foreground survives.
+      if (sheet.tabColor) {
+        b.style.setProperty("--sheetedit-tabcolor", sheet.tabColor);
+        b.style.setProperty("--sheetedit-tabcolor-fg", readableOn(sheet.tabColor));
+      }
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(i === active));
       b.tabIndex = i === active ? 0 : -1; // roving tabindex for the tablist
