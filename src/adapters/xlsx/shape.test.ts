@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { readWorkbook } from "../../index";
 import { writeXlsx } from "./write";
-import { deleteXlsxShape } from "./shape-write";
+import { deleteXlsxShape, reorderXlsxShape } from "./shape-write";
 import { writeWorkbook } from "../../core/workbook";
 import { shapeSvg } from "../../core/ui/shape-layer";
 import { GEOM_PRESET, SHAPE_GALLERY } from "../../core/shape-geom";
@@ -543,5 +543,37 @@ describe("turning a shape in the editor", () => {
     expect(draw).toContain('rot="1800000"');
     expect(draw, "the gradient is still there").toContain("<a:gradFill>");
     expect(draw).not.toContain("<a:solidFill>");
+  });
+});
+
+// Stacking IS document order: the last anchor in the drawing is the one on top. Moving a shape
+// therefore moves its anchor, and every shape that pointed past it has to be told where it went -
+// the same bookkeeping a delete does, and the same thing that goes wrong if it is skipped.
+describe("re-stacking a shape", () => {
+  const three = () => readWorkbook(base(spAnchor("rect") + spAnchor("ellipse") + spAnchor("triangle")));
+
+  it("brings one to the front, and the others keep pointing at themselves", () => {
+    const wb = three();
+    const sheet = wb.sheets[0];
+    const first = sheet.shapes![0]!;
+    expect(reorderXlsxShape(wb, sheet, first, "front")).toBe(true);
+    // In the file, the moved shape is now last.
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].shapes!.map((s) => s.geom)).toEqual(["ellipse", "triangle", "rect"]);
+    // And every shape's index still names its own anchor.
+    expect(first.anchorIndex).toBe(2);
+    expect(sheet.shapes![1]!.anchorIndex).toBe(0);
+    expect(sheet.shapes![2]!.anchorIndex).toBe(1);
+  });
+
+  it("sends one to the back", () => {
+    const wb = three();
+    const sheet = wb.sheets[0];
+    expect(reorderXlsxShape(wb, sheet, sheet.shapes![2]!, "back")).toBe(true);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[0].shapes!.map((s) => s.geom)).toEqual(["triangle", "rect", "ellipse"]);
+  });
+
+  it("declines when there is nothing to re-stack against", () => {
+    const wb = readWorkbook(base(spAnchor("rect")));
+    expect(reorderXlsxShape(wb, wb.sheets[0], wb.sheets[0].shapes![0]!, "front")).toBe(false);
   });
 });

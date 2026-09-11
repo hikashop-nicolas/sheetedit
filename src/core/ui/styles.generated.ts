@@ -398,6 +398,9 @@ white-space:pre; overflow:auto; tab-size:4; -moz-tab-size:4;
 .sheetedit-floatbar { position:fixed; z-index:40; display:flex; align-items:center; gap:2px; padding:4px 6px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sheetedit-floatbar[hidden] { display:none; }
 .sheetedit-floatbar-sep { width:1px; align-self:stretch; margin:2px 3px; background:var(--sheetedit-border, #1c1f24); }
+.sheetedit-shapebar .sheetedit-shapebar-group { display:inline-flex; align-items:center; gap:2px; }
+.sheetedit-shapebar .sheetedit-shapebar-group[hidden] { display:none; }
+.sheetedit-shapebar .sheetedit-btn { min-width:26px; padding:3px 6px; }
 .sheetedit-error { background:var(--sheetedit-error-bg); color:var(--sheetedit-error-fg); padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
 .sheetedit-notice {
 position:absolute; left:50%; bottom:44px; transform:translateX(-50%); z-index:60; max-width:min(90%,420px);

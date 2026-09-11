@@ -5,4 +5,4 @@ export * from "./pivot-read";
 export * from "./pivot-write";
 export * from "./write";
 export * from "./styles";
-export { deleteXlsxShape } from "./shape-write";
+export { deleteXlsxShape, reorderXlsxShape } from "./shape-write";

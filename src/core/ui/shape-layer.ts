@@ -14,8 +14,7 @@ export interface ShapeLayerDeps {
   panes: () => { el: HTMLElement; header: boolean; rowHeader: boolean }[];
   getSheet: () => Sheet | undefined;
   geom: () => ChartGeom;
-  onEdit?: (sh: SheetShape) => void;      // after a move/resize
-  onActivate?: (sh: SheetShape) => void;  // double-click -> edit properties
+  onEdit?: (sh: SheetShape) => void;      // after a move/resize/restyle
   onDelete?: (sh: SheetShape) => void;    // the selected shape's delete handle
   editable?: () => boolean;
   /** Run the macro a shape names. Absent when the workbook carries no macros at all. */
@@ -24,6 +23,8 @@ export interface ShapeLayerDeps {
   macroTitle?: string;
   /** Tooltip for the rotation grip. */
   rotateTitle?: string;
+  /** The selection changed: the host shows or hides the shape bar. */
+  onSelect?: (sh: SheetShape | null) => void;
 }
 
 
@@ -221,7 +222,12 @@ function paintShape(box: HTMLElement, sh: SheetShape, w: number, h: number): voi
   svg.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
 }
 
-export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardown(): void } {
+export function setupShapeLayer(deps: ShapeLayerDeps): {
+  refresh(): void;
+  selected(): SheetShape | null;
+  selectedRect(): DOMRect | null;
+  teardown(): void;
+} {
   const hosts = setupOverlayHosts({
     wrap: deps.wrap,
     panes: deps.panes,
@@ -251,6 +257,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
   const select = (sh: SheetShape | null): void => {
     selected = sh;
     for (const [s, b] of boxes) b.classList.toggle("selected", s === sh);
+    deps.onSelect?.(sh);
   };
 
   /**
@@ -391,8 +398,8 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
           box.appendChild(grip);
           attachRotate(box, grip, sh);
         }
-        if (!sh.macro || !deps.runMacro) box.title = deps.onActivate ? "Double-click to edit" : "";
-        box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); select(sh); deps.onActivate?.(sh); });
+        // No double-click handler: the properties live on the bar that appears with the
+        // selection. A dialog nobody knows to open is a dialog nobody opens.
         if (deps.onDelete) {
           const del = document.createElement("button");
           del.className = "sheetedit-shape-del";
@@ -415,9 +422,21 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
 
 
   const onGridDown = (): void => { if (selected) select(null); };
+  hosts.onPanes("scroll", () => deps.onSelect?.(selected), { passive: true });
   hosts.onPanes("pointerdown", onGridDown as (e: Event) => void);
   return {
     refresh,
+    /** The shape the user has selected, if any. */
+    selected: () => selected,
+    /** Where that shape is on screen, taking its turn into account, or null. */
+    selectedRect: () => {
+      if (!selected) return null;
+      const box = boxes.get(selected);
+      if (!box) return null;
+      const r = box.getBoundingClientRect();
+      const b = drawnBounds(selected, box.offsetWidth, box.offsetHeight);
+      return new DOMRect(r.left + b.left, r.top + b.top, b.right - b.left, b.bottom - b.top);
+    },
     teardown() { hosts.teardown(); },
   };
 }

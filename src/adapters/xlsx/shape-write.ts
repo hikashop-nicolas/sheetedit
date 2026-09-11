@@ -158,6 +158,37 @@ export function deleteXlsxShape(wb: Workbook, sheet: Sheet, sh: SheetShape): voi
   }
 }
 
+/**
+ * Move a shape to the front or the back of its sheet's drawing.
+ *
+ * Stacking IS document order: the last anchor in the drawing part is the one on top. So this moves
+ * the anchor element itself and re-indexes every shape that pointed past it, the same bookkeeping
+ * a delete does. A shape inside a group has no anchor of its own and cannot be reordered on its
+ * own; the group is what stacks.
+ */
+export function reorderXlsxShape(wb: Workbook, sheet: Sheet, sh: SheetShape, to: "front" | "back"): boolean {
+  if (!sh.drawingPath || sh.anchorIndex == null || !wb.files[sh.drawingPath]) return false;
+  const doc = parseXmlOpt(wb.files[sh.drawingPath]);
+  if (!doc) return false;
+  const root = doc.documentElement;
+  const anchors = Array.from(root.children).filter((e) => /Anchor$/.test(e.localName));
+  const target = anchors[sh.anchorIndex];
+  if (!target || anchors.length < 2) return false;
+  if (to === "front") root.appendChild(target);
+  else root.insertBefore(target, anchors[0]!);
+  wb.files[sh.drawingPath] = serializeXml(doc);
+  // Re-read the order rather than patching indices by hand: one source of truth for where each
+  // anchor ended up, and the only place that has to be right.
+  const moved = Array.from(root.children).filter((e) => /Anchor$/.test(e.localName));
+  for (const other of sheet.shapes ?? []) {
+    if (other.drawingPath !== sh.drawingPath || other.anchorIndex == null) continue;
+    const was = anchors[other.anchorIndex];
+    const now = was ? moved.indexOf(was) : -1;
+    if (now >= 0) other.anchorIndex = now;
+  }
+  return true;
+}
+
 /** Persist all dirty shapes to the workbook's drawing parts. */
 export function writeXlsxShapes(wb: Workbook): void {
   let nextId = 1000;

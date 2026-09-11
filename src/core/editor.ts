@@ -38,6 +38,7 @@ import { resolveNumbers } from "./chart-data";
 import { setupChartLayer } from "./ui/chart-overlay";
 import { setupImageLayer } from "./ui/image-layer";
 import { setupShapeLayer, shapeSvg } from "./ui/shape-layer";
+import { setupShapeBar } from "./ui/shape-floatbar";
 import { POLY_GEOMS, SHAPE_GALLERY } from "./shape-geom";
 import { setupSlicerLayer } from "./ui/slicer-layer";
 import { setupTimelineLayer } from "./ui/timeline-layer";
@@ -55,7 +56,7 @@ import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sh
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
 import { unzipAsync } from "./zip";
-import { deleteXlsxShape, flagXlsxPivotRefresh, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
+import { deleteXlsxShape, flagXlsxPivotRefresh, reorderXlsxShape, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -3318,13 +3319,40 @@ export function createSheetEditor(
     getSheet: () => wb.sheets[active],
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
-    onEdit: () => { mark(); shapeLayer.refresh(); },
-    onActivate: (sh) => openShapeDialog(sh),
+    onEdit: () => { mark(); shapeLayer.refresh(); shapeBar?.refresh(); },
+    onSelect: () => shapeBar?.refresh(),
     onDelete: (sh) => deleteShape(sh),
     runMacro: wb.vba ? (name) => runControlMacro(name) : undefined,
     rotateTitle: t("shapeRotate"),
     macroTitle: t("ctrlMacroRun"),
   });
+  // The bar that edits the selected shape. It replaces the old double-click dialog, so every
+  // property has one home rather than two that drift apart.
+  const shapeBar = (wb.kind === "xlsx" || wb.kind === "ods")
+    ? setupShapeBar({
+        wrap,
+        bounds: () => gridScroll.getBoundingClientRect(),
+        shapeRect: () => shapeLayer.selectedRect(),
+        shape: () => shapeLayer.selected(),
+        onChange: () => { mark(); shapeLayer.refresh(); shapeBar?.refresh(); },
+        // ODF stacking is document order too, but its shapes are patched in place rather than
+        // re-ordered, so the control is offered only where it is actually persisted.
+        reorder: wb.kind === "xlsx"
+          ? (to) => {
+              const sheet = wb.sheets[active];
+              const sh = shapeLayer.selected();
+              if (!sheet || !sh || !reorderXlsxShape(wb, sheet, sh, to)) return;
+              const list = sheet.shapes ?? [];
+              const at = list.indexOf(sh);
+              if (at >= 0) { list.splice(at, 1); if (to === "front") list.push(sh); else list.unshift(sh); }
+              mark();
+              shapeLayer.refresh();
+              shapeBar?.refresh();
+            }
+          : undefined,
+      })
+    : null;
+
   // Remove a shape: drop it from the model, and (for a saved shape) stage the drawing edit.
   const deleteShape = (sh: import("./model").SheetShape): void => {
     const sheet = wb.sheets[active]!;
@@ -4976,7 +5004,7 @@ export function createSheetEditor(
     mark(); renderGrid();
   };
 
-  const { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, insertShape, openNoteDialog } = setupDialogs({
+  const { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, insertShape, openNoteDialog } = setupDialogs({
     wb, wrap,
     active: () => active,
     getSelRect,
