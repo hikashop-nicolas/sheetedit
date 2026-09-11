@@ -752,6 +752,9 @@ export interface SheetShape {
   /** The shape's PAINT changed (the property dialog), as opposed to only its position. A move must
       not rewrite the fill, or a shape that takes its look from the theme loses it on save. */
   styleDirty?: boolean;
+  /** Only the turn or the mirror changed. Kept apart from styleDirty for the same reason it
+      exists: rewriting the paint to record a rotation would flatten a themed gradient. */
+  xfrmDirty?: boolean;
   /** xlsx: the drawing part path + the anchor's index, to rewrite the exact anchor on save. */
   drawingPath?: string;
   anchorIndex?: number;

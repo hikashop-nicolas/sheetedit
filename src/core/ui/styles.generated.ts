@@ -560,16 +560,24 @@ color:var(--sheetedit-accent-fg,#fff); font:600 11px/1 system-ui,sans-serif; cur
 .sheetedit-shapebox.editable { pointer-events:auto; cursor:move; }
 .sheetedit-shapebox.macro { pointer-events:auto; cursor:pointer; }
 .sheetedit-shapebox.macro.editable { cursor:move; }
-.sheetedit-shapebox.selected { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
+.sheetedit-shapebox.selected > svg { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
 .sheetedit-shapebox.editable .sheetedit-shapetext { pointer-events:auto; }
 .sheetedit-shapebox.selected .sheetedit-shapetext { cursor:text; user-select:text; }
-.sheetedit-shape-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
+.sheetedit-shapebox { --shape-top:0px; --shape-right:0px; --shape-bottom:0px; --shape-left:0px; }
+.sheetedit-shape-resize { position:absolute; right:calc(var(--shape-right) - 5px); bottom:calc(var(--shape-bottom) - 5px); width:12px; height:12px; border-radius:3px;
 background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border); cursor:nwse-resize; pointer-events:auto; display:none; }
 .sheetedit-shapebox.selected .sheetedit-shape-resize { display:block; }
-.sheetedit-shape-del { position:absolute; right:-9px; top:-9px; width:16px; height:16px; border-radius:50%; padding:0;
+.sheetedit-shape-del { position:absolute; right:calc(var(--shape-right) - 9px); top:calc(var(--shape-top) - 9px); width:16px; height:16px; border-radius:50%; padding:0;
 background:var(--sheetedit-danger-strong); color:var(--sheetedit-accent-fg); border:1.5px solid var(--sheetedit-handle-border); cursor:pointer; pointer-events:auto; display:none;
 font:700 11px/13px sans-serif; text-align:center; }
 .sheetedit-shapebox.selected .sheetedit-shape-del { display:block; }
+.sheetedit-shape-rotate { position:absolute; left:50%; top:calc(var(--shape-top) - 26px); width:14px; height:14px; margin-left:-7px;
+border-radius:50%; background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border);
+cursor:grab; pointer-events:auto; display:none; touch-action:none; }
+.sheetedit-shape-rotate::after { content:""; position:absolute; left:50%; top:100%; width:1.5px; height:12px;
+margin-left:-0.75px; background:var(--sheetedit-accent,#4c8bf5); }
+.sheetedit-shape-rotate:active { cursor:grabbing; }
+.sheetedit-shapebox.selected .sheetedit-shape-rotate { display:block; }
 .sheetedit-outline { position:absolute; overflow:hidden; z-index:12;
 background:var(--sheetedit-chrome,#2b2f36); border-right:1px solid var(--sheetedit-border,#1c1f24); }
 .sheetedit-outline-inner { position:absolute; left:0; right:0; top:0; }

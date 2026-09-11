@@ -101,6 +101,20 @@ function patchShape(wb: Workbook, sh: SheetShape): void {
   // whatever the file states (a gradient, or a shape that takes its look from the theme's format
   // scheme through <xdr:style>) into the one colour the model carries, so dragging a shape would
   // silently repaint it. Only an actual restyle touches spPr.
+  // Only turned or mirrored: touch <a:xfrm> and nothing else, so the paint stays the file's.
+  if (spPr && sh.xfrmDirty && !sh.styleDirty && !sh.created) {
+    let xfrm = kid(spPr, "xfrm");
+    if (!xfrm) {
+      xfrm = doc.createElementNS(A, "a:xfrm");
+      spPr.insertBefore(xfrm, spPr.firstChild);
+    }
+    for (const [attr, on] of [["flipH", sh.flipH], ["flipV", sh.flipV]] as const) {
+      if (on) xfrm.setAttribute(attr, "1");
+      else xfrm.removeAttribute(attr);
+    }
+    if (sh.rotation) xfrm.setAttribute("rot", String(Math.round(sh.rotation * 60000)));
+    else xfrm.removeAttribute("rot");
+  }
   if (spPr && (sh.styleDirty || sh.created)) {
     // Replace the fill child (after prstGeom) and the ln, then rebuild txBody, from a parsed fragment.
     const frag = parseXmlOpt(new TextEncoder().encode(`<r xmlns:a="${A}" xmlns:xdr="${XDR}"><a:spPr>${xfrmXml(sh)}${spPrXml(sh)}</a:spPr>${txBodyXml(sh)}</r>`));
@@ -149,10 +163,11 @@ export function writeXlsxShapes(wb: Workbook): void {
   let nextId = 1000;
   for (const sheet of wb.sheets as Sheet[]) {
     for (const sh of sheet.shapes ?? []) {
-      if (!sh.dirty && !sh.created) continue;
+      if (!sh.dirty && !sh.created && !sh.xfrmDirty) continue;
       if (sh.created || sh.drawingPath == null) createShape(wb, sheet, sh, nextId++);
       else patchShape(wb, sh);
       sh.dirty = false;
+      sh.xfrmDirty = false;
       sh.styleDirty = false;
     }
   }

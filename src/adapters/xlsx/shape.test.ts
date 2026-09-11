@@ -425,7 +425,9 @@ describe("a shape authored in the editor", () => {
     // The fixture already held one shape; the authored ones follow it, in order.
     expect(re.length).toBe(offered.length + 1);
     expect(re.slice(1).map((sh) => sh.geom)).toEqual(offered);
-  });
+    // Sixty-odd shapes through a full read/write/read: slower than the default budget allows when
+    // the whole suite is running at once, and worth the wall clock to cover every one of them.
+  }, 20_000);
 
   it("offers every geometry it can draw, so none is unreachable", () => {
     const offered = new Set(SHAPE_GALLERY.flatMap((c) => c.geoms));
@@ -524,5 +526,22 @@ describe("turning a shape in the editor", () => {
     expect(draw).toContain('rot="5400000"');
     expect(draw, "its own offset and size survive").toMatch(/<a:off x="123" y="456"\/>/);
     expect(draw).toMatch(/<a:ext cx="900" cy="500"\/>/);
+  });
+
+  // Turning a shape with the grip must not repaint it. A shape that takes its look from the
+  // theme (a gradient, a style reference) would be flattened to a solid colour by a rewrite of
+  // its fill, which is the same reason a plain move does not rewrite the paint either.
+  it("records a turn without touching the paint", () => {
+    const themed = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst></a:gradFill></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+    const wb = readWorkbook(base(themed));
+    const sh = wb.sheets[0].shapes![0]!;
+    expect(sh.fillGradient?.stops.length, "the file's gradient").toBe(2);
+    sh.rotation = 30;
+    sh.xfrmDirty = true; // what the rotation grip sets: the turn changed, nothing else did
+    writeWorkbook(wb);
+    const draw = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);
+    expect(draw).toContain('rot="1800000"');
+    expect(draw, "the gradient is still there").toContain("<a:gradFill>");
+    expect(draw).not.toContain("<a:solidFill>");
   });
 });

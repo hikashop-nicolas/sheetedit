@@ -22,6 +22,8 @@ export interface ShapeLayerDeps {
   runMacro?: (name: string) => void;
   /** Tooltip prefix for a shape that has a macro assigned. */
   macroTitle?: string;
+  /** Tooltip for the rotation grip. */
+  rotateTitle?: string;
 }
 
 
@@ -175,6 +177,21 @@ export function shapeSvg(sh: SheetShape, w: number, h: number): string {
 }
 
 /**
+ * Where a rotated shape actually sits inside its anchor box: the bounds of its own drawing once
+ * turned, centred on the box. The handles hang off these, so they stay ON the shape instead of
+ * at the corners of a rectangle it no longer fills.
+ */
+function drawnBounds(sh: SheetShape, w: number, h: number): { left: number; top: number; right: number; bottom: number } {
+  const rot = sh.rotation ?? 0;
+  const quarter = Math.abs((((rot % 180) + 180) % 180) - 90) < 1;
+  const [dw, dh] = sh.extent ? [sh.extent.w, sh.extent.h] : quarter ? [h, w] : [w, h];
+  const rad = (rot * Math.PI) / 180;
+  const ca = Math.abs(Math.cos(rad)), sa = Math.abs(Math.sin(rad));
+  const bw = dw * ca + dh * sa, bh = dw * sa + dh * ca;
+  return { left: (w - bw) / 2, top: (h - bh) / 2, right: (w + bw) / 2, bottom: (h + bh) / 2 };
+}
+
+/**
  * Draw a shape into its box at the given size.
  *
  * A rotated shape's anchor is its bounding box AFTER the turn, so the shape itself is drawn in a
@@ -234,6 +251,43 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
   const select = (sh: SheetShape | null): void => {
     selected = sh;
     for (const [s, b] of boxes) b.classList.toggle("selected", s === sh);
+  };
+
+  /**
+   * The rotation handle: the round grip above a selected shape, as Excel and LibreOffice both put
+   * it. Dragging it turns the shape about its own centre, live, and Shift snaps to 15 degrees. A
+   * number in a dialog can say 43 degrees but it cannot show you 43 degrees.
+   */
+  const attachRotate = (box: HTMLElement, grip: HTMLElement, sh: SheetShape): void => {
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      select(sh);
+      const r = box.getBoundingClientRect();
+      const [cx, cy] = [r.left + r.width / 2, r.top + r.height / 2];
+      const was = sh.rotation ?? 0;
+      const from = Math.atan2(e.clientY - cy, e.clientX - cx);
+      let now = was;
+      const onMove = (ev: PointerEvent): void => {
+        const turned = Math.atan2(ev.clientY - cy, ev.clientX - cx) - from;
+        const deg = was + (turned * 180) / Math.PI;
+        now = ev.shiftKey ? Math.round(deg / 15) * 15 : Math.round(deg);
+        now = ((now % 360) + 360) % 360;
+        sh.rotation = now || undefined;
+        paintShape(box, sh, box.offsetWidth, box.offsetHeight);
+      };
+      const onUp = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (now === was) return;
+        // Only the turn changed, so the paint is left exactly as the file wrote it.
+        sh.xfrmDirty = true;
+        deps.onEdit?.(sh);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
   };
 
   const attachDrag = (box: HTMLElement, handle: HTMLElement, sh: SheetShape): void => {
@@ -312,6 +366,14 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
       box.style.width = `${w}px`;
       box.style.height = `${h}px`;
       paintShape(box, sh, w, h);
+      // A turned shape is not where its anchor box is. Tell the handles where it ended up.
+      if (sh.rotation) {
+        const b = drawnBounds(sh, w, h);
+        box.style.setProperty("--shape-left", `${Math.round(b.left)}px`);
+        box.style.setProperty("--shape-top", `${Math.round(b.top)}px`);
+        box.style.setProperty("--shape-right", `${Math.round(w - b.right)}px`);
+        box.style.setProperty("--shape-bottom", `${Math.round(h - b.bottom)}px`);
+      }
       if (sh.macro && deps.runMacro) {
         box.classList.add("macro");
         box.title = `${deps.macroTitle ?? ""} ${sh.macro}`.trim();
@@ -321,6 +383,14 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
         handle.className = "sheetedit-shape-resize";
         box.appendChild(handle);
         attachDrag(box, handle, sh);
+        // Lines have no inside to turn; their two ends already say which way they run.
+        if (sh.geom !== "line") {
+          const grip = document.createElement("div");
+          grip.className = "sheetedit-shape-rotate";
+          grip.title = deps.rotateTitle ?? "";
+          box.appendChild(grip);
+          attachRotate(box, grip, sh);
+        }
         if (!sh.macro || !deps.runMacro) box.title = deps.onActivate ? "Double-click to edit" : "";
         box.addEventListener("dblclick", (e) => { e.preventDefault(); e.stopPropagation(); select(sh); deps.onActivate?.(sh); });
         if (deps.onDelete) {

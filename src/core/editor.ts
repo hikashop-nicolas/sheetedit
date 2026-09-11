@@ -3322,6 +3322,7 @@ export function createSheetEditor(
     onActivate: (sh) => openShapeDialog(sh),
     onDelete: (sh) => deleteShape(sh),
     runMacro: wb.vba ? (name) => runControlMacro(name) : undefined,
+    rotateTitle: t("shapeRotate"),
     macroTitle: t("ctrlMacroRun"),
   });
   // Remove a shape: drop it from the model, and (for a saved shape) stage the drawing edit.

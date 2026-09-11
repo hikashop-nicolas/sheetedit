@@ -696,18 +696,32 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 /* A shape with a macro is a button: it takes clicks even where the sheet is not editable. */
 .sheetedit-shapebox.macro { pointer-events:auto; cursor:pointer; }
 .sheetedit-shapebox.macro.editable { cursor:move; }
-.sheetedit-shapebox.selected { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
+/* The outline goes on the shape's own drawing, not on its anchor box, so it turns with the shape
+   instead of staying axis-aligned around a shape that is no longer axis-aligned. The handles stay
+   on the box: dragging its corner resizes the anchor, which is what the anchor means. */
+.sheetedit-shapebox.selected > svg { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }
 /* A shape's text is text: selectable and copyable. It takes pointer events (the svg around it
    does not) so a drag across it selects rather than sliding the shape, once the shape is picked. */
 .sheetedit-shapebox.editable .sheetedit-shapetext { pointer-events:auto; }
 .sheetedit-shapebox.selected .sheetedit-shapetext { cursor:text; user-select:text; }
-.sheetedit-shape-resize { position:absolute; right:-5px; bottom:-5px; width:12px; height:12px; border-radius:3px;
+/* The handles hang off the shape's own drawn bounds, which for a turned shape is not the anchor
+   box. --shape-* are set per shape when it carries a rotation, and default to the box's edges. */
+.sheetedit-shapebox { --shape-top:0px; --shape-right:0px; --shape-bottom:0px; --shape-left:0px; }
+.sheetedit-shape-resize { position:absolute; right:calc(var(--shape-right) - 5px); bottom:calc(var(--shape-bottom) - 5px); width:12px; height:12px; border-radius:3px;
   background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border); cursor:nwse-resize; pointer-events:auto; display:none; }
 .sheetedit-shapebox.selected .sheetedit-shape-resize { display:block; }
-.sheetedit-shape-del { position:absolute; right:-9px; top:-9px; width:16px; height:16px; border-radius:50%; padding:0;
+.sheetedit-shape-del { position:absolute; right:calc(var(--shape-right) - 9px); top:calc(var(--shape-top) - 9px); width:16px; height:16px; border-radius:50%; padding:0;
   background:var(--sheetedit-danger-strong); color:var(--sheetedit-accent-fg); border:1.5px solid var(--sheetedit-handle-border); cursor:pointer; pointer-events:auto; display:none;
   font:700 11px/13px sans-serif; text-align:center; }
 .sheetedit-shapebox.selected .sheetedit-shape-del { display:block; }
+/* The rotation grip, above the shape, where Excel and LibreOffice both put it. */
+.sheetedit-shape-rotate { position:absolute; left:50%; top:calc(var(--shape-top) - 26px); width:14px; height:14px; margin-left:-7px;
+  border-radius:50%; background:var(--sheetedit-accent,#4c8bf5); border:1.5px solid var(--sheetedit-handle-border);
+  cursor:grab; pointer-events:auto; display:none; touch-action:none; }
+.sheetedit-shape-rotate::after { content:""; position:absolute; left:50%; top:100%; width:1.5px; height:12px;
+  margin-left:-0.75px; background:var(--sheetedit-accent,#4c8bf5); }
+.sheetedit-shape-rotate:active { cursor:grabbing; }
+.sheetedit-shapebox.selected .sheetedit-shape-rotate { display:block; }
 
 /* --- outline gutter ---------------------------------------------------- */
 /* Above the sticky column header (z 9), whose corner cell would otherwise cover the level
