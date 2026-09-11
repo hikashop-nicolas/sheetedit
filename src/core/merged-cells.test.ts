@@ -83,6 +83,28 @@ describe("a merge containing a hidden column", () => {
     expect(after).toBeTruthy();
   });
 
+  // A merge whose top-left cell is in a hidden column still shows over the columns that are not
+  // hidden. It used to vanish outright: the only cell that renders it was the hidden one, so a row
+  // of year headers disappeared and left just the labels between them.
+  it("still draws when its top-left cell is the hidden one", async () => {
+    const cols = `<cols><col min="1" max="2" width="9" hidden="1" customWidth="1"/></cols>`;
+    const body = `<sheetData><row r="1"><c r="A1" t="str"><v>header</v></c><c r="B1"/><c r="C1"/></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells>`;
+    const host = await mount(book(body, cols));
+    // Drawn at C (the first visible column) but still keyed to A1, whose value it shows.
+    const td = host.querySelector('td[data-rc="1:1"]') as HTMLInputElement | null;
+    expect(td, "the merge is rendered").toBeTruthy();
+    expect(td!.querySelector("input")!.value).toBe("header");
+    expect((td as unknown as HTMLTableCellElement).colSpan).toBe(1); // only C is visible
+  });
+
+  it("disappears only when every one of its columns is hidden", async () => {
+    const cols = `<cols><col min="1" max="3" width="9" hidden="1" customWidth="1"/></cols>`;
+    const body = `<sheetData><row r="1"><c r="A1" t="str"><v>header</v></c><c r="B1"/><c r="C1"/><c r="D1" t="str"><v>after</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells>`;
+    const host = await mount(book(body, cols));
+    expect(host.querySelector('td[data-rc="1:1"]')).toBeNull();
+    expect(host.querySelector('td[data-rc="1:4"]')).toBeTruthy();
+  });
+
   it("spans every column when none is hidden", async () => {
     const body = `<sheetData><row r="1"><c r="A1" t="str"><v>wide</v></c><c r="B1"/><c r="C1"/></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells>`;
     const host = await mount(book(body));

@@ -453,6 +453,9 @@ export interface Workbook {
   /** Workbook-level protection (locked sheet set / window layout). */
   /** The workbook's Normal-style font family: the one cells fall back to. */
   defaultFontName?: string;
+  /** The sheet the file was last left on (xlsx <workbookView activeTab>, ODF ActiveTable). Opening
+      on sheet one instead lands the reader somewhere the author did not leave them. */
+  activeSheet?: number;
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */
   protectionDirty?: boolean;

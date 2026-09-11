@@ -385,6 +385,10 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   const styles = readXlsxStyles(wb.stylesDoc, theme);
   const dxfs = parseDxfs(wb.stylesDoc, theme);
   const mdw = maxDigitWidth(styles.normalFontSize);
+  // <workbookView activeTab="1">: the sheet the author left the file on.
+  const view = wbDoc.getElementsByTagName("workbookView")[0];
+  const activeTab = Number(view?.getAttribute("activeTab") ?? NaN);
+  if (Number.isFinite(activeTab) && activeTab > 0) wb.activeSheet = activeTab;
   // The Normal style's font is what every cell that names none is set in. Rendering those in the
   // UI's own face instead sizes the text against columns the file measured for a different font.
   if (styles.normalFontName) wb.defaultFontName = styles.normalFontName;

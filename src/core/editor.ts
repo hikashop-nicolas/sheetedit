@@ -558,7 +558,13 @@ export function createSheetEditor(
   wrap.appendChild(notice); // absolute, over the grid: never shifts the layout
   container.appendChild(wrap);
 
-  let active = 0;
+  // The sheet the file was left on, when it names one and that sheet is visible: opening on sheet
+  // one instead drops the reader somewhere the author did not leave them.
+  let active = (() => {
+    const want = wb.activeSheet ?? 0;
+    if (want > 0 && want < wb.sheets.length && !wb.sheets[want]?.visibility) return want;
+    return Math.max(0, wb.sheets.findIndex((sh) => !sh.visibility));
+  })();
   let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
   let sparkAt = new Map<string, NonNullable<Sheet["sparklines"]>[number]>(); // host cell -> sparkline, per render
   // Print decoration for the active sheet, per render: the lines that start a page and the print
@@ -2962,6 +2968,8 @@ export function createSheetEditor(
   let spanAtMap = new Map<string, { rs: number; cs: number }>();
   /** A merge's rectangle, by its top-left cell: what the border composition needs. */
   let mergeAtMap = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
+  /** Where each merge is drawn (its first visible cell) -> the cell whose value it shows. */
+  let mergeStartAt = new Map<string, { r: number; c: number }>();
 
   // Wrap: computed extra height (px) so a wrapped cell's text fits, measured against the
   // column width. Keyed by row for the active sheet; recomputed on render / resize / edit.
@@ -4504,15 +4512,19 @@ export function createSheetEditor(
     if (withRowNums) tr.appendChild(rn);
     // Frozen columns: always rendered (independent of the horizontal window), sticky-left.
     for (let c = 1; c <= fz.fc; c++) {
-      if (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c))) continue;
-      const td = buildCell(sheet, r, c);
+      const start = mergeStartAt.get(key(r, c));
+      if (!start && (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c)))) continue;
+      const td = buildCell(sheet, start?.r ?? r, start?.c ?? c);
       freezeCell(td, { left: rnW() + xOfCol(c), top: frozenRow ? rowTop : undefined, z: frozenRow ? 6 : 3 });
       tr.appendChild(td);
     }
     tr.appendChild(document.createElement("td")); // left spacer column
     for (let c = c1; c <= c2; c++) {
-      if (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c))) continue; // hidden, or part of a merge
-      const td = buildCell(sheet, r, c);
+      // A merge is drawn once, at the first cell of it that is on screen; every other cell it
+      // covers is skipped, including its own top-left when that sits in a hidden column.
+      const start = mergeStartAt.get(key(r, c));
+      if (!start && (sheet.hiddenCols?.has(c) || coveredSet.has(key(r, c)))) continue;
+      const td = buildCell(sheet, start?.r ?? r, start?.c ?? c);
       if (frozenRow) freezeCell(td, { top: rowTop, z: 4 });
       tr.appendChild(td);
     }
@@ -5090,16 +5102,26 @@ export function createSheetEditor(
     coveredSet = new Set<string>();
     spanAtMap = new Map<string, { rs: number; cs: number }>();
     mergeAtMap = new Map<string, { r1: number; c1: number; r2: number; c2: number }>();
+    mergeStartAt = new Map<string, { r: number; c: number }>();
     for (const m of sheet.merges ?? []) {
       // Span the lines that are DRAWN. A hidden column inside a merge is not rendered, so counting
       // it pushes the merge one column too wide and shunts the rest of the row along with it.
       let rs = 0, cs = 0;
       for (let r = m.r1; r <= m.r2; r++) if (rowShown(sheet, r)) rs++;
       for (let c = m.c1; c <= m.c2; c++) if (!sheet.hiddenCols?.has(c)) cs++;
+      // Where the merge is DRAWN: its first visible cell, which is not always its top-left one.
+      // A merge whose top-left is in a hidden column still shows over the columns that are not
+      // hidden - and used to vanish entirely, because the only cell that renders it was skipped.
+      let vr = -1, vc = -1;
+      for (let r = m.r1; r <= m.r2 && vr < 0; r++) if (rowShown(sheet, r)) vr = r;
+      for (let c = m.c1; c <= m.c2 && vc < 0; c++) if (!sheet.hiddenCols?.has(c)) vc = c;
+      if (vr < 0 || vc < 0) continue; // every line of it is hidden: nothing to draw
+      // The value and the style stay the top-left cell's, so the td is still keyed to it.
       spanAtMap.set(key(m.r1, m.c1), { rs: Math.max(1, rs), cs: Math.max(1, cs) });
       mergeAtMap.set(key(m.r1, m.c1), m);
+      mergeStartAt.set(key(vr, vc), { r: m.r1, c: m.c1 });
       for (let r = m.r1; r <= m.r2; r++)
-        for (let c = m.c1; c <= m.c2; c++) if (r !== m.r1 || c !== m.c1) coveredSet.add(key(r, c));
+        for (let c = m.c1; c <= m.c2; c++) coveredSet.add(key(r, c));
     }
 
     const table = document.createElement("table");
