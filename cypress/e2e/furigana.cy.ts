@@ -27,12 +27,16 @@ describe("furigana (phonetic ruby)", () => {
     cy.get('input[aria-label="B1"]').closest("td").should("not.have.class", "has-ruby");
   });
 
-  it("shows the plain base text for editing when the cell is focused", () => {
+  it("keeps the ruby while the cell is only selected, and drops it for the edit", () => {
     open("cypress/fixtures/furigana.xlsx");
     cy.get('input[aria-label="A1"]').focus();
-    // On focus the ruby overlay is hidden (the input is editable with the base text).
-    cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("not.be.visible");
+    // Selecting a cell is not editing it: the reading stays up, as it does in Excel.
+    cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("be.visible");
     cy.get('input[aria-label="A1"]').should("have.value", "東京");
+    // Typing hands the cell to the input, which holds the base text alone.
+    cy.get('input[aria-label="A1"]').type("駅");
+    cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("not.be.visible");
+    cy.get('input[aria-label="A1"]').should("have.value", "東京駅");
   });
 
   it("adds and removes furigana on a cell via the toolbar", () => {

@@ -170,35 +170,35 @@ border-radius:6px; padding:4px 4px; cursor:pointer; max-width:64px; height:28px;
 .sheetedit-table th.colhead:hover, .sheetedit-table th.rownum:hover, .sheetedit-table th.corner:hover { background:var(--sheetedit-head-hover); }
 .sheetedit-table td.sheetedit-sel input { background:rgba(110,123,255,0.18); }
 .sheetedit-table td.has-ruby { position:relative; }
-.sheetedit-table td.has-ruby:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-ruby:not(.editing) input { color:transparent !important; }
 .sheetedit-table td.has-ruby .sheetedit-ruby {
 position:absolute; inset:0; display:flex; align-items:center; padding:0 6px;
 pointer-events:none; overflow:hidden; white-space:nowrap; line-height:1.05;
 }
 .sheetedit-table td.has-ruby .sheetedit-ruby rt { font-size:0.6em; line-height:1; user-select:none; }
-.sheetedit-table td.has-ruby:focus-within .sheetedit-ruby { display:none; }
+.sheetedit-table td.has-ruby.editing .sheetedit-ruby { display:none; }
 .sheetedit-table td.has-wrap { position:relative; }
-.sheetedit-table td.has-wrap:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-wrap:not(.editing) input { color:transparent !important; }
 .sheetedit-table td.has-wrap .sheetedit-cellwrap {
 position:absolute; inset:0; padding:3px 8px; white-space:pre-wrap; word-break:break-word;
 overflow:hidden; pointer-events:none; line-height:1.3; color:var(--sheetedit-cell-fg);
 }
-.sheetedit-table td.has-wrap:focus-within .sheetedit-cellwrap { display:none; }
+.sheetedit-table td.has-wrap.editing .sheetedit-cellwrap { display:none; }
 .sheetedit-table td.has-spill { position:relative; }
-.sheetedit-table td.has-spill:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-spill:not(.editing) input { color:transparent !important; }
 .sheetedit-table td.has-spill .sheetedit-cellspill {
 position:absolute; top:0; bottom:0; z-index:1; padding:0 8px; display:flex; align-items:center;
 white-space:pre; overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
 }
-.sheetedit-table td.has-spill:focus-within .sheetedit-cellspill { display:none; }
+.sheetedit-table td.has-spill.editing .sheetedit-cellspill { display:none; }
 .sheetedit-table td.has-rich { position:relative; }
-.sheetedit-table td.has-rich:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-rich:not(.editing) input { color:transparent !important; }
 .sheetedit-table td.has-rich .sheetedit-cellrich {
 position:absolute; inset:0; z-index:1; padding:1px 8px; display:flex; align-items:center; white-space:pre;
 overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
 }
 .sheetedit-table td.has-rot { position:relative; }
-.sheetedit-table td.has-rot:not(:focus-within) input { color:transparent !important; }
+.sheetedit-table td.has-rot:not(.editing) input { color:transparent !important; }
 .sheetedit-table td.has-rot .sheetedit-cellrot {
 position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center;
 overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
@@ -207,11 +207,11 @@ overflow:hidden; pointer-events:none; color:var(--sheetedit-cell-fg);
 .sheetedit-table td.has-rot .sheetedit-cellrot.stacked > span {
 writing-mode:vertical-rl; text-orientation:upright; white-space:pre-wrap;
 }
-.sheetedit-table td.has-rot:focus-within .sheetedit-cellrot { display:none; }
+.sheetedit-table td.has-rot.editing .sheetedit-cellrot { display:none; }
 .sheetedit-table td.has-rich .sheetedit-cellrich.wrapped {
 display:block; padding:3px 8px; white-space:pre-wrap; word-break:break-word; line-height:1.3;
 }
-.sheetedit-table td.has-rich:focus-within .sheetedit-cellrich { display:none; }
+.sheetedit-table td.has-rich.editing .sheetedit-cellrich { display:none; }
 .sheetedit-table td.has-link { position:relative; }
 .sheetedit-table td.has-link input:not(:focus) { color:var(--sheetedit-link); text-decoration:underline; }
 .sheetedit-linkbtn { position:absolute; top:1px; right:1px; z-index:3; display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--sheetedit-link); cursor:pointer; opacity:.8; }

@@ -498,6 +498,23 @@ export function createSheetEditor(
 
   // --- formula bar + range picking state -------------------------------------
   let activeCell: { r: number; c: number } | null = null;
+  // Selecting a cell is not editing it. The display overlays (rotated, wrapped, ruby, spilling,
+  // multi-format text) used to give way to the plain <input> the moment it took focus, so a single
+  // click flattened the cell to one unstyled line. They now stand until the text is actually being
+  // changed: typed into, double-clicked, F2, or clicked a second time to place a caret.
+  let editCell: { r: number; c: number } | null = null;
+  const isEditing = (r: number, c: number): boolean => editCell?.r === r && editCell.c === c;
+  const beginEditing = (r: number, c: number): void => {
+    if (isEditing(r, c)) return;
+    endEditing();
+    editCell = { r, c };
+    tdAt(key(r, c))?.classList.add("editing");
+  };
+  const endEditing = (): void => {
+    if (!editCell) return;
+    tdAt(key(editCell.r, editCell.c))?.classList.remove("editing");
+    editCell = null;
+  };
   let barGrab = false; // pointerdown on the bar: skip the cell's blur-commit
   let skipFocusValue = false; // one focus event keeps the input's pending text
   let pickCb: ((ref: string) => void) | null = null;
@@ -526,11 +543,15 @@ export function createSheetEditor(
       if (!activeCell) return;
       const ip = inputAt(key(activeCell.r, activeCell.c));
       if (ip) ip.value = v;
+      // Typing in the bar is editing the cell: mirroring the text into a hidden input would leave
+      // the cell showing its old, formatted self while the bar says otherwise.
+      beginEditing(activeCell.r, activeCell.c);
     },
     onEnter: (v) => {
       if (!activeCell) return;
       commitValue(activeCell.r, activeCell.c, v);
       fxbar.setValue(rawOf(activeCell.r, activeCell.c));
+      endEditing();
     },
     onEscape: () => {
       if (pickCb) {
@@ -542,6 +563,7 @@ export function createSheetEditor(
       fxbar.setValue(rawOf(activeCell.r, activeCell.c));
       const ip = inputAt(key(activeCell.r, activeCell.c));
       if (ip) ip.value = displayValue(wb.sheets[active]!, activeCell.r, activeCell.c);
+      endEditing();
     },
     onFn: (fn) => applyFn(fn),
     onAssist: (anchor) => formulaAssist?.open(anchor),
@@ -967,6 +989,10 @@ export function createSheetEditor(
       cell.edited = true;
     });
     mark();
+    // Leave edit mode so the cell paints its runs again straight away: styling part of the text is
+    // the end of that edit, and waiting for the caret to leave the cell to see the result is no
+    // way to pick a colour. The text selection stays, so the next change still targets the range.
+    endEditing();
     renderGrid();
     const inp2 = inputAt(key(rt.r, rt.c)); // re-render replaced the input; restore the edit selection
     if (inp2) { inp2.focus(); try { inp2.setSelectionRange(rt.start, rt.end); } catch { /* ignore */ } }
@@ -4465,13 +4491,24 @@ export function createSheetEditor(
         td.addEventListener("mouseleave", hideComment);
       }
       const ki = key(r, c);
+      if (isEditing(r, c)) td.classList.add("editing"); // a re-render must not drop the caret's cell out of edit
       // Shift-click extends the selection from the anchor (no caret/edit).
+      let wasActive = false;
       input.addEventListener("mousedown", (e) => {
         if (e.shiftKey) {
           e.preventDefault();
           selectCell(r, c, true);
+          wasActive = false; // extending a range is not a caret placement, whatever came before it
+          return;
         }
+        // A click on the cell that already holds the caret places a caret in its text; the click
+        // that brought the caret here only selects, as it does in Excel.
+        wasActive = activeCell?.r === r && activeCell.c === c;
       });
+      input.addEventListener("click", () => {
+        if (wasActive && !justDragged) beginEditing(r, c);
+      });
+      input.addEventListener("dblclick", () => beginEditing(r, c));
       input.addEventListener("focus", () => {
         if (justDragged) {
           input.blur(); // a range was just drag-selected; do not enter edit on the trailing tap
@@ -4485,13 +4522,17 @@ export function createSheetEditor(
         else input.value = rawOf(r, c);
         fxbar.setValue(input.value);
       });
-      input.addEventListener("input", () => fxbar.setValue(input.value));
+      input.addEventListener("input", () => {
+        fxbar.setValue(input.value);
+        beginEditing(r, c); // the text is changing: the input, not the overlay, is what the cell shows
+      });
       let cancelEdit = false;
       const commit = () => {
         // A re-render may have replaced this input while it was focused; a late blur
         // on the stale element must not commit its outdated value.
         if (cur.inputs.get(ki) !== input) return;
         if (barGrab) return; // focus is moving into the formula bar: the edit continues there
+        endEditing();
         if (cancelEdit) {
           // Escape: discard whatever is in the input, restore the display.
           cancelEdit = false;
@@ -4516,7 +4557,13 @@ export function createSheetEditor(
           input.blur();
           focusCell(rr, cc);
         };
-        if (e.key === "Enter") {
+        if (e.key === "F2") {
+          // Excel's key for "edit this cell": the caret goes to the end of what is there.
+          e.preventDefault();
+          beginEditing(r, c);
+          const end = input.value.length;
+          try { input.setSelectionRange(end, end); } catch { /* selection is best-effort */ }
+        } else if (e.key === "Enter") {
           e.preventDefault();
           input.blur();
           if (r + 1 <= totalRows) focusCell(r + 1, c);
