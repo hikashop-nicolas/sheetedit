@@ -52,9 +52,18 @@ function xfrmXml(sh: SheetShape): string {
 }
 function txBodyXml(sh: SheetShape): string {
   if (!sh.text) return `<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>`;
-  const t = sh.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const clr = sh.textColor ? `<a:solidFill><a:srgbClr val="${hex(sh.textColor)}"/></a:solidFill>` : "";
-  return `<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US">${clr}</a:rPr><a:t>${t}</a:t></a:r></a:p></xdr:txBody>`;
+  const sz = sh.textSize ? ` sz="${Math.round(sh.textSize * 100)}"` : "";
+  // The alignment the shape actually has, not a hardcoded centre: rewriting the text used to
+  // shove a left-aligned callout into the middle of its box.
+  const algn = sh.textAlign === "left" ? "l" : sh.textAlign === "right" ? "r" : "ctr";
+  const anchor = sh.textValign === "top" ? "t" : sh.textValign === "bottom" ? "b" : "ctr";
+  // One <a:p> per line, which is how the format carries a multi-line label.
+  const paras = sh.text.split("\n").map((line) => {
+    const t = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `<a:p><a:pPr algn="${algn}"/><a:r><a:rPr lang="en-US"${sz}>${clr}</a:rPr><a:t>${t}</a:t></a:r></a:p>`;
+  }).join("");
+  return `<xdr:txBody><a:bodyPr anchor="${anchor}"/><a:lstStyle/>${paras}</xdr:txBody>`;
 }
 
 function anchorPointsXml(sh: SheetShape): string {

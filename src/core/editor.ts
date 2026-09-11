@@ -1042,6 +1042,45 @@ export function createSheetEditor(
     renderGrid();
   };
   let furiPop: HTMLElement | null = null;
+  /**
+   * A one-line editor anchored to a button: what a shape's text needs and no more. The properties
+   * dialog it replaces was reached by double-clicking the shape, which nobody discovered.
+   */
+  let textPop: HTMLElement | null = null;
+  const promptText = (btn: HTMLElement, label: string, value: string, commit: (v: string) => void): void => {
+    textPop?.remove();
+    const pop = document.createElement("div");
+    pop.className = "sheetedit-pop sheetedit-furi-pop";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "sheetedit-furi-input";
+    input.placeholder = label;
+    input.setAttribute("aria-label", label);
+    input.value = value;
+    const close = (): void => {
+      pop.remove();
+      textPop = null;
+      document.removeEventListener("pointerdown", onOutside, true);
+    };
+    const onOutside = (e: Event): void => {
+      const n = e.target as Node;
+      if (!pop.contains(n) && !btn.contains(n)) close();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(input.value); close(); }
+      else if (e.key === "Escape") { e.preventDefault(); close(); }
+    });
+    pop.appendChild(input);
+    const r = btn.getBoundingClientRect();
+    pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 240))}px`;
+    pop.style.top = `${r.bottom + 4}px`;
+    document.body.appendChild(pop);
+    textPop = pop;
+    input.focus();
+    input.select();
+    setTimeout(() => document.addEventListener("pointerdown", onOutside, true));
+  };
+
   const openFuriganaPopover = (btn: HTMLElement): void => {
     if (furiPop) {
       furiPop.remove();
@@ -2463,7 +2502,7 @@ export function createSheetEditor(
       polygon. A curved shape would go in as a rectangle, so it is not offered. */
   const odfCanWrite = (geom: ShapeGeom): boolean =>
     geom === "rect" || geom === "roundRect" || geom === "ellipse" || geom === "line" || POLY_GEOMS.includes(geom);
-  const openShapeGallery = (anchor: HTMLElement): void => {
+  const openShapeGallery = (anchor: HTMLElement, onPick?: (geom: ShapeGeom) => void): void => {
     if (shapeGallery) { closeShapeGallery(); return; }
     const odf = wb.kind === "ods";
     const pop = document.createElement("div");
@@ -2487,7 +2526,11 @@ export function createSheetEditor(
         b.innerHTML = shapeSvg({ geom, stroke: "currentColor", strokeWidth: 1, anchor: { fromCol: 1, fromRow: 1, fromColOff: 0, fromRowOff: 0, toCol: 1, toRow: 1, toColOff: 0, toRowOff: 0 } }, 22, 18);
         b.title = geomName(geom);
         b.setAttribute("aria-label", geomName(geom));
-        b.addEventListener("click", () => { closeShapeGallery(); insertShape(geom, toolbarHandle.colours()); });
+        b.addEventListener("click", () => {
+          closeShapeGallery();
+          if (onPick) onPick(geom);
+          else insertShape(geom, toolbarHandle.colours());
+        });
         grid.appendChild(b);
       }
       pop.appendChild(grid);
@@ -3335,6 +3378,31 @@ export function createSheetEditor(
         shapeRect: () => shapeLayer.selectedRect(),
         shape: () => shapeLayer.selected(),
         onChange: () => { mark(); shapeLayer.refresh(); shapeBar?.refresh(); },
+        // Re-cut the selected shape. The file's own preset name has to go with it, or the writer
+        // would round-trip the shape it used to be.
+        swapGeometry: (btn) => openShapeGallery(btn, (geom) => {
+          const sh = shapeLayer.selected();
+          if (!sh) return;
+          sh.geom = geom;
+          sh.preset = undefined;
+          sh.dirty = true;
+          sh.styleDirty = true;
+          mark();
+          shapeLayer.refresh();
+          shapeBar?.refresh();
+        }),
+        editText: (btn) => {
+          const sh = shapeLayer.selected();
+          if (!sh) return;
+          promptText(btn, t("shapeTextEdit"), sh.text ?? "", (text) => {
+            sh.text = text.trim() || undefined;
+            sh.dirty = true;
+            sh.styleDirty = true;
+            mark();
+            shapeLayer.refresh();
+            shapeBar?.refresh();
+          });
+        },
         // ODF stacking is document order too, but its shapes are patched in place rather than
         // re-ordered, so the control is offered only where it is actually persisted.
         reorder: wb.kind === "xlsx"

@@ -577,3 +577,27 @@ describe("re-stacking a shape", () => {
     expect(reorderXlsxShape(wb, wb.sheets[0], wb.sheets[0].shapes![0]!, "front")).toBe(false);
   });
 });
+
+// Editing a shape's text rewrites its whole <xdr:txBody>, so everything about that text has to be
+// written from the model. It used to emit a hardcoded centre alignment and a single run, which
+// shoved a left-aligned callout into the middle of its box and flattened a two-line label to one.
+describe("writing a shape's text", () => {
+  const box = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr anchor="t"/><a:lstStyle/><a:p><a:pPr algn="l"/><a:r><a:rPr lang="fr-FR" sz="1400"/><a:t>First</a:t></a:r></a:p><a:p><a:r><a:t>Second</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("keeps the lines, the alignment and the size", () => {
+    const wb = readWorkbook(base(box));
+    const sh = wb.sheets[0].shapes![0]!;
+    expect(sh.text).toBe("First\nSecond");
+    expect(sh.textAlign).toBe("left");
+    expect(sh.textValign).toBe("top");
+    expect(sh.textSize).toBe(14);
+    sh.text = "Changed\nStill two lines";
+    sh.dirty = true;
+    sh.styleDirty = true;
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0]!;
+    expect(re.text).toBe("Changed\nStill two lines");
+    expect(re.textAlign, "not shoved to the centre").toBe("left");
+    expect(re.textValign).toBe("top");
+    expect(re.textSize).toBe(14);
+  });
+});

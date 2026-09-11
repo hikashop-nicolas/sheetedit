@@ -20,6 +20,10 @@ export interface ShapeBarDeps {
   onChange: (paintChanged: boolean) => void;
   /** Move the shape to the front / back of the drawing. Absent when the format cannot. */
   reorder?: (to: "front" | "back") => void;
+  /** Open the shape gallery to swap the selected shape's geometry, anchored at `btn`. */
+  swapGeometry: (btn: HTMLElement) => void;
+  /** Edit the shape's text, anchored at `btn`. */
+  editText: (btn: HTMLElement) => void;
 }
 
 /** Lines and connectors: no inside to fill, no text, but they do carry arrowheads. */
@@ -131,19 +135,63 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
   group([sep(), stroke, width, dash], () => true);
 
   // --- arrowheads, for the shapes that have ends ---------------------------
-  const ends = menu("→", t("shapeEnds"), ([
+  const END_KINDS = [
     [t("shapeEndNone"), undefined],
     [t("shapeEndArrow"), "triangle"],
     [t("shapeEndOval"), "oval"],
     [t("shapeEndDiamond"), "diamond"],
-  ] as const).map(([label, v]) => [label, () => set((sh) => { sh.tailEnd = v; })] as [string, () => void]));
-  group([sep(), ends], (sh) => isLine(sh));
+  ] as const;
+  // A line has two ends and either can carry a head; offering only the far one meant the near
+  // one could be read from a file and never changed.
+  const headEnd = menu("←", t("shapeEndStart"), END_KINDS.map(([label, v]) =>
+    [label, () => set((sh) => { sh.headEnd = v; })] as [string, () => void]));
+  const tailEnd = menu("→", t("shapeEndFinish"), END_KINDS.map(([label, v]) =>
+    [label, () => set((sh) => { sh.tailEnd = v; })] as [string, () => void]));
+  group([sep(), headEnd, tailEnd], (sh) => isLine(sh));
 
   // --- text ----------------------------------------------------------------
+  const textEdit = document.createElement("button");
+  textEdit.type = "button";
+  textEdit.className = "sheetedit-btn";
+  textEdit.textContent = "T";
+  textEdit.title = t("shapeTextEdit");
+  textEdit.setAttribute("aria-label", t("shapeTextEdit"));
+  textEdit.addEventListener("mousedown", (e) => e.preventDefault());
+  textEdit.addEventListener("click", () => deps.editText(textEdit));
   const textColour = color(t("shapeTextColour"), (sh) => sh.textColor ?? "#000000", (sh, v) => { sh.textColor = v; });
   const textSize = menu("A", t("shapeTextSize"), [9, 11, 14, 18, 24, 40].map((pt) =>
     [`${pt}`, () => set((sh) => { sh.textSize = pt; })] as [string, () => void]));
-  group([sep(), textColour, textSize], (sh) => !isLine(sh));
+  const textAlign = menu("≡", t("shapeTextAlign"), ([
+    ["left", "center", "right"] as const,
+  ][0]).map((a) => [a, () => set((sh) => { sh.textAlign = a; })] as [string, () => void]));
+  group([sep(), textEdit, textColour, textSize, textAlign], (sh) => !isLine(sh));
+
+  // --- the shape itself: which geometry, and which way round -----------------
+  const swap = document.createElement("button");
+  swap.type = "button";
+  swap.className = "sheetedit-btn";
+  swap.textContent = "◇";
+  swap.title = t("shapeSwap");
+  swap.setAttribute("aria-label", t("shapeSwap"));
+  swap.addEventListener("mousedown", (e) => e.preventDefault());
+  swap.addEventListener("click", () => deps.swapGeometry(swap));
+  const flip = (label: string, title: string, apply: (sh: SheetShape) => void): HTMLElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sheetedit-btn";
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    // A mirror is geometry, not paint: recording it must not rewrite a themed fill.
+    b.addEventListener("click", () => set((sh) => { apply(sh); sh.xfrmDirty = true; }, false));
+    return b;
+  };
+  group([
+    sep(), swap,
+    flip("⇄", t("shapeFlipH"), (sh) => { sh.flipH = sh.flipH ? undefined : true; }),
+    flip("⇅", t("shapeFlipV"), (sh) => { sh.flipV = sh.flipV ? undefined : true; }),
+  ], () => true);
 
   // --- stacking -------------------------------------------------------------
   if (deps.reorder) {

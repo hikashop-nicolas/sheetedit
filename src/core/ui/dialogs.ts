@@ -1,4 +1,4 @@
-import { colToLetters, getCell, parseA1Ref, type ShapeGeom, type Sheet, type SheetShape, type Workbook } from "../model";
+import { colToLetters, getCell, parseA1Ref, type ShapeGeom, type Sheet, type Workbook } from "../model";
 import { t } from "../i18n";
 import { newDrawingId } from "../sheet-ops";
 import { formDialog, type FormField } from "./form-dialog";
@@ -45,7 +45,6 @@ export function setupDialogs(ctx: DialogCtx): {
   openDvDialog: () => void;
   openCfDialog: () => void;
   openSparkDialog: () => void;
-  openShapeDialog: (existing?: SheetShape) => void;
   insertShape: (geom: ShapeGeom, colours?: { text: string; fill: string }) => void;
   openNoteDialog: () => void;
 } {
@@ -275,72 +274,6 @@ export function setupDialogs(ctx: DialogCtx): {
     ctx.refreshShapes();
   };
 
-  const openShapeDialog = (existing?: SheetShape): void => {
-    const sheet = sheetNow();
-    const s = ctx.getSelRect();
-    const geomOpts = [
-      { value: "rect", label: t("shapeRect") },
-      { value: "roundRect", label: t("shapeRoundRect") },
-      { value: "ellipse", label: t("shapeEllipse") },
-      { value: "triangle", label: t("shapeTriangle") },
-      { value: "diamond", label: t("shapeDiamond") },
-      { value: "parallelogram", label: t("shapeParallelogram") },
-      { value: "pentagon", label: t("shapePentagon") },
-      { value: "hexagon", label: t("shapeHexagon") },
-      { value: "star", label: t("shapeStar") },
-      { value: "rightArrow", label: t("shapeArrow") },
-      { value: "line", label: t("shapeLine") },
-    ];
-    const filled = geomOpts.map((o) => o.value).filter((v) => v !== "line"); // fill / text apply to every non-line shape
-    // When editing there is no geometry picker, so fill/text can't be gated on it: show them unless
-    // the shape is a line. When creating, gate them live on the chosen geometry.
-    const fillGate = existing ? undefined : ({ key: "geom", values: filled } as const);
-    const showFillNow = !existing || existing.geom !== "line";
-    dialog(existing ? t("shapeEdit") : t("shapeInsert"), [
-      ...(existing ? [] : [{ key: "geom", label: t("shapeType"), type: "select" as const, value: "rect", options: geomOpts }]),
-      ...(showFillNow ? [
-        { key: "fill", label: t("shapeFill"), type: "color" as const, value: existing?.fill ?? "#4c8bf5", showFor: fillGate },
-        { key: "noFill", label: t("shapeNoFill"), type: "checkbox" as const, value: existing ? !existing.fill : false, showFor: fillGate },
-      ] : []),
-      { key: "stroke", label: t("shapeOutline"), type: "color", value: existing?.stroke ?? "#1f3a5f" },
-      { key: "strokeWidth", label: t("shapeOutlineWidth"), type: "text", value: String(existing?.strokeWidth ?? 1) },
-      // Excel turns and mirrors any shape, and the file already carries both; without these the
-      // editor could show a turned shape but never make one, or straighten one back.
-      { key: "rotation", label: t("shapeRotation"), type: "text", value: String(existing?.rotation ?? 0) },
-      { key: "flipH", label: t("shapeFlipH"), type: "checkbox", value: !!existing?.flipH },
-      { key: "flipV", label: t("shapeFlipV"), type: "checkbox", value: !!existing?.flipV },
-      ...(showFillNow ? [{ key: "text", label: t("shapeText"), type: "text" as const, value: existing?.text ?? "", showFor: fillGate }] : []),
-    ], (v) => {
-      const geom = (existing?.geom ?? String(v.geom)) as ShapeGeom;
-      const isLine = geom === "line";
-      const fill = isLine || v.noFill ? undefined : String(v.fill);
-      const stroke = String(v.stroke);
-      const strokeWidth = Math.max(1, Number(v.strokeWidth) || 1);
-      // Degrees, wrapped into 0..360 so "-90" and "270" both mean the same quarter turn.
-      const spun = Number(v.rotation);
-      const rotation = Number.isFinite(spun) ? ((Math.round(spun) % 360) + 360) % 360 : 0;
-      const text = isLine ? undefined : (String(v.text).trim() || undefined);
-      if (existing) {
-        existing.fill = fill; existing.stroke = stroke; existing.strokeWidth = strokeWidth; existing.text = text;
-        existing.rotation = rotation || undefined;
-        existing.flipH = v.flipH ? true : undefined;
-        existing.flipV = v.flipV ? true : undefined;
-        existing.preset = undefined; // our geometry is authoritative once edited
-        existing.fillGradient = undefined; // a colour was picked, so the file's gradient is gone
-        existing.dirty = true;
-        existing.styleDirty = true;
-      } else {
-        // Default location: the selection rect, or a ~3x4-cell box at the active cell.
-        const twoD = s.r2 > s.r1 || s.c2 > s.c1;
-        const anchor = twoD
-          ? { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c2 + 1, toRow: s.r2 + 1, toColOff: 0, toRowOff: 0 }
-          : { fromCol: s.c1, fromRow: s.r1, fromColOff: 0, fromRowOff: 0, toCol: s.c1 + 3, toRow: s.r1 + 4, toColOff: 0, toRowOff: 0 };
-        (sheet.shapes ??= []).push({ cid: newDrawingId(), geom, anchor, fill, stroke, strokeWidth, text, created: true, dirty: true });
-      }
-      ctx.mark(); ctx.refreshShapes();
-    });
-  };
-
   const openNoteDialog = (): void => {
     const s = ctx.getSelRect(); const r = s.r1, c = s.c1; const sheet = sheetNow();
     const cur = getCell(sheet, r, c)?.comments?.map((cm) => cm.text).join("\n") ?? "";
@@ -352,5 +285,5 @@ export function setupDialogs(ctx: DialogCtx): {
     });
   };
 
-  return { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, openShapeDialog, insertShape, openNoteDialog };
+  return { openLinkDialog, openDvDialog, openCfDialog, openSparkDialog, insertShape, openNoteDialog };
 }
