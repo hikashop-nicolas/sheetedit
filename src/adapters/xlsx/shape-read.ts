@@ -232,6 +232,28 @@ function styleRefPaint(ref: Element | undefined, list: Element[], theme: Record<
   return paintOf(target, theme, base) ?? { color: base };
 }
 
+/**
+ * Where a grouped shape sits inside its group's box, as fractions of it.
+ *
+ * The group states a child coordinate space (<a:chOff>/<a:chExt>) and its own box (<a:off>/
+ * <a:ext>); a child's own xfrm is in that child space. The ratio is all the renderer needs, and
+ * it needs no column widths to work it out.
+ */
+function withinGroup(grp: Element, sp: Element): { x: number; y: number; w: number; h: number } | undefined {
+  const gx = descend(grp, "grpSpPr")[0] && kid(descend(grp, "grpSpPr")[0]!, "xfrm");
+  const cx = sp.getElementsByTagName("*");
+  const own = Array.from(cx).find((e) => e.localName === "xfrm");
+  if (!gx || !own) return undefined;
+  const val = (el: Element | undefined, a: string): number => Number(el?.getAttribute(a) ?? NaN);
+  const chOff = kid(gx, "chOff"), chExt = kid(gx, "chExt");
+  const [bx, by] = [val(chOff, "x"), val(chOff, "y")];
+  const [bw, bh] = [val(chExt, "cx"), val(chExt, "cy")];
+  const off = kid(own, "off"), ext = kid(own, "ext");
+  const [ox, oy, ow, oh] = [val(off, "x"), val(off, "y"), val(ext, "cx"), val(ext, "cy")];
+  if (![bx, by, bw, bh, ox, oy, ow, oh].every(Number.isFinite) || bw <= 0 || bh <= 0) return undefined;
+  return { x: (ox - bx) / bw, y: (oy - by) / bh, w: ow / bw, h: oh / bh };
+}
+
 /** Populate sheet.shapes from the worksheet's drawing parts. */
 export function readShapes(
   sheet: Sheet,
@@ -248,10 +270,17 @@ export function readShapes(
     if (!drawDoc) continue;
     const anchorEls = Array.from(drawDoc.documentElement.children).filter((e) => /Anchor$/.test(e.localName));
     anchorEls.forEach((anchorEl, anchorIndex) => {
-      const sp = descend(anchorEl, "sp")[0] ?? descend(anchorEl, "cxnSp")[0];
-      if (!sp || descend(anchorEl, "pic")[0] || descend(anchorEl, "graphicFrame")[0]) return;
+      if (descend(anchorEl, "pic")[0] || descend(anchorEl, "graphicFrame")[0]) return;
       const anchor = anchorOf(anchorEl);
       if (!anchor) return;
+      // A group holds several shapes in one anchor, each placed in the group's own child
+      // coordinate space. Reading the first one and stopping drew a two-shape group as one shape.
+      const grp = descend(anchorEl, "grpSp")[0];
+      const shapes = grp
+        ? Array.from(grp.children).filter((c) => c.localName === "sp" || c.localName === "cxnSp")
+        : [descend(anchorEl, "sp")[0] ?? descend(anchorEl, "cxnSp")[0]].filter(Boolean);
+      for (const sp of shapes as Element[]) {
+      const within = grp ? withinGroup(grp, sp) : undefined;
       const spPr = kid(sp, "spPr");
       const prst = spPr ? kid(spPr, "prstGeom")?.getAttribute("prst") ?? null : null;
       const noFill = spPr ? !!kid(spPr, "noFill") : false;
@@ -312,9 +341,13 @@ export function readShapes(
         ...(sp.getAttribute("macro") ? { macro: sp.getAttribute("macro")! } : {}),
         textColor: colorFrom(rPr ? kid(rPr, "solidFill") : undefined, theme) ?? styleText,
         ...(Number(rPr?.getAttribute("sz") ?? 0) ? { textSize: Number(rPr!.getAttribute("sz")) / 100 } : {}),
+        ...(within ? { within } : {}),
         drawingPath: drawPath,
-        anchorIndex,
+        // A grouped shape is drawn but not written back: its place is inside the group, and the
+        // anchor index names the group, not the child.
+        ...(grp ? {} : { anchorIndex }),
       });
+      }
     });
   }
   if (out.length) sheet.shapes = out;

@@ -739,6 +739,9 @@ export interface SheetShape {
   adjust?: number;
   /** Clockwise rotation in degrees (xlsx <a:xfrm rot>, in 60000ths of one). */
   rotation?: number;
+  /** For a shape inside a group: where it sits in the group's box, as fractions of it. The group
+      shares one anchor, so its members are placed within that box rather than against the grid. */
+  within?: { x: number; y: number; w: number; h: number };
   /** The shape's own size in px BEFORE the turn (<a:xfrm><a:ext>), which is not the anchor's:
       a shape rotated a quarter turn is anchored across the cells it ends up covering. Only
       meaningful together with `rotation`. */

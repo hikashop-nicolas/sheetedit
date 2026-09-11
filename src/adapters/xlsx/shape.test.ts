@@ -434,3 +434,95 @@ describe("a shape authored in the editor", () => {
     expect(missing, "in the gallery, or deliberately left out").toEqual([]);
   });
 });
+
+// Editing one thing about a shape must not quietly drop the others. A restyle rewrites the whole
+// <a:ln> and the whole fill, so everything they carried has to be written back: changing the
+// colour of a dashed arrow used to leave a solid line with no arrowhead.
+describe("restyling a shape", () => {
+  const arrow = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:cxnSp><xdr:nvCxnSpPr><xdr:cNvPr id="2" name="C"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr><xdr:spPr><a:xfrm rot="5400000" flipV="1"/><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom><a:ln w="19050"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:prstDash val="dash"/><a:tailEnd type="triangle"/></a:ln></xdr:spPr></xdr:cxnSp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("keeps the dash, the arrowhead and the turn when only the colour changed", () => {
+    const wb = readWorkbook(base(arrow));
+    const sh = wb.sheets[0].shapes![0]!;
+    sh.stroke = "#00AA00";
+    sh.dirty = true;
+    sh.styleDirty = true;
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0]!;
+    expect(re.stroke?.toLowerCase()).toBe("#00aa00");
+    expect(re.dash, "still dashed").toBe("dash");
+    expect(re.tailEnd, "still an arrow").toBe("triangle");
+    expect(re.rotation, "still turned").toBe(90);
+    expect(re.flipV, "still mirrored").toBe(true);
+  });
+
+  it("keeps a see-through fill see-through", () => {
+    const faded = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="3" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="D9D9D9"><a:alpha val="50000"/></a:srgbClr></a:solidFill></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+    const wb = readWorkbook(base(faded));
+    const sh = wb.sheets[0].shapes![0]!;
+    sh.stroke = "#000000";
+    sh.dirty = true;
+    sh.styleDirty = true;
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0]!;
+    expect(re.fillOpacity).toBeCloseTo(0.5, 5);
+  });
+});
+
+// A group is several shapes under one anchor, each placed in the group's own child coordinate
+// space. Reading the first and stopping drew a two-shape group as one shape.
+describe("a group of shapes", () => {
+  const group = (children: string) =>
+    `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="4" name="G"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/><a:chOff x="0" y="0"/><a:chExt cx="1000" cy="1000"/></a:xfrm></xdr:grpSpPr>${children}</xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>`;
+  const member = (id: number, prst: string, x: number, y: number, w: number, h: number) =>
+    `<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="${id}" name="m${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${w}" cy="${h}"/></a:xfrm><a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp>`;
+
+  it("reads every shape in it, not just the first", () => {
+    const sh = readWorkbook(base(group(member(5, "ellipse", 0, 0, 500, 1000) + member(6, "star5", 500, 0, 500, 1000)))).sheets[0].shapes ?? [];
+    expect(sh.map((s) => s.geom)).toEqual(["ellipse", "star"]);
+  });
+
+  it("places each one inside the group's box by proportion", () => {
+    const sh = readWorkbook(base(group(member(5, "ellipse", 0, 0, 500, 1000) + member(6, "star5", 500, 250, 500, 750)))).sheets[0].shapes ?? [];
+    expect(sh[0].within).toEqual({ x: 0, y: 0, w: 0.5, h: 1 });
+    expect(sh[1].within).toEqual({ x: 0.5, y: 0.25, w: 0.5, h: 0.75 });
+  });
+
+  // A grouped shape is drawn but never written back on its own: its anchor names the group.
+  it("does not claim an anchor of its own", () => {
+    const sh = readWorkbook(base(group(member(5, "ellipse", 0, 0, 500, 1000)))).sheets[0].shapes ?? [];
+    expect(sh[0].anchorIndex).toBeUndefined();
+  });
+});
+
+// Turning a shape is something Excel does to any of them, and the file already carried the angle:
+// the editor could show a turned shape but not make one, nor straighten one back.
+describe("turning a shape in the editor", () => {
+  const plain = `<xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>6</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="123" y="456"/><a:ext cx="900" cy="500"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`;
+
+  it("records the angle and the mirrors", () => {
+    const wb = readWorkbook(base(plain));
+    const sh = wb.sheets[0].shapes![0]!;
+    sh.rotation = 45;
+    sh.flipH = true;
+    sh.dirty = true;
+    sh.styleDirty = true;
+    const re = readWorkbook(writeWorkbook(wb)).sheets[0].shapes![0]!;
+    expect(re.rotation).toBe(45);
+    expect(re.flipH).toBe(true);
+    expect(re.flipV).toBeUndefined();
+  });
+
+  // The angle goes in the same <a:xfrm> the shape's own frame lives in, so writing it must not
+  // move the shape: an <a:off> of zero would slide it to the top-left corner of the sheet.
+  it("leaves the shape where it was", () => {
+    const wb = readWorkbook(base(plain));
+    const sh = wb.sheets[0].shapes![0]!;
+    sh.rotation = 90;
+    sh.dirty = true;
+    sh.styleDirty = true;
+    writeWorkbook(wb);
+    const draw = new TextDecoder().decode(wb.files["xl/drawings/drawing1.xml"]);
+    expect(draw).toContain('rot="5400000"');
+    expect(draw, "its own offset and size survive").toMatch(/<a:off x="123" y="456"\/>/);
+    expect(draw).toMatch(/<a:ext cx="900" cy="500"\/>/);
+  });
+});

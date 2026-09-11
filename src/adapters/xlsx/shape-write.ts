@@ -18,13 +18,37 @@ function prstOf(sh: SheetShape): string {
   return sh.preset ?? GEOM_PRESET[sh.geom] ?? "rect";
 }
 
-/** Inner spPr / txBody markup shared by the new-shape and restyle paths. */
+/**
+ * Inner spPr / txBody markup shared by the new-shape and restyle paths.
+ *
+ * A restyle replaces the whole <a:ln> and the whole fill, so everything they carried has to be
+ * written back out of the model: without that, changing the colour of a dashed arrow turned it
+ * into a solid line with no arrowhead, and a translucent watermark came back opaque.
+ */
 function spPrXml(sh: SheetShape): string {
-  const fill = sh.fill ? `<a:solidFill><a:srgbClr val="${hex(sh.fill)}"/></a:solidFill>` : `<a:noFill/>`;
+  // An opaque fill stays the plain self-closing element the format normally carries.
+  const clr = sh.fillOpacity != null && sh.fillOpacity < 1
+    ? `<a:srgbClr val="${hex(sh.fill ?? "")}"><a:alpha val="${Math.round(sh.fillOpacity * 100000)}"/></a:srgbClr>`
+    : `<a:srgbClr val="${hex(sh.fill ?? "")}"/>`;
+  const fill = sh.fill ? `<a:solidFill>${clr}</a:solidFill>` : `<a:noFill/>`;
+  const dash = sh.dash ? `<a:prstDash val="${sh.dash}"/>` : "";
+  const ends = `${sh.headEnd ? `<a:headEnd type="${sh.headEnd}"/>` : ""}${sh.tailEnd ? `<a:tailEnd type="${sh.tailEnd}"/>` : ""}`;
   const ln = sh.stroke
-    ? `<a:ln w="${pxToEmu(sh.strokeWidth ?? 1)}"><a:solidFill><a:srgbClr val="${hex(sh.stroke)}"/></a:solidFill></a:ln>`
+    ? `<a:ln w="${pxToEmu(sh.strokeWidth ?? 1)}"><a:solidFill><a:srgbClr val="${hex(sh.stroke)}"/></a:solidFill>${dash}${ends}</a:ln>`
     : `<a:ln><a:noFill/></a:ln>`;
-  return `<a:prstGeom prst="${prstOf(sh)}"><a:avLst/></a:prstGeom>${fill}${ln}`;
+  // <a:avLst> carries the geometry's adjustment (where an elbow bends, how wide a brace is).
+  const adj = sh.adjust != null ? `<a:gd name="adj1" fmla="val ${Math.round(sh.adjust * 100000)}"/>` : "";
+  return `<a:prstGeom prst="${prstOf(sh)}"><a:avLst>${adj}</a:avLst></a:prstGeom>${fill}${ln}`;
+}
+
+/** <a:xfrm> for a shape that carries a turn or a mirror, so an edit does not straighten it. */
+function xfrmXml(sh: SheetShape): string {
+  if (!sh.rotation && !sh.flipH && !sh.flipV) return "";
+  const rot = sh.rotation ? ` rot="${Math.round(sh.rotation * 60000)}"` : "";
+  const flip = `${sh.flipH ? ' flipH="1"' : ""}${sh.flipV ? ' flipV="1"' : ""}`;
+  // No <a:off>/<a:ext> of our own: the restyle path carries the file's across, and a shape with
+  // neither takes its frame from the anchor. Writing an offset of zero would move the shape.
+  return `<a:xfrm${rot}${flip}/>`;
 }
 function txBodyXml(sh: SheetShape): string {
   if (!sh.text) return `<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>`;
@@ -43,7 +67,7 @@ function anchorPointsXml(sh: SheetShape): string {
 /** Append a freshly-authored shape to the sheet's drawing; records the drawing path + anchor index. */
 function createShape(wb: Workbook, sheet: Sheet, sh: SheetShape, id: number): void {
   const drawingPath = ensureSheetDrawing(wb, sheet);
-  const sp = `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="Shape ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>${spPrXml(sh)}</xdr:spPr>${txBodyXml(sh)}</xdr:sp>`;
+  const sp = `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="Shape ${id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>${xfrmXml(sh)}${spPrXml(sh)}</xdr:spPr>${txBodyXml(sh)}</xdr:sp>`;
   const anchor = `<xdr:twoCellAnchor editAs="oneCell">${anchorPointsXml(sh)}${sp}<xdr:clientData/></xdr:twoCellAnchor>`;
   const xml = new TextDecoder().decode(wb.files[drawingPath]);
   wb.files[drawingPath] = new TextEncoder().encode(xml.replace(/<\/xdr:wsDr>\s*$/, `${anchor}</xdr:wsDr>`));
@@ -79,12 +103,23 @@ function patchShape(wb: Workbook, sh: SheetShape): void {
   // silently repaint it. Only an actual restyle touches spPr.
   if (spPr && (sh.styleDirty || sh.created)) {
     // Replace the fill child (after prstGeom) and the ln, then rebuild txBody, from a parsed fragment.
-    const frag = parseXmlOpt(new TextEncoder().encode(`<r xmlns:a="${A}" xmlns:xdr="${XDR}"><a:spPr>${spPrXml(sh)}</a:spPr>${txBodyXml(sh)}</r>`));
+    const frag = parseXmlOpt(new TextEncoder().encode(`<r xmlns:a="${A}" xmlns:xdr="${XDR}"><a:spPr>${xfrmXml(sh)}${spPrXml(sh)}</a:spPr>${txBodyXml(sh)}</r>`));
     const newSpPr = frag && kid(frag.documentElement, "spPr");
     const newTx = frag && kid(frag.documentElement, "txBody");
     if (newSpPr) {
       for (const c of Array.from(spPr.children)) if (["prstGeom", "noFill", "solidFill", "gradFill", "pattFill", "blipFill", "ln"].includes(c.localName)) spPr.removeChild(c);
-      const xfrm = kid(spPr, "xfrm");
+      // The turn and the mirror live in <a:xfrm>, which the fragment only carries when the model
+      // has one; an existing xfrm is otherwise left exactly as the file wrote it.
+      const newXfrm = frag && kid(frag.documentElement, "spPr") && kid(kid(frag.documentElement, "spPr")!, "xfrm");
+      let xfrm = kid(spPr, "xfrm");
+      if (newXfrm) {
+        const keepExt = xfrm ? kid(xfrm, "ext") : undefined;
+        const keepOff = xfrm ? kid(xfrm, "off") : undefined;
+        const fresh = doc.importNode(newXfrm, true) as Element;
+        if (!kid(fresh, "ext") && keepExt) { if (keepOff) fresh.appendChild(keepOff.cloneNode(true)); fresh.appendChild(keepExt.cloneNode(true)); }
+        if (xfrm) spPr.replaceChild(fresh, xfrm); else spPr.insertBefore(fresh, spPr.firstChild);
+        xfrm = fresh;
+      }
       const ref = xfrm ? xfrm.nextSibling : spPr.firstChild; // capture once so inserts keep order
       for (const c of Array.from(newSpPr.children)) spPr.insertBefore(doc.importNode(c, true), ref);
     }

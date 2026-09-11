@@ -293,10 +293,18 @@ export function setupShapeLayer(deps: ShapeLayerDeps): { refresh(): void; teardo
     const g = deps.geom();
     for (const sh of shapes) {
       const a = sh.anchor;
-      const x = g.xOfCol(a.fromCol) + a.fromColOff;
-      const y = g.yOfRow(a.fromRow) + a.fromRowOff;
-      const w = Math.max(1, g.xOfCol(a.toCol) + a.toColOff - x);
-      const h = Math.max(1, g.yOfRow(a.toRow) + a.toRowOff - y);
+      let x = g.xOfCol(a.fromCol) + a.fromColOff;
+      let y = g.yOfRow(a.fromRow) + a.fromRowOff;
+      let w = Math.max(1, g.xOfCol(a.toCol) + a.toColOff - x);
+      let h = Math.max(1, g.yOfRow(a.toRow) + a.toRowOff - y);
+      // A grouped shape shares its group's anchor, and takes its place inside it by proportion.
+      if (sh.within) {
+        const [bw, bh] = [w, h];
+        x += sh.within.x * bw;
+        y += sh.within.y * bh;
+        w = Math.max(1, sh.within.w * bw);
+        h = Math.max(1, sh.within.h * bh);
+      }
       const box = document.createElement("div");
       box.className = "sheetedit-shapebox" + (editable ? " editable" : "") + (sh === selected ? " selected" : "");
       box.style.left = `${x}px`;

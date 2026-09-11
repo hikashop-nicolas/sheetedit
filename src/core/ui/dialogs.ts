@@ -304,6 +304,11 @@ export function setupDialogs(ctx: DialogCtx): {
       ] : []),
       { key: "stroke", label: t("shapeOutline"), type: "color", value: existing?.stroke ?? "#1f3a5f" },
       { key: "strokeWidth", label: t("shapeOutlineWidth"), type: "text", value: String(existing?.strokeWidth ?? 1) },
+      // Excel turns and mirrors any shape, and the file already carries both; without these the
+      // editor could show a turned shape but never make one, or straighten one back.
+      { key: "rotation", label: t("shapeRotation"), type: "text", value: String(existing?.rotation ?? 0) },
+      { key: "flipH", label: t("shapeFlipH"), type: "checkbox", value: !!existing?.flipH },
+      { key: "flipV", label: t("shapeFlipV"), type: "checkbox", value: !!existing?.flipV },
       ...(showFillNow ? [{ key: "text", label: t("shapeText"), type: "text" as const, value: existing?.text ?? "", showFor: fillGate }] : []),
     ], (v) => {
       const geom = (existing?.geom ?? String(v.geom)) as ShapeGeom;
@@ -311,9 +316,15 @@ export function setupDialogs(ctx: DialogCtx): {
       const fill = isLine || v.noFill ? undefined : String(v.fill);
       const stroke = String(v.stroke);
       const strokeWidth = Math.max(1, Number(v.strokeWidth) || 1);
+      // Degrees, wrapped into 0..360 so "-90" and "270" both mean the same quarter turn.
+      const spun = Number(v.rotation);
+      const rotation = Number.isFinite(spun) ? ((Math.round(spun) % 360) + 360) % 360 : 0;
       const text = isLine ? undefined : (String(v.text).trim() || undefined);
       if (existing) {
         existing.fill = fill; existing.stroke = stroke; existing.strokeWidth = strokeWidth; existing.text = text;
+        existing.rotation = rotation || undefined;
+        existing.flipH = v.flipH ? true : undefined;
+        existing.flipV = v.flipV ? true : undefined;
         existing.preset = undefined; // our geometry is authoritative once edited
         existing.fillGradient = undefined; // a colour was picked, so the file's gradient is gone
         existing.dirty = true;
