@@ -26,6 +26,10 @@ export interface ShapeBarDeps {
   editText: (btn: HTMLElement) => void;
 }
 
+/** How far above a selected shape its rotation grip reaches: the stem plus the circle plus a gap.
+    Kept in step with .sheetedit-shape-rotate in the stylesheet. */
+const GRIP_ROOM = 34;
+
 /** Lines and connectors: no inside to fill, no text, but they do carry arrowheads. */
 const isLine = (sh: SheetShape): boolean =>
   sh.geom === "line" || sh.geom === "elbow" || sh.geom === "curve" || sh.geom === "arc";
@@ -229,13 +233,16 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
     for (const g of groups) g.el.hidden = !g.show(sh);
     for (const el of bar.querySelectorAll<HTMLInputElement & { sync?: (s: SheetShape) => void }>("input.sheetedit-color")) el.sync?.(sh);
     bar.hidden = false;
-    // Above the shape where there is room, below it otherwise, and never outside the grid.
+    // Above the shape where there is room, below it otherwise, and never outside the grid. The
+    // rotation grip hangs off the top of the shape (GRIP_ROOM px of circle and stem), so the bar
+    // starts above that: sitting right on top of the shape left the grip tucked under the bar,
+    // where it could be neither seen nor grabbed. Below the shape there is no grip in the way.
     const grid = deps.bounds();
     const bw = bar.offsetWidth || 260;
     const bh = bar.offsetHeight || 32;
     let left = rect.left + rect.width / 2 - bw / 2;
     left = Math.max(grid.left + 4, Math.min(left, grid.right - bw - 4));
-    let top = rect.top - bh - 10;
+    let top = rect.top - bh - GRIP_ROOM;
     if (top < grid.top + 4) top = rect.bottom + 10;
     top = Math.min(top, grid.bottom - bh - 4);
     bar.style.left = `${left}px`;

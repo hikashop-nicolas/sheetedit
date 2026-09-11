@@ -12,7 +12,7 @@ import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, StyleChange, Workbook, SheetControl } from "./model";
-import { cellDisplay, colToLetters, ensureCell, fontStack, getCell, key, parseA1Ref } from "./model";
+import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, MAX_COL, MAX_ROW, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
@@ -355,8 +355,9 @@ export const COL_W = 96; // uniform virtual column width (px) unless the sheet o
 export const OVERSCAN = 15; // rows rendered beyond the viewport on each side
 export const OVERSCAN_COLS = 4; // columns rendered beyond the viewport on each side
 export const COLS_CAP = 256;
-export const ROW_CHUNK = 20; // rows added per "+ Row" click
-export const COL_CHUNK = 6; // columns added per "+ Col" click
+export const ROW_CHUNK = 20; // rows added when the scroll reaches the bottom
+export const COL_CHUNK = 6; // columns added when the scroll reaches the right edge
+export const EDGE_GROW = 60; // px from the far edge that counts as having arrived at it
 export const STYLE_ID = "sheetedit-style";
 
 export function injectStyles(): void {
@@ -1341,14 +1342,6 @@ export function createSheetEditor(
     convert: wb.kind === "csv" ? doConvert : null,
     onUndo: () => doUndo(),
     onRedo: () => doRedo(),
-    addRows: () => {
-      extraRows += ROW_CHUNK;
-      renderGrid();
-    },
-    addCols: () => {
-      extraCols += COL_CHUNK;
-      renderGrid();
-    },
     findReplace: () => findBar.toggle(),
     applyStyle,
     applyNumFmt,
@@ -3203,6 +3196,26 @@ export function createSheetEditor(
   };
   /** Row-number column width: grows with the digit count of the last row, plus the outline gutter. */
   const rnW = (): number => Math.max(44, 18 + String(totalRows).length * 8) + outlineGutterWidth(wb.sheets[active]);
+
+  /** An anchor for a w x h box in the middle of what the sheet is showing. A new drawing put at
+      the selection landed on A1 of a sheet nobody had clicked in yet, which on a long sheet is
+      wherever the file happens to start rather than where the user is looking. */
+  const centredAnchor = (w: number, h: number): import("./chart-model").ChartAnchor => {
+    // The row numbers and the column header are sticky, so they cover the content behind them:
+    // the part of the grid actually on show starts past both.
+    const left = Math.max(0, gridScroll.scrollLeft + (viewportW() - rnW()) / 2 - w / 2);
+    const top = Math.max(0, gridScroll.scrollTop + (viewportH() - headerH()) / 2 - h / 2);
+    const at = (pos: number, total: number, of: (i: number) => number): { line: number; off: number } => {
+      const line = lineAt(pos, total, of);
+      return { line, off: Math.round(pos - of(line)) };
+    };
+    const c1 = at(left, totalCols, xOfCol), c2 = at(left + w, totalCols, xOfCol);
+    const r1 = at(top, totalRows, yOfRow), r2 = at(top + h, totalRows, yOfRow);
+    return {
+      fromCol: c1.line, fromColOff: c1.off, fromRow: r1.line, fromRowOff: r1.off,
+      toCol: c2.line, toColOff: c2.off, toRow: r2.line, toRowOff: r2.off,
+    };
+  };
 
   // Chart overlay + create/edit UI: a floating Chart.js layer glued to the cells (xlsx/ods only),
   // Chart.js lazy-loaded on the first chart.
@@ -5126,8 +5139,7 @@ export function createSheetEditor(
     mark: () => mark(),
     renderGrid: () => renderGrid(),
     refreshShapes: () => shapeLayer.refresh(),
-    colWidth: (c) => { const sh = wb.sheets[active]; return sh ? effColW(sh, c) : COL_W; },
-    rowHeight: (r) => { const sh = wb.sheets[active]; return sh ? effRowH(sh, r) : ROW_H; },
+    viewBox: (w, h) => centredAnchor(w, h),
     applySparkline: (sheet, host, spec) => sparkSingle(sheet, host, spec),
   });
 
@@ -5200,13 +5212,36 @@ export function createSheetEditor(
   document.addEventListener("paste", onDocPaste);
 
   let scrollScheduled = false;
+  /** Scrolling to the end of the sheet extends it. The grid used to stop dead at the last row the
+      file mentions, and getting past it meant finding a "+ rows" button: a spreadsheet is supposed
+      to keep going. One chunk per arrival at the edge, never past the format's own limits. */
+  const growAtEdge = (el: HTMLElement): boolean => {
+    let grew = false;
+    // Each axis is judged on its own, and only where there is something to scroll: a pane whose
+    // rows already fit is at its bottom edge at all times, and would otherwise grow a chunk every
+    // time the user scrolled it sideways.
+    const canDown = el.scrollHeight > el.clientHeight + 1;
+    const canRight = el.scrollWidth > el.clientWidth + 1;
+    if (canDown && el.scrollHeight - el.scrollTop - el.clientHeight < EDGE_GROW && totalRows < MAX_ROW) {
+      extraRows += ROW_CHUNK;
+      grew = true;
+    }
+    if (canRight && el.scrollWidth - el.scrollLeft - el.clientWidth < EDGE_GROW && totalCols < MAX_COL) {
+      extraCols += COL_CHUNK;
+      grew = true;
+    }
+    return grew;
+  };
+
   const onPaneScroll = (pane: Pane) => () => {
     shareScroll(pane); // the panes sharing this axis follow along
     if (scrollScheduled) return;
     scrollScheduled = true;
     setTimeout(() => {
       scrollScheduled = false;
-      for (const p of panes) renderPane(p); // a shared axis moved the neighbours too
+      // A grown sheet is a new set of spacers: re-render it whole rather than patch the window.
+      if (growAtEdge(pane.scrollEl)) renderGrid();
+      else for (const p of panes) renderPane(p); // a shared axis moved the neighbours too
     }, 16);
   };
   for (const p of [mainPane, splitPane, rightPane, rightSplitPane]) {
@@ -5226,8 +5261,9 @@ export function createSheetEditor(
     const keepTop = gridScroll.scrollTop;
     const keepLeft = gridScroll.scrollLeft;
     gridScroll.innerHTML = "";
-    totalRows = Math.max(ROWS_MIN, sheet.maxRow + 6) + extraRows;
-    totalCols = Math.max(COLS_MIN, sheet.maxCol + 2) + extraCols;
+    const drawn = drawingExtent(sheet);
+    totalRows = Math.max(ROWS_MIN, sheet.maxRow + 6, drawn.rows) + extraRows;
+    totalCols = Math.max(COLS_MIN, sheet.maxCol + 2, drawn.cols) + extraCols;
     renderedRows = totalRows;
     renderedCols = totalCols;
     condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet, { evaluator: makeFormulaEvaluator(wb), sheetName: sheet.name }, dateToSerial(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate())) : new Map();

@@ -776,6 +776,26 @@ export function getCell(sheet: Sheet, row: number, col: number): Cell | undefine
   return sheet.cells.get(key(row, col));
 }
 
+/** How far down and right a sheet's drawings reach, as a row and column count (one line of slack
+    past the last one they touch). A picture anchored below the last row of data is part of the
+    sheet, and a grid that stops at the data leaves it hanging past the last row with no way to
+    scroll to it. Grouped shapes sit inside their group's box, so their own anchors say nothing
+    about where the sheet ends. */
+export function drawingExtent(sheet: Sheet): { rows: number; cols: number } {
+  let rows = 0, cols = 0;
+  const reach = (a?: { toRow: number; toCol: number }): void => {
+    if (!a) return;
+    rows = Math.max(rows, a.toRow + 1);
+    cols = Math.max(cols, a.toCol + 1);
+  };
+  for (const im of sheet.images ?? []) reach(im.anchor);
+  for (const sh of sheet.shapes ?? []) if (!sh.within) reach(sh.anchor);
+  for (const ch of sheet.charts ?? []) reach(ch.anchor);
+  for (const sl of sheet.slicers ?? []) reach(sl.anchor);
+  for (const tl of sheet.timelines ?? []) reach(tl.anchor);
+  return { rows, cols };
+}
+
 export function ensureCell(sheet: Sheet, row: number, col: number): Cell {
   let c = sheet.cells.get(key(row, col));
   if (!c) {

@@ -64,8 +64,6 @@ export function buildToolbar(ctx: {
   findReplace(): void;
   onUndo(): void;
   onRedo(): void;
-  addRows(): void;
-  addCols(): void;
   applyStyle(change: StyleChange): void;
   applyNumFmt(fmt: string | number | undefined, currency?: string): void;
   curStyle(): CellStyle | undefined;
@@ -106,8 +104,7 @@ export function buildToolbar(ctx: {
     undoBtn,
     redoBtn,
     sep(),
-    tbBtn(t("addRow"), t("addRows"), ctx.addRows),
-    tbBtn(t("addCol"), t("addCols"), ctx.addCols),
+    // No "+ row" / "+ column" buttons: the grid grows on its own when the scroll reaches its edge.
     tbIcon(ICON.find, t("findReplace"), ctx.findReplace),
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
