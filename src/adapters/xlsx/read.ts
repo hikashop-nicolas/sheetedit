@@ -791,9 +791,11 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichStri
         value,
         kind,
         formula,
-        // A formula with no <v> at all shipped without a result; one whose <v> is empty shipped
-        // with "" AS its result, which is what IF(x="","",...) computes to and must be kept.
-        ...(formula && !vEl && !isEl ? { uncomputed: true } : {}),
+        // A formula with no <v> at all shipped without a result. An empty <v> is a result only on
+        // a string cell (t="str"), which is what IF(x="","",...) computes to and must be kept; on a
+        // number cell it is an empty placeholder, as openpyxl writes for every formula.
+        ...(formula && ((!vEl && !isEl) || (vEl && (vEl.textContent ?? "") === "" && (t == null || t === "" || t === "n")))
+          ? { uncomputed: true } : {}),
         el: c,
         style: c.getAttribute("s") ?? undefined,
         phonetic,

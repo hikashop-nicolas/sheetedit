@@ -91,6 +91,17 @@ describe("computing a workbook that shipped without results", () => {
     expect(getCell(sheet, 1, 3)?.value).toBe("198"); // the blank is filled, from the cached 99
   });
 
+  // openpyxl writes every formula as <f>...</f><v /> on a number cell and asks for a full calculation
+  // on load. That empty <v> is a placeholder, not a result: read as "" it left every total blank.
+  it("computes an openpyxl formula whose <v> is an empty placeholder", () => {
+    const rows = `<row r="1"><c r="A1" t="n"><v>2</v></c><c r="A2" t="n"><v>3</v></c><c r="B1"><f>SUM(A1:A2)</f><v /></c><c r="C1" t="n"><f>B1*10</f><v/></c></row>`;
+    const wb = readWorkbook(makeXlsx(rows));
+    expect(needsCalcOnLoad(wb)).toBe(true);
+    recalc(wb, { keepCached: true });
+    expect(getCell(wb.sheets[0]!, 1, 2)?.value).toBe("5");
+    expect(getCell(wb.sheets[0]!, 1, 3)?.value).toBe("50");
+  });
+
   it("leaves a deliberately blanked cell blank", () => {
     const wb = readWorkbook(makeXlsx(`<row r="1"><c r="A1"/><c r="B1" t="str"><f>IF(A1="","",A1-1)</f><v/></c></row>`));
     recalc(wb, { keepCached: true });
