@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { getCell, readWorkbook, writeWorkbook } from "../index";
+import { createSheetEditor, getCell, readWorkbook, writeWorkbook } from "../index";
 import { setCellInput } from "./workbook";
 import { needsCalcOnLoad, recalc } from "./recalc";
 import { isSheetLoaded, loadSheet, onSheetLoaded } from "./lazy-sheet";
@@ -108,5 +108,42 @@ describe("deciding on a load-time recalc without parsing", () => {
     const wb = readWorkbook(withRows(`<row r="1"><c r="A1" t="str"><f>IF(1,"","x")</f><v/></c></row>`), { lazySheets: true });
     expect(needsCalcOnLoad(wb)).toBe(false);
     expect(wb.sheets.map(isSheetLoaded)).toEqual([false, false]);
+  });
+});
+
+// An openpyxl-style sheet that is not the one shown first: its results are filled in once it is
+// parsed, whether the idle loader gets there first or the reader opens its tab first.
+describe("results left out on a sheet parsed after opening", () => {
+  const UNCOMPUTED = `<sheetData><row r="1"><c r="A1"><v>4</v></c><c r="B1"><f>A1*5</f></c></row></sheetData>`;
+  const mount = () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const ed = createSheetEditor(container, makeXlsx([FIRST, UNCOMPUTED]));
+    const openSecond = () => (container.querySelectorAll(".sheetedit-tab")[1] as HTMLElement).click();
+    return { ed, openSecond, done: () => { ed.destroy(); container.remove(); } };
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("computes them when the idle loader parses the sheet", () => {
+    vi.useFakeTimers();
+    const { ed, openSecond, done } = mount();
+    vi.advanceTimersByTime(3000);
+    openSecond();
+    expect(ed.getCellValue("B1")).toBe("20");
+    done();
+  });
+
+  it("computes them when the tab is opened before the idle loader gets there", () => {
+    vi.useFakeTimers();
+    const { ed, openSecond, done } = mount();
+    openSecond();
+    vi.advanceTimersByTime(3000);
+    expect(ed.getCellValue("B1")).toBe("20");
+    done();
   });
 });

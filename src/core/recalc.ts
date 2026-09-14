@@ -187,15 +187,14 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
  * not recomputed for nothing on the way in.
  */
 export function needsCalcOnLoad(wb: Workbook): boolean {
-  for (const sheet of wb.sheets) {
-    // An unparsed sheet is asked through its bytes, so the check parses no sheet on open.
-    if (!isSheetLoaded(sheet)) {
-      if (deferredMayBeUncomputed(sheet)) return true;
-      continue;
-    }
-    for (const cell of sheet.cells.values()) {
-      if (cell.formula !== undefined && cell.uncomputed) return true;
-    }
+  // An unparsed sheet is asked through its bytes, so the check parses no sheet on open.
+  return wb.sheets.some((sheet) => (isSheetLoaded(sheet) ? sheetNeedsCalc(sheet) : deferredMayBeUncomputed(sheet)));
+}
+
+/** Whether this sheet holds a formula stored without its result. Parses the sheet if needed. */
+export function sheetNeedsCalc(sheet: Sheet): boolean {
+  for (const cell of sheet.cells.values()) {
+    if (cell.formula !== undefined && cell.uncomputed) return true;
   }
   return false;
 }

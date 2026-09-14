@@ -15,7 +15,7 @@ import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, Style
 import { cannotOverflow, fontPx } from "./spill";
 import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, MAX_COL, MAX_ROW, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
-import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
+import { makeFormulaEvaluator, sheetNeedsCalc, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
 import { csvToXlsx, writeCsv } from "../adapters/csv";
 import { applyLineOp, syncXlsxMerges, type LineOp } from "./structure";
@@ -53,7 +53,7 @@ import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
-import { isSheetLoaded, loadSheet } from "./lazy-sheet";
+import { isSheetLoaded, loadSheet, onSheetLoaded } from "./lazy-sheet";
 import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
@@ -370,6 +370,13 @@ export function injectStyles(): void {
   document.head.appendChild(s);
 }
 
+/** The sheet a workbook opens on: the one it was saved on when visible, else the first visible one. */
+function openingSheet(wb: Workbook): number {
+  const want = wb.activeSheet ?? 0;
+  if (want > 0 && want < wb.sheets.length && !wb.sheets[want]?.visibility) return want;
+  return Math.max(0, wb.sheets.findIndex((sh) => !sh.visibility));
+}
+
 export function createSheetEditor(
   container: HTMLElement,
   bytes: Uint8Array,
@@ -393,7 +400,10 @@ export function createSheetEditor(
     // A workbook whose producer stored formulas without results renders as an empty grid,
     // because the grid draws cached values. Fill in those blanks once here; a file that
     // already carries its results skips this entirely, and a cached result is never replaced.
-    if (needsCalcOnLoad(wb)) recalc(wb, { keepCached: true });
+    // Only the sheet shown first is parsed and checked now; the idle loader checks each other one.
+    const first = wb.sheets[openingSheet(wb)];
+    if (first) loadSheet(first);
+    if (wb.sheets.some((s) => isSheetLoaded(s) && sheetNeedsCalc(s))) recalc(wb, { keepCached: true });
   } catch (e) {
     // A file that cannot be opened must never lead to a blank editable grid
     // overwriting it: show the reason and return the original bytes on save.
@@ -587,11 +597,7 @@ export function createSheetEditor(
 
   // The sheet the file was left on, when it names one and that sheet is visible: opening on sheet
   // one instead drops the reader somewhere the author did not leave them.
-  let active = (() => {
-    const want = wb.activeSheet ?? 0;
-    if (want > 0 && want < wb.sheets.length && !wb.sheets[want]?.visibility) return want;
-    return Math.max(0, wb.sheets.findIndex((sh) => !sh.visibility));
-  })();
+  let active = openingSheet(wb);
   let condVisuals = new Map<string, CfVisual>(); // conditional-format visuals for the active sheet, per render
   let sparkAt = new Map<string, NonNullable<Sheet["sparklines"]>[number]>(); // host cell -> sparkline, per render
   // Print decoration for the active sheet, per render: the lines that start a page and the print
@@ -5576,6 +5582,20 @@ export function createSheetEditor(
   // Parse the remaining sheets one per idle slot after the first paint, so a tab switch or a
   // workbook-wide search later does not stall on them.
   let idleStopped = false;
+  // Results a producer left out are filled in once their sheet is parsed, by the idle loader or by
+  // a tab switch. Deferred, because a sheet can be parsed from inside a render.
+  let calcQueued = false;
+  onSheetLoaded(wb, (sheet) => {
+    if (calcQueued || !sheetNeedsCalc(sheet)) return;
+    calcQueued = true;
+    setTimeout(() => {
+      if (!idleStopped) {
+        recalc(wb, { keepCached: true });
+        renderGrid();
+      }
+      calcQueued = false;
+    });
+  });
   const whenIdle = (fn: () => void): void => {
     if (typeof requestIdleCallback === "function") requestIdleCallback(fn, { timeout: 2000 });
     else setTimeout(fn, 50);
