@@ -111,6 +111,14 @@ export function createFormulaBar(opts: {
     assist.addEventListener("mousedown", (e) => e.preventDefault());
     assist.addEventListener("click", () => opts.onAssist!(assist));
     fxwrap.append(assist);
+    // The formula helper needs a GPU localml can run its chat model on. Without one (most phones)
+    // the fallback model answers with prose instead of a formula, so the button is not offered.
+    void import("localml/generate")
+      .then((m) => m.chatTasksAvailable())
+      .then((ok) => {
+        if (!ok) assist.style.display = "none";
+      })
+      .catch(() => undefined);
   }
   el.append(ref, fxwrap, input);
 
