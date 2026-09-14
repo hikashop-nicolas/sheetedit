@@ -12,6 +12,7 @@ import { buildToolbar, tbIcon } from "./ui/toolbar";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, StyleChange, Workbook, SheetControl } from "./model";
+import { cannotOverflow, fontPx } from "./spill";
 import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, MAX_COL, MAX_ROW, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, needsCalcOnLoad, recalc } from "./recalc";
@@ -3054,9 +3055,19 @@ export function createSheetEditor(
     measureEl.textContent = text || " ";
     return measureEl.offsetHeight;
   };
-  // The width one line of a cell's text wants, for the spill test below.
+  // The width one line of a cell's text wants, for the spill test below. Each measurement forces a
+  // layout, so a width once measured is kept: the same label in the same font measures the same, and
+  // a grid repeats its labels across rows, sheets and every re-render. Cleared when web fonts finish
+  // loading, since a width taken in a fallback font would then be stale.
+  const lineWidths = new Map<string, number>();
+  if (typeof document !== "undefined" && document.fonts?.addEventListener) {
+    document.fonts.addEventListener("loadingdone", () => lineWidths.clear());
+  }
   let measureLineEl: HTMLElement | null = null;
   const measureLine = (text: string, f: { bold?: boolean; italic?: boolean; size?: number; font?: string }): number => {
+    const cacheKey = `${f.bold ? 1 : 0}${f.italic ? 1 : 0}|${f.size ?? ""}|${f.font ?? ""}|${text}`;
+    const known = lineWidths.get(cacheKey);
+    if (known != null) return known;
     if (!measureLineEl) {
       measureLineEl = document.createElement("div");
       measureLineEl.className = "sheetedit-measure1";
@@ -3067,7 +3078,13 @@ export function createSheetEditor(
     measureLineEl.style.fontSize = f.size ? `${f.size}pt` : "";
     measureLineEl.style.fontFamily = fontStack(f.font);
     measureLineEl.textContent = text;
-    return measureLineEl.offsetWidth;
+    const w = measureLineEl.offsetWidth;
+    // A detached twin measures 0; do not remember that. The cap keeps a huge workbook from growing it forever.
+    if (w > 0) {
+      if (lineWidths.size > 20_000) lineWidths.clear();
+      lineWidths.set(cacheKey, w);
+    }
+    return w;
   };
   /** What a cell's text measures across, runs and the editor's own side padding included. */
   const measureCell = (cell: Cell): number => {
@@ -3089,7 +3106,12 @@ export function createSheetEditor(
     if (!cell || cell.kind === "n" || cell.cellStyle?.wrap || cell.phonetic?.length) return undefined;
     if (spanAtMap.has(key(r, c)) || coveredSet.has(key(r, c))) return undefined;
     if (!cellDisplay(cell).trim()) return undefined;
-    const over = measureCell(cell) - effColW(sheet, c);
+    // Most text cells cannot reach their neighbour whatever the font: skip measuring those.
+    const colW = effColW(sheet, c);
+    const cs = cell.cellStyle;
+    const largestPt = cell.richRuns?.length ? Math.max(cs?.fontSize ?? 0, ...cell.richRuns.map((run) => run.size ?? 0)) || undefined : cs?.fontSize;
+    if (cannotOverflow(cellDisplay(cell), fontPx(largestPt), colW)) return undefined;
+    const over = measureCell(cell) - colW;
     if (over <= 0) return undefined;
     const free = (dir: -1 | 1, budget: number): number => {
       let got = 0;

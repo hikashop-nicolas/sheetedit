@@ -1,63 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { readCsv } from "../adapters/csv/read";
-import { ensureCell, getCell } from "./model";
-import { recalc } from "./recalc";
+import { cannotOverflow, fontPx } from "./spill";
 
-// Dynamic-array spill: a plain formula returning a 2-D array fills its anchor + spill range.
-describe("dynamic array spill", () => {
-  it("spills UNIQUE down a column and dedupes rows", () => {
-    const wb = readCsv("a,=UNIQUE(A1:A5)\nb\na\nc\nb\n");
-    recalc(wb);
-    const s = wb.sheets[0]!;
-    // Anchor B1 + spilled B2..B3 = a,b,c (first-seen order).
-    expect(getCell(s, 1, 2)?.value).toBe("a");
-    expect(getCell(s, 2, 2)?.value).toBe("b");
-    expect(getCell(s, 3, 2)?.value).toBe("c");
-    expect(getCell(s, 2, 2)?.spill).toBe(true);
-    // Nothing spilled past the result.
-    expect(getCell(s, 4, 2)?.value ?? "").toBe("");
+// Measuring a cell's text forces a layout, and the grid did it for every text cell it drew.
+// cannotOverflow rules out the cells whose text cannot possibly reach the next column.
+describe("ruling out a spill without measuring", () => {
+  it("skips a short label in an ordinary column", () => {
+    expect(cannotOverflow("Rent", fontPx(undefined), 96)).toBe(true);
   });
 
-  it("SEQUENCE spills a 2-D grid from the anchor", () => {
-    const wb = readCsv('"=SEQUENCE(2,3)"\n');
-    recalc(wb);
-    const s = wb.sheets[0]!;
-    expect(getCell(s, 1, 1)?.value).toBe("1");
-    expect(getCell(s, 1, 3)?.value).toBe("3");
-    expect(getCell(s, 2, 1)?.value).toBe("4");
-    expect(getCell(s, 2, 3)?.value).toBe("6");
+  it("still measures a label that might overflow", () => {
+    expect(cannotOverflow("Studio budget 2027", fontPx(undefined), 96)).toBe(false);
   });
 
-  it("SORT orders rows ascending and descending", () => {
-    const wb = readCsv("3,=SORT(A1:A3)\n1\n2\n");
-    recalc(wb);
-    const s = wb.sheets[0]!;
-    expect([getCell(s, 1, 2)?.value, getCell(s, 2, 2)?.value, getCell(s, 3, 2)?.value]).toEqual(["1", "2", "3"]);
+  it("stays safe for full-width text, which is about 1em a character", () => {
+    // Six CJK characters at 13px are about 78px wide: close enough to 96px that it must be measured.
+    expect(cannotOverflow("契約書に記入", fontPx(undefined), 96)).toBe(false);
+    expect(cannotOverflow("契約", fontPx(undefined), 96)).toBe(true);
   });
 
-  it("FILTER keeps only rows whose mask entry is truthy", () => {
-    // The include argument must be an array/range mask (the engine does not broadcast a
-    // range=scalar comparison into a per-row mask). Here B1:B3 = 1,0,1 selects rows 1 and 3.
-    const wb = readCsv('10,1,"=FILTER(A1:A3,B1:B3)"\n20,0\n30,1\n');
-    recalc(wb);
-    const s = wb.sheets[0]!;
-    expect(getCell(s, 1, 3)?.value).toBe("10");
-    expect(getCell(s, 2, 3)?.value).toBe("30");
+  it("counts a character outside the basic plane once", () => {
+    expect(cannotOverflow("😀😀", fontPx(undefined), 60)).toBe(true);
   });
 
-  it("reports #SPILL! when the range is blocked and clears a stale spill", () => {
-    const wb = readCsv("a,=UNIQUE(A1:A3),\nb,BLOCK\nc\n");
-    recalc(wb);
-    const s = wb.sheets[0]!;
-    // B2 is occupied by "BLOCK" -> the UNIQUE at B1 cannot spill.
-    expect(getCell(s, 1, 2)?.value).toBe("#SPILL!");
-    // Clear the obstacle, recompute: it now spills.
-    const block = ensureCell(s, 2, 2);
-    block.value = "";
-    block.kind = "blank";
-    recalc(wb);
-    expect(getCell(s, 1, 2)?.value).toBe("a");
-    expect(getCell(s, 2, 2)?.value).toBe("b");
-    expect(getCell(s, 3, 2)?.value).toBe("c");
+  it("uses the cell's own font size", () => {
+    // "Total" at 8pt is at most 16 + 5 x 10.7px x 1.35 = 88px: fits a 96px column. At 24pt it may not.
+    expect(cannotOverflow("Total", fontPx(8), 96)).toBe(true);
+    expect(cannotOverflow("Total", fontPx(24), 96)).toBe(false);
   });
 });
