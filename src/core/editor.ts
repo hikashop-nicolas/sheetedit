@@ -5263,6 +5263,24 @@ export function createSheetEditor(
     return grew;
   };
 
+  /** A sheet shorter or narrower than the screen has no edge to scroll to, so it could never grow
+      (a new sheet on a tall phone): pad it until it overflows. */
+  const fillViewport = (): boolean => {
+    const el = mainPane.scrollEl;
+    if (!el.clientHeight || !el.clientWidth) return false; // not laid out yet, or no layout at all
+    let grew = false;
+    if (el.scrollHeight <= el.clientHeight + EDGE_GROW && totalRows < MAX_ROW) {
+      extraRows += ROW_CHUNK;
+      grew = true;
+    }
+    if (el.scrollWidth <= el.clientWidth + EDGE_GROW && totalCols < MAX_COL) {
+      extraCols += COL_CHUNK;
+      grew = true;
+    }
+    return grew;
+  };
+  let filling = false;
+
   const onPaneScroll = (pane: Pane) => () => {
     shareScroll(pane); // the panes sharing this axis follow along
     if (scrollScheduled) return;
@@ -5377,7 +5395,19 @@ export function createSheetEditor(
     outlineLayer.refresh();
     paneDividers.refresh();
     pivotLayer.refresh();
+    if (!filling) {
+      filling = true;
+      try {
+        for (let pass = 0; pass < 50 && fillViewport(); pass++) renderGrid();
+      } finally {
+        filling = false;
+      }
+    }
   };
+  const onWindowResize = (): void => {
+    if (fillViewport()) renderGrid(); // a rotated phone or a closed keyboard can leave room below
+  };
+  window.addEventListener("resize", onWindowResize);
 
   const switchSheet = (i: number): void => {
     if (i === active || !wb.sheets[i]) return;
@@ -6127,6 +6157,7 @@ export function createSheetEditor(
     },
     destroy() {
       idleStopped = true;
+      window.removeEventListener("resize", onWindowResize);
       document.removeEventListener("copy", onDocCopy);
       document.removeEventListener("paste", onDocPaste);
       window.removeEventListener("pointerup", endDrag);

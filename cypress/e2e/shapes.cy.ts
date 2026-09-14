@@ -46,7 +46,8 @@ describe("a new shape", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('.sheetedit-toolbar [aria-label="Insert shape"]').click();
     cy.get('.sheetedit-shapegallery [aria-label="Rectangle"]').first().click();
-    cy.get(".sheetedit-shapebox").click();
+    // Cypress scrolls a target to the top edge before clicking, which would push the grip above it out of view.
+    cy.get(".sheetedit-shapebox").click({ scrollBehavior: "center" });
     cy.get(".sheetedit-shapebar").should("be.visible");
     cy.get(".sheetedit-shape-rotate").should("be.visible");
     // The grip hangs above the shape and the bar sits above the grip: a bar drawn right on top of
@@ -75,6 +76,18 @@ describe("the end of the grid", () => {
       grid().scrollTo("bottom");
       cy.get(".sheetedit-table th.rownum", { timeout: TIMEOUT }).last().invoke("attr", "data-r").then(Number)
         .should("be.greaterThan", 24);
+    });
+  });
+
+  // A short sheet on a tall screen had no bottom edge to reach: nothing scrolled, so it never grew.
+  it("fills a screen taller than the sheet, so it can still scroll and grow", () => {
+    cy.viewport(1900, 1600);
+    open("cypress/fixtures/sample.xlsx");
+    grid().should(($g) => expect($g[0].scrollHeight, "the grid scrolls").to.be.greaterThan($g[0].clientHeight + 60));
+    grid().then(($g) => {
+      const before = $g[0].scrollHeight;
+      grid().scrollTo("bottom");
+      grid().should(($after) => expect($after[0].scrollHeight, "the sheet got longer").to.be.greaterThan(before));
     });
   });
 
