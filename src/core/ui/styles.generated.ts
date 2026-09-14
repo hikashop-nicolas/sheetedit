@@ -306,7 +306,7 @@ font:inherit; padding:0 8px; box-sizing:border-box; outline:none;
 .sheetedit-table td.num input { text-align:right; font-variant-numeric:tabular-nums; }
 .sheetedit-table td.sheetedit-fillsrc { position:relative; }
 .sheetedit-fillhandle {
-position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:5;
+position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:1;
 background:var(--sheetedit-accent, #6e7bff); border:1px solid var(--sheetedit-handle-border); cursor:crosshair; touch-action:none;
 }
 .sheetedit-table td.sheetedit-fillprev input { background:rgba(110,123,255,0.10); }
