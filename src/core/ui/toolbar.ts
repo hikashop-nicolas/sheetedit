@@ -322,7 +322,25 @@ export function buildToolbar(ctx: {
     if (!moreMenu.children.length) moreBtn.style.display = "none";
     // Only when every authoring control has folded and it still overflows, collapse the style
     // cluster into its "Aa" menu as a last resort.
-    if (!fits()) collapse();
+    if (!fits()) {
+      collapse();
+      // Collapsing frees most of the row, but the authoring controls folded before it happened
+      // stayed folded: on a phone every one of them sat in "⋯" beside empty space. Bring them back
+      // in order, as long as they fit. Folded rows sit in the menu in toolbar order.
+      for (const el of trailing) {
+        if (el.style.display !== "none") continue;
+        const row = moreMenu.firstElementChild as HTMLElement | null;
+        el.style.display = "";
+        row?.remove();
+        if (!moreMenu.children.length) moreBtn.style.display = "none";
+        if (!fits()) {
+          el.style.display = "none";
+          if (row) moreMenu.prepend(row);
+          moreBtn.style.display = "";
+          break;
+        }
+      }
+    }
   };
   relayout();
   requestAnimationFrame(relayout);
