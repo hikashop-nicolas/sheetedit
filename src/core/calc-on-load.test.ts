@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { getCell, readWorkbook } from "../index";
 import { needsCalcOnLoad, recalc } from "./recalc";
 
@@ -100,6 +100,20 @@ describe("computing a workbook that shipped without results", () => {
     recalc(wb, { keepCached: true });
     expect(getCell(wb.sheets[0]!, 1, 2)?.value).toBe("5");
     expect(getCell(wb.sheets[0]!, 1, 3)?.value).toBe("50");
+  });
+
+  // The computed total must wear the cell's number format, as a cached one does. Its value was
+  // filled in on open but shown bare ("29950" beside "3,600 €"), because the format was only
+  // read for cells that arrived with a number.
+  it("formats a computed openpyxl total with its cell's number format", () => {
+    const files = unzipSync(makeXlsx(`<row r="1"><c r="A1" s="1" t="n"><v>3600</v></c><c r="A2" s="1" t="n"><v>21000</v></c><c r="A3" s="1"><f>SUM(A1:A2)</f><v /></c></row>`));
+    files["xl/styles.xml"] = strToU8(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`);
+    const wb = readWorkbook(zipSync(files));
+    recalc(wb, { keepCached: true });
+    const sheet = wb.sheets[0]!;
+    expect(getCell(sheet, 1, 1)?.display, "the cached cell, for comparison").toBe("3,600");
+    expect(getCell(sheet, 3, 1)?.value).toBe("24600");
+    expect(getCell(sheet, 3, 1)?.display).toBe("24,600");
   });
 
   it("leaves a deliberately blanked cell blank", () => {

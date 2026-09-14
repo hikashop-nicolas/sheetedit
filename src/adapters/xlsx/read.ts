@@ -803,6 +803,12 @@ export function readSheetData(sheet: Sheet, sheetData: Element, shared: RichStri
       };
       // Legacy array formula: the top-left cell carries <f t="array" ref="A1:C3">.
       if (fEl?.getAttribute("t") === "array") cell.arrayRef = fEl.getAttribute("ref") ?? undefined;
+      // A formula cell takes its style's format even with no number cached yet: an openpyxl
+      // total arrives empty, and the value computed on open must still show as the file says.
+      if (kind !== "n" && formula) {
+        const fmt = resolveXlsxFmt(styles, cell.style);
+        if (fmt != null) cell.numFmt = fmt;
+      }
       if (kind === "n") {
         const fmt = resolveXlsxFmt(styles, cell.style);
         if (fmt != null) {
