@@ -613,10 +613,19 @@ function readSheetTab(sheet: Sheet, bytes: Uint8Array, theme: string[]): void {
 /** Whether a worksheet may hold a formula stored without its result. A false alarm costs only a recalc. */
 export function mayHoldUncomputed(bytes: Uint8Array): boolean {
   const xml = new TextDecoder().decode(bytes);
+  // Compact unprefixed XML, what nearly every producer writes, is searched with plain strings:
+  // the regular expressions below cost several times more on a large sheet.
+  const compact = xml.includes("<c ") && !["\n</c>", " </c>", "\t</c>", "\r</c>"].some((s) => xml.includes(s));
   // A formula closed straight by its cell, with no <v> at all.
-  if (/(?:<\/(?:\w+:)?f>|<(?:\w+:)?f\b[^>]*\/>)\s*<\/(?:\w+:)?c>/.test(xml)) return true;
+  if (compact) {
+    if (xml.includes("</f></c>")) return true;
+    for (let i = xml.indexOf("/></c>"); i >= 0; i = xml.indexOf("/></c>", i + 1)) {
+      const tag = xml.lastIndexOf("<", i);
+      if (xml.startsWith("<f ", tag) || xml.startsWith("<f/", tag)) return true;
+    }
+  } else if (/(?:<\/(?:\w+:)?f>|<(?:\w+:)?f\b[^>]*\/>)\s*<\/(?:\w+:)?c>/.test(xml)) return true;
   // An empty <v> is a placeholder only on a number cell: on t="str" it is the computed "".
-  const empty = /<(?:\w+:)?v\s*\/>|<(?:\w+:)?v>\s*<\/(?:\w+:)?v>/g;
+  const empty = compact ? /<v ?\/>|<v><\/v>/g : /<(?:\w+:)?v\s*\/>|<(?:\w+:)?v>\s*<\/(?:\w+:)?v>/g;
   for (let m = empty.exec(xml); m; m = empty.exec(xml)) {
     const open = Math.max(xml.lastIndexOf("<c ", m.index), xml.lastIndexOf(":c ", m.index));
     if (open < 0) return true;
