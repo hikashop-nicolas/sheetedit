@@ -61,6 +61,24 @@ describe("a new shape", () => {
       });
     });
   });
+
+  // On a phone the bar was wider than the screen and its last buttons could not be reached.
+  it("folds the controls that do not fit the screen under a ⋯ menu", () => {
+    cy.viewport(1900, 800);
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('.sheetedit-toolbar [aria-label="Insert shape"]').click();
+    cy.get('.sheetedit-shapegallery [aria-label="Rectangle"]').first().click();
+    cy.get(".sheetedit-shapebox").click({ scrollBehavior: "center" });
+    cy.get(".sheetedit-shapebar").should("be.visible");
+    cy.get(".sheetedit-shapebar-more").should("not.be.visible");
+    cy.viewport(420, 800);
+    cy.get(".sheetedit-shapebox").click({ scrollBehavior: "center", force: true });
+    cy.get(".sheetedit-shapebar").should("be.visible").should(($b) => {
+      expect($b[0].getBoundingClientRect().right, "inside the screen").to.be.at.most(420);
+    });
+    cy.get(".sheetedit-shapebar-more").should("be.visible").click();
+    cy.get(".sheetedit-tb-moremenu .sheetedit-shapebar-moreitem").should("have.length.greaterThan", 0);
+  });
 });
 
 describe("the end of the grid", () => {

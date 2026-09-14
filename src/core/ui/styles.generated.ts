@@ -401,6 +401,10 @@ white-space:pre; overflow:auto; tab-size:4; -moz-tab-size:4;
 .sheetedit-shapebar .sheetedit-shapebar-group { display:inline-flex; align-items:center; gap:2px; }
 .sheetedit-shapebar .sheetedit-shapebar-group[hidden] { display:none; }
 .sheetedit-shapebar .sheetedit-btn { min-width:26px; padding:3px 6px; }
+.sheetedit-shapebar > *, .sheetedit-shapebar .sheetedit-shapebar-group > * { flex-shrink:0; }
+.sheetedit-shapebar .sheetedit-shapebar-more[hidden] { display:none; }
+.sheetedit-shapebar-moreitem { padding:2px 6px; border-radius:6px; }
+.sheetedit-shapebar-moreitem > span { flex:1; cursor:pointer; }
 .sheetedit-error { background:var(--sheetedit-error-bg); color:var(--sheetedit-error-fg); padding:10px 14px; font:13px/1.5 system-ui,sans-serif; }
 .sheetedit-notice {
 position:absolute; left:50%; bottom:44px; transform:translateX(-50%); z-index:60; max-width:min(90%,420px);

@@ -40,8 +40,15 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
   bar.hidden = true;
   bar.setAttribute("role", "toolbar");
   bar.setAttribute("aria-label", t("shapeEdit"));
+  // Controls that do not fit the screen fold into a "⋯" menu, the last ones first, as on the toolbar.
+  // Added before the choice lists below, so a list opened from inside it paints on top of it.
+  const moreMenu = document.createElement("div");
+  moreMenu.className = "sheetedit-tb-groupmenu sheetedit-tb-moremenu";
+  moreMenu.hidden = true;
+  moreMenu.setAttribute("role", "menu");
+  deps.wrap.appendChild(moreMenu);
 
-  const groups: { el: HTMLElement; show: (sh: SheetShape) => boolean }[] = [];
+  const groups: { el: HTMLElement; show: (sh: SheetShape) => boolean; kids: HTMLElement[] }[] = [];
   /** Apply a change to the selected shape and tell the host whether the paint moved. */
   const set = (fn: (sh: SheetShape) => void, paint = true): void => {
     const sh = deps.shape();
@@ -82,7 +89,7 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
       item.setAttribute("role", "menuitem");
       item.textContent = text;
       item.addEventListener("mousedown", (e) => e.preventDefault());
-      item.addEventListener("click", () => { list.hidden = true; run(); });
+      item.addEventListener("click", () => { list.hidden = true; moreMenu.hidden = true; run(); });
       list.appendChild(item);
     }
     btn.addEventListener("mousedown", (e) => e.preventDefault());
@@ -111,7 +118,7 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
     wrapEl.className = "sheetedit-shapebar-group";
     for (const el of els) wrapEl.appendChild(el);
     bar.appendChild(wrapEl);
-    groups.push({ el: wrapEl, show });
+    groups.push({ el: wrapEl, show, kids: els });
   };
 
   // --- fill and outline -----------------------------------------------------
@@ -219,13 +226,78 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
     group([sep(), front, back], (sh) => !sh.within);
   }
 
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "sheetedit-btn sheetedit-shapebar-more";
+  more.textContent = "⋯";
+  more.title = t("more");
+  more.setAttribute("aria-label", t("more"));
+  more.hidden = true;
+  more.addEventListener("mousedown", (e) => e.preventDefault());
+  more.addEventListener("click", () => {
+    const open = moreMenu.hidden;
+    for (const m of deps.wrap.querySelectorAll<HTMLElement>(".sheetedit-tb-groupmenu")) m.hidden = true;
+    moreMenu.hidden = !open;
+    if (open) {
+      const r = more.getBoundingClientRect();
+      const w = moreMenu.offsetWidth;
+      moreMenu.style.left = `${Math.max(4, Math.min(r.right - w, window.innerWidth - w - 4))}px`;
+      moreMenu.style.top = `${r.bottom + 2}px`;
+    }
+  });
+  bar.appendChild(more);
   deps.wrap.appendChild(bar);
+
+  /** A folded control in the menu, beside its name; tapping the name works the control. */
+  const foldedRow = (el: HTMLElement): HTMLElement => {
+    const row = document.createElement("div");
+    row.className = "sheetedit-more-item sheetedit-shapebar-moreitem";
+    row.setAttribute("role", "menuitem");
+    const name = document.createElement("span");
+    name.textContent = el.getAttribute("aria-label") ?? el.title;
+    name.addEventListener("mousedown", (e) => e.preventDefault());
+    name.addEventListener("click", () => el.click());
+    row.append(el, name);
+    return row;
+  };
+  let foldedFor = "";
+  /** Put every control back in the bar, then fold from the end until it fits in maxWidth. */
+  const fold = (maxWidth: number): void => {
+    const layoutKey = `${Math.round(maxWidth)}|${groups.map((g) => (g.el.hidden ? 0 : 1)).join("")}`;
+    // The same room as last time: refolding would pull a control out from under its open picker.
+    if (layoutKey === foldedFor) return;
+    foldedFor = layoutKey;
+    for (const g of groups) g.el.replaceChildren(...g.kids);
+    moreMenu.replaceChildren();
+    moreMenu.hidden = true;
+    more.hidden = true;
+    bar.style.maxWidth = `${maxWidth}px`;
+    const overflows = (): boolean => bar.scrollWidth > bar.clientWidth + 1;
+    if (!overflows()) return;
+    more.hidden = false;
+    const folded: HTMLElement[] = [];
+    const shown = groups.filter((g) => !g.el.hidden);
+    for (let gi = shown.length - 1; gi >= 0 && overflows(); gi--) {
+      const kids = shown[gi]!.kids;
+      for (let i = kids.length - 1; i >= 0 && overflows(); i--) {
+        const el = kids[i]!;
+        el.remove();
+        if (!el.classList.contains("sheetedit-floatbar-sep")) folded.unshift(el);
+      }
+    }
+    // A group cut down to its divider would leave a line in front of the "⋯".
+    for (const g of shown) {
+      if ([...g.el.children].every((c) => c.classList.contains("sheetedit-floatbar-sep"))) g.el.replaceChildren();
+    }
+    for (const el of folded) moreMenu.appendChild(foldedRow(el));
+  };
 
   const refresh = (): void => {
     const sh = deps.shape();
     const rect = sh ? deps.shapeRect() : null;
     if (!sh || !rect) {
       bar.hidden = true;
+      moreMenu.hidden = true;
       for (const m of bar.querySelectorAll<HTMLElement>(".sheetedit-tb-groupmenu")) m.hidden = true;
       for (const m of deps.wrap.querySelectorAll<HTMLElement>(".sheetedit-shapebar ~ .sheetedit-tb-groupmenu")) m.hidden = true;
       return;
@@ -233,11 +305,12 @@ export function setupShapeBar(deps: ShapeBarDeps): { refresh(): void; teardown()
     for (const g of groups) g.el.hidden = !g.show(sh);
     for (const el of bar.querySelectorAll<HTMLInputElement & { sync?: (s: SheetShape) => void }>("input.sheetedit-color")) el.sync?.(sh);
     bar.hidden = false;
+    const grid = deps.bounds();
+    fold(Math.max(120, grid.width - 8));
     // Above the shape where there is room, below it otherwise, and never outside the grid. The
     // rotation grip hangs off the top of the shape (GRIP_ROOM px of circle and stem), so the bar
     // starts above that: sitting right on top of the shape left the grip tucked under the bar,
     // where it could be neither seen nor grabbed. Below the shape there is no grip in the way.
-    const grid = deps.bounds();
     const bw = bar.offsetWidth || 260;
     const bh = bar.offsetHeight || 32;
     let left = rect.left + rect.width / 2 - bw / 2;
