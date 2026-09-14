@@ -8,6 +8,7 @@ import { financialFunctions } from "./financial";
 import { allowRawRefs, fixBlankCompare, fixIndexSheet, referenceFunctions } from "./reference-fns";
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
+import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
@@ -187,6 +188,11 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
  */
 export function needsCalcOnLoad(wb: Workbook): boolean {
   for (const sheet of wb.sheets) {
+    // An unparsed sheet is asked through its bytes, so the check parses no sheet on open.
+    if (!isSheetLoaded(sheet)) {
+      if (deferredMayBeUncomputed(sheet)) return true;
+      continue;
+    }
     for (const cell of sheet.cells.values()) {
       if (cell.formula !== undefined && cell.uncomputed) return true;
     }

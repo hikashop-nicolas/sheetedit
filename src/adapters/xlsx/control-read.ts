@@ -1,4 +1,4 @@
-import { parseXmlOpt, type ControlVisuals, type SheetControl, type Workbook } from "../../core/model";
+import { parseXmlOpt, type ControlVisuals, type Sheet, type SheetControl, type Workbook } from "../../core/model";
 import { anchorOf, relMap, resolvePart } from "./chart-read";
 import { isParentControlBin, readParentControl } from "./activex-form";
 import { kindOfClsid, readActiveXStream, type ActiveXControl, type ActiveXKind } from "./activex-read";
@@ -121,89 +121,92 @@ function vmlAnchor(client: Element): SheetControl["anchor"] | undefined {
 
 /** Populate sheet.controls for every sheet that has form controls. */
 export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>): void {
-  for (const sheet of wb.sheets) {
-    if (!sheet.path || !sheet.doc) continue;
-    const relsPath = sheet.path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
-    const rels = relMap(files, relsPath);
-    // The legacy VML drawing carries the shapes; a sheet can only have one.
-    const vmlRel = rels.byType.find((r) => /vmlDrawing/i.test(r.type));
-    const vmlPath = vmlRel ? resolvePart("xl/worksheets", vmlRel.target) : undefined;
-    const vml = vmlPath ? readVml(files, vmlPath) : new Map();
+  for (const sheet of wb.sheets) readSheetControls(sheet, files);
+}
 
-    const controls: SheetControl[] = [];
-    const claimed = new Set<string>();
-    // A control is written twice, once under mc:Choice with its placement and once under
-    // mc:Fallback without it, so the same shape id appears twice and only the first is wanted.
-    const seen = new Set<string>();
-    // <control> elements sit in <controls>, directly or wrapped in mc:AlternateContent, at the top
-    // level of the worksheet. Searching only those blocks keeps document order and skips
-    // <sheetData>, which walking the whole sheet on every open spent most of its time in.
-    const controlEls = Array.from(sheet.doc.documentElement.children)
-      .filter((c) => c.localName === "controls" || c.localName === "AlternateContent")
-      .flatMap((block) => Array.from(block.getElementsByTagName("*")).filter((e) => e.localName === "control"));
-    for (const el of controlEls) {
-      const dedupe = el.getAttribute("shapeId") ?? el.getAttribute("name") ?? "";
-      if (dedupe && seen.has(dedupe)) continue;
-      if (dedupe) seen.add(dedupe);
-      const shapeId = el.getAttribute("shapeId") ?? undefined;
-      const rid = Array.from(el.attributes).find((a) => a.localName === "id" && a.name !== "id")?.value ?? el.getAttribute("r:id") ?? undefined;
-      const ctl: SheetControl = { kind: "label", name: el.getAttribute("name") ?? `Control ${controls.length + 1}`, shapeId, vmlPath };
+/** Read the form and ActiveX controls of one parsed worksheet. */
+export function readSheetControls(sheet: Sheet, files: Record<string, Uint8Array>): void {
+  if (!sheet.path || !sheet.doc) return;
+  const relsPath = sheet.path.replace(/worksheets\/(sheet[^/]+\.xml)$/i, "worksheets/_rels/$1.rels");
+  const rels = relMap(files, relsPath);
+  // The legacy VML drawing carries the shapes; a sheet can only have one.
+  const vmlRel = rels.byType.find((r) => /vmlDrawing/i.test(r.type));
+  const vmlPath = vmlRel ? resolvePart("xl/worksheets", vmlRel.target) : undefined;
+  const vml = vmlPath ? readVml(files, vmlPath) : new Map();
 
-      const target = rid ? rels.byId.get(rid) : undefined;
-      const propsPath = target ? resolvePart("xl/worksheets", target) : undefined;
-      // Form controls and ActiveX controls share this element and are told apart by the part the
-      // relationship lands on. Reading an ActiveX part as a formControlPr yields a kind of "label"
-      // with no properties, which is how a workbook full of ActiveX drew a screen of blank labels.
-      const isActiveX = /\/activeX\//i.test(propsPath ?? "");
-      const propsDoc = propsPath && files[propsPath] ? parseXmlOpt(files[propsPath]) : undefined;
-      if (isActiveX) {
-        applyActiveX(ctl, files, propsPath!, propsDoc);
-      } else if (propsDoc?.documentElement) {
-        ctl.propsPath = propsPath;
-        applyProps(ctl, propsDoc.documentElement);
-      }
-      // <controlPr> carries the placement AND the Excel-side properties that are not the control's
-      // own: which cell it drives and where a list gets its items. An ActiveX control keeps them
-      // here rather than in its binary, so they read without touching it.
-      const prEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "controlPr");
-      const anchorEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "anchor");
-      if (anchorEl) ctl.anchor = anchorOf(anchorEl) ?? undefined;
-      if (prEl) {
-        const link = prEl.getAttribute("linkedCell");
-        if (link) ctl.linkedCell = link;
-        const fill = prEl.getAttribute("listFillRange");
-        if (fill) ctl.sourceRange = fill;
-        // A macro named here wins over the one a button's name implies.
-        const macro = prEl.getAttribute("macro");
-        if (macro) ctl.macro = macro.replace(/^\[\d+\]!/, "").replace(/^.*!/, "");
-      }
+  const controls: SheetControl[] = [];
+  const claimed = new Set<string>();
+  // A control is written twice, once under mc:Choice with its placement and once under
+  // mc:Fallback without it, so the same shape id appears twice and only the first is wanted.
+  const seen = new Set<string>();
+  // <control> elements sit in <controls>, directly or wrapped in mc:AlternateContent, at the top
+  // level of the worksheet. Searching only those blocks keeps document order and skips
+  // <sheetData>, which walking the whole sheet on every open spent most of its time in.
+  const controlEls = Array.from(sheet.doc.documentElement.children)
+    .filter((c) => c.localName === "controls" || c.localName === "AlternateContent")
+    .flatMap((block) => Array.from(block.getElementsByTagName("*")).filter((e) => e.localName === "control"));
+  for (const el of controlEls) {
+    const dedupe = el.getAttribute("shapeId") ?? el.getAttribute("name") ?? "";
+    if (dedupe && seen.has(dedupe)) continue;
+    if (dedupe) seen.add(dedupe);
+    const shapeId = el.getAttribute("shapeId") ?? undefined;
+    const rid = Array.from(el.attributes).find((a) => a.localName === "id" && a.name !== "id")?.value ?? el.getAttribute("r:id") ?? undefined;
+    const ctl: SheetControl = { kind: "label", name: el.getAttribute("name") ?? `Control ${controls.length + 1}`, shapeId, vmlPath };
 
-      const shape = shapeId ? vml.get(shapeId) : undefined;
-      if (shape) {
-        if (!propsDoc) ctl.kind = shape.kind;
-        ctl.label ??= shape.label;
-        applyClientData(ctl, shape.client);
-        ctl.anchor ??= vmlAnchor(shape.client);
-      }
-      controls.push(ctl);
-      if (shapeId) claimed.add(shapeId);
+    const target = rid ? rels.byId.get(rid) : undefined;
+    const propsPath = target ? resolvePart("xl/worksheets", target) : undefined;
+    // Form controls and ActiveX controls share this element and are told apart by the part the
+    // relationship lands on. Reading an ActiveX part as a formControlPr yields a kind of "label"
+    // with no properties, which is how a workbook full of ActiveX drew a screen of blank labels.
+    const isActiveX = /\/activeX\//i.test(propsPath ?? "");
+    const propsDoc = propsPath && files[propsPath] ? parseXmlOpt(files[propsPath]) : undefined;
+    if (isActiveX) {
+      applyActiveX(ctl, files, propsPath!, propsDoc);
+    } else if (propsDoc?.documentElement) {
+      ctl.propsPath = propsPath;
+      applyProps(ctl, propsDoc.documentElement);
+    }
+    // <controlPr> carries the placement AND the Excel-side properties that are not the control's
+    // own: which cell it drives and where a list gets its items. An ActiveX control keeps them
+    // here rather than in its binary, so they read without touching it.
+    const prEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "controlPr");
+    const anchorEl = Array.from(el.getElementsByTagName("*")).find((e) => e.localName === "anchor");
+    if (anchorEl) ctl.anchor = anchorOf(anchorEl) ?? undefined;
+    if (prEl) {
+      const link = prEl.getAttribute("linkedCell");
+      if (link) ctl.linkedCell = link;
+      const fill = prEl.getAttribute("listFillRange");
+      if (fill) ctl.sourceRange = fill;
+      // A macro named here wins over the one a button's name implies.
+      const macro = prEl.getAttribute("macro");
+      if (macro) ctl.macro = macro.replace(/^\[\d+\]!/, "").replace(/^.*!/, "");
     }
 
-    // Older Excel wrote no <controls> element at all: the button exists only as a VML shape, with
-    // its macro, its label and its anchor. Those are picked up here, or such a file would show no
-    // control at all. Only the known form-control ObjectTypes qualify, because the same VML part
-    // also carries cell comments.
-    for (const [id, shape] of vml) {
-      if (claimed.has(id)) continue;
-      if (!isControlType(shape.client.getAttribute("ObjectType"))) continue;
-      const ctl: SheetControl = { kind: shape.kind, name: shape.label ?? `Control ${controls.length + 1}`, shapeId: id, vmlPath };
-      ctl.label = shape.label;
+    const shape = shapeId ? vml.get(shapeId) : undefined;
+    if (shape) {
+      if (!propsDoc) ctl.kind = shape.kind;
+      ctl.label ??= shape.label;
       applyClientData(ctl, shape.client);
-      ctl.anchor = vmlAnchor(shape.client);
-      controls.push(ctl);
+      ctl.anchor ??= vmlAnchor(shape.client);
     }
-    if (controls.length) sheet.controls = controls;
+    controls.push(ctl);
+    if (shapeId) claimed.add(shapeId);
   }
+
+  // Older Excel wrote no <controls> element at all: the button exists only as a VML shape, with
+  // its macro, its label and its anchor. Those are picked up here, or such a file would show no
+  // control at all. Only the known form-control ObjectTypes qualify, because the same VML part
+  // also carries cell comments.
+  for (const [id, shape] of vml) {
+    if (claimed.has(id)) continue;
+    if (!isControlType(shape.client.getAttribute("ObjectType"))) continue;
+    const ctl: SheetControl = { kind: shape.kind, name: shape.label ?? `Control ${controls.length + 1}`, shapeId: id, vmlPath };
+    ctl.label = shape.label;
+    applyClientData(ctl, shape.client);
+    ctl.anchor = vmlAnchor(shape.client);
+    controls.push(ctl);
+  }
+  if (controls.length) sheet.controls = controls;
 }
 
 /** How an ActiveX control's kind maps onto the model's own vocabulary. */

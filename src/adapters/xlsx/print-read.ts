@@ -109,14 +109,18 @@ export function readXlsxPrintSetup(sheet: Sheet, doc: Document): void {
 
 /** Apply the sheet-scoped _xlnm.Print_Area / Print_Titles names onto their sheets. */
 export function readXlsxPrintNames(wb: Workbook, wbDoc: Document): void {
+  wb.sheets.forEach((sheet, index) => readSheetPrintNames(sheet, index, wbDoc));
+}
+
+/** Apply the print names scoped to the sheet at this position in the workbook. */
+export function readSheetPrintNames(sheet: Sheet, index: number, wbDoc: Document): void {
   for (const dn of Array.from(wbDoc.getElementsByTagName("definedName"))) {
     const name = dn.getAttribute("name");
     if (name !== "_xlnm.Print_Area" && name !== "_xlnm.Print_Titles") continue;
     // These are sheet-scoped: localSheetId indexes the workbook's sheet order.
-    const idx = Number(dn.getAttribute("localSheetId") ?? "-1");
-    const sheet = wb.sheets[idx];
+    if (Number(dn.getAttribute("localSheetId") ?? "-1") !== index) continue;
     const value = dn.textContent?.trim();
-    if (!sheet || !value) continue;
+    if (!value) continue;
     const p: PrintSetup = sheet.printSetup ?? {};
     if (name === "_xlnm.Print_Area") {
       const areas = value.split(",").map(parseAreaRef).filter((r): r is NonNullable<typeof r> => !!r);

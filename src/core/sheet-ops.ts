@@ -1,6 +1,7 @@
 import { parseXmlOpt, serializeXml, type Cell, type Sheet, type Workbook } from "./model";
 import { createWorksheet, uniqueSheetName } from "../adapters/xlsx/sheet-create";
 import { setOdsSheetHidden } from "../adapters/ods/styles";
+import { isSheetLoaded, onSheetLoaded } from "./lazy-sheet";
 
 // Add / rename / delete / reorder sheets, for both .xlsx and .ods. Each op mutates the model
 // (wb.sheets) and the file immediately (xlsx: xl/workbook.xml + rels + content-types; ods: the
@@ -32,11 +33,17 @@ export function assignSheetIds(wb: Workbook): void {
  * a session can move, resize or replace one, and all three keep it in place in the list.
  */
 export function assignImageIds(wb: Workbook): void {
-  for (const sheet of wb.sheets) {
+  forLoadedSheets(wb, (sheet) =>
     sheet.images?.forEach((im, i) => {
       im.cid ??= `${sheet.cid ?? sheet.name}-i${i}`;
-    });
-  }
+    }),
+  );
+}
+
+/** Run fn on every sheet parsed so far, then on each one parsed later. Ids stay positional either way. */
+function forLoadedSheets(wb: Workbook, fn: (sheet: Sheet) => void): void {
+  wb.sheets.filter(isSheetLoaded).forEach(fn);
+  onSheetLoaded(wb, fn);
 }
 
 /**
@@ -63,14 +70,14 @@ export function assignPivotIds(wb: Workbook): void {
 
 /** Give every shape and form control a stable id, from its sheet and its place in it. */
 export function assignDrawingIds(wb: Workbook): void {
-  for (const sheet of wb.sheets) {
+  forLoadedSheets(wb, (sheet) => {
     sheet.shapes?.forEach((sp, i) => {
       sp.cid ??= `${sheet.cid ?? sheet.name}-sp${i}`;
     });
     sheet.controls?.forEach((ct, i) => {
       ct.cid ??= `${sheet.cid ?? sheet.name}-ct${i}`;
     });
-  }
+  });
 }
 
 /** An id for a shape or control added during a session. */

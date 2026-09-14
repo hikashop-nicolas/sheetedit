@@ -19,6 +19,8 @@ import { readXlsx, writeXlsx } from "../adapters/xlsx";
 export interface ReadOptions {
   /** Route plain-text input explicitly (a .csv/.tsv extension known to the host). */
   formatHint?: "csv" | "tsv";
+  /** xlsx: parse each worksheet only when first used, so opening costs the sheet on screen. */
+  lazySheets?: boolean;
 }
 
 const readCsvBytes = (bytes: Uint8Array, hint?: "csv" | "tsv"): Workbook => {
@@ -53,7 +55,7 @@ export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}, preunzip
     if (looksTextual(bytes)) return readCsvBytes(bytes);
     throw new Error("not a valid workbook file (unreadable archive)");
   }
-  if (files["xl/workbook.xml"]) return readXlsx(files);
+  if (files["xl/workbook.xml"]) return readXlsx(files, { lazySheets: opts.lazySheets });
   if (files["content.xml"]) {
     const mt = files["mimetype"] ? strFromU8(files["mimetype"]) : "";
     if (!mt || mt.includes("spreadsheet")) return readOds(files);

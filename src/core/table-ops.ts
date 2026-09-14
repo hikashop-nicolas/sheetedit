@@ -1,3 +1,5 @@
+import { strFromU8 } from "fflate";
+import { isSheetLoaded } from "./lazy-sheet";
 import { colToLetters, getCell, parseXmlOpt, serializeXml, type Sheet, type Workbook } from "./model";
 
 // Named data ranges: an xlsx table (ListObject) and an ODF named database range.
@@ -444,7 +446,7 @@ function cellRef(ref: string): { r: number; c: number } | null {
 function sheetOwning(wb: Workbook, tablePath: string): Sheet | undefined {
   const file = tablePath.replace(/^.*\//, "");
   return wb.sheets.find((sheet) => {
-    if (!sheet.path || !sheet.doc) return false;
+    if (!sheet.path) return false;
     const rels = wb.files[sheetRelsPath(sheet.path)];
     const doc = rels ? parseXmlOpt(rels) : undefined;
     if (!doc) return false;
@@ -453,6 +455,9 @@ function sheetOwning(wb: Workbook, tablePath: string): Sheet | undefined {
     );
     if (!rel) return false;
     const id = rel.getAttribute("Id");
+    // An unparsed sheet is asked through its bytes, so opening a workbook parses no extra sheet.
+    if (!isSheetLoaded(sheet)) return !!id && strFromU8(wb.files[sheet.path] ?? new Uint8Array()).includes(`id="${id}"`);
+    if (!sheet.doc) return false;
     return Array.from(sheet.doc.documentElement.children).some(
       (el) =>
         el.localName === "tableParts" &&

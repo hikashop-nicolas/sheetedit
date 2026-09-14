@@ -13,9 +13,10 @@ import { isDateFmt, isoToSerial } from "../../core/dates";
 import { SHEET_LOCKS, type ProtectionPassword, type SheetLock, type SheetProtection } from "../../core/protection";
 import type { ThemeColorRef } from "../../core/theme";
 import { readXlsxTheme } from "./theme-read";
-import { readXlsxControls } from "./control-read";
+import { readSheetControls } from "./control-read";
+import { deferSheet } from "../../core/lazy-sheet";
 import { readVbaProject, vbaPartOf } from "../../core/vba";
-import { readXlsxPrintNames, readXlsxPrintSetup } from "./print-read";
+import { readSheetPrintNames, readXlsxPrintSetup } from "./print-read";
 
 /** "A1:D10" (or "A1") -> a 1-based inclusive range, or null. */
 function parseRangeRef(ref: string): { r1: number; c1: number; r2: number; c2: number } | null {
@@ -345,7 +346,7 @@ export function resolveXlsxFmt(styles: XlsxStyles, s: string | undefined): strin
   return numFmtId; // built-in id; SSF resolves it
 }
 
-export function readXlsx(files: Record<string, Uint8Array>): Workbook {
+export function readXlsx(files: Record<string, Uint8Array>, opts: { lazySheets?: boolean } = {}): Workbook {
   const wb: Workbook = { kind: "xlsx", sheets: [], files };
   const wbXml = files["xl/workbook.xml"];
   if (!wbXml) throw new Error("not an .xlsx: xl/workbook.xml missing");
@@ -393,6 +394,7 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   // UI's own face instead sizes the text against columns the file measured for a different font.
   if (styles.normalFontName) wb.defaultFontName = styles.normalFontName;
 
+  const ctx: SheetContext = { files, shared, styles, dxfs, theme, themeMap, shapeStyles, mdw };
   let n = 0;
   for (const sheetEl of Array.from(wbDoc.getElementsByTagName("sheet"))) {
     n++;
@@ -409,154 +411,17 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
     const sheet: Sheet = { name, cells: new Map(), maxRow: 0, maxCol: 0, path };
     if (state === "hidden") sheet.visibility = "hidden";
     else if (state === "veryhidden") sheet.visibility = "veryHidden";
-    if (wsFile) {
-      const doc = parseXml(wsFile);
-      const sheetData = doc.getElementsByTagName("sheetData")[0];
-      sheet.doc = doc;
-      sheet.sheetData = sheetData;
-      // <sheetFormatPr>: what a row/column with no size of its own measures. Ignoring it left
-      // every unsized row at the grid's own height, which drifts anchored objects down the sheet.
-      const fmtPr = doc.getElementsByTagName("sheetFormatPr")[0];
-      const defHt = Number(fmtPr?.getAttribute("defaultRowHeight") || "0");
-      if (defHt > 0) sheet.defaultRowHeight = Math.round((defHt * 4) / 3);
-      const defW = Number(fmtPr?.getAttribute("defaultColWidth") || "0");
-      if (defW > 0) sheet.defaultColWidth = colWidthToPx(defW, mdw);
-      // Column widths: <cols><col min max width/></cols>. The width is in CHARACTER units, and
-      // ECMA-376 gives the conversion exactly: truncate(((256*width + truncate(128/MDW))/256)*MDW),
-      // where MDW is the NORMAL STYLE FONT's maximum digit width, not a constant: a workbook set
-      // in Calibri 14 has MDW 9, and hardcoding Calibri 11's 7 ran its every column ~28% narrow.
-      // That compounds across a sheet, since an anchored object's position is the sum of the
-      // widths to its left, so a wrong MDW pulls every control out of place.
-      sheet.maxDigitWidth = mdw;
-      const colsEl = doc.getElementsByTagName("cols")[0];
-      if (colsEl) {
-        const cw = new Map<number, number>();
-        const hiddenCols = new Set<number>();
-        const colOutline = new Map<number, number>();
-        const colCollapsed = new Set<number>();
-        for (const col of Array.from(colsEl.children)) {
-          if (col.localName !== "col") continue;
-          const min = Number(col.getAttribute("min") || "0");
-          const max = Number(col.getAttribute("max") || "0");
-          const width = Number(col.getAttribute("width") || "0");
-          if (!min) continue;
-          const last = Math.min(max || min, min + 1000);
-          const hidden = col.getAttribute("hidden") === "1" || col.getAttribute("hidden") === "true";
-          const level = Number(col.getAttribute("outlineLevel") || "0");
-          const collapsed = col.getAttribute("collapsed") === "1" || col.getAttribute("collapsed") === "true";
-          for (let c = min; c <= last; c++) {
-            if (width) cw.set(c, colWidthToPx(width, mdw));
-            if (hidden) hiddenCols.add(c);
-            if (level > 0) colOutline.set(c, level);
-            if (collapsed) colCollapsed.add(c);
-          }
-        }
-        if (cw.size) sheet.colWidths = cw;
-        if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
-        if (colOutline.size) sheet.colOutline = colOutline;
-        if (colCollapsed.size) sheet.colCollapsed = colCollapsed;
-      }
-      // Row heights: <row r ht customHeight hidden/>. ht is in points; convert to px (~4/3 px/pt).
-      if (sheetData) {
-        const rh = new Map<number, number>();
-        const hiddenRows = new Set<number>();
-        const rowOutline = new Map<number, number>();
-        const rowCollapsed = new Set<number>();
-        for (const rowEl of Array.from(sheetData.children)) {
-          if (rowEl.localName !== "row") continue;
-          const r = Number(rowEl.getAttribute("r") || "0");
-          if (!r) continue;
-          const ht = Number(rowEl.getAttribute("ht") || "0");
-          if (ht) rh.set(r, Math.round((ht * 4) / 3));
-          if (rowEl.getAttribute("hidden") === "1" || rowEl.getAttribute("hidden") === "true") hiddenRows.add(r);
-          const level = Number(rowEl.getAttribute("outlineLevel") || "0");
-          if (level > 0) rowOutline.set(r, level);
-          if (rowEl.getAttribute("collapsed") === "1" || rowEl.getAttribute("collapsed") === "true") rowCollapsed.add(r);
-        }
-        if (rh.size) sheet.rowHeights = rh;
-        if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
-        if (rowOutline.size) sheet.rowOutline = rowOutline;
-        if (rowCollapsed.size) sheet.rowCollapsed = rowCollapsed;
-      }
-      // <sheetPr codeName>: the name a sheet goes by in VBA, which is what its event module is
-      // called. Excel keeps it stable when the visible tab is renamed, so it cannot be derived.
-      const sheetPrEl = doc.getElementsByTagName("sheetPr")[0];
-      const codeName = sheetPrEl?.getAttribute("codeName");
-      if (codeName) sheet.codeName = codeName;
-      // <sheetPr><outlinePr summaryBelow summaryRight/>: which side of a group its summary sits on.
-      const outlinePr = doc.getElementsByTagName("outlinePr")[0];
-      if (outlinePr) {
-        const flag = (n: string): boolean => { const v = outlinePr.getAttribute(n); return v == null || v === "1" || v === "true"; };
-        sheet.summaryBelow = flag("summaryBelow");
-        sheet.summaryRight = flag("summaryRight");
-      }
-      // Autofilter range: <autoFilter ref="A1:D10"/>.
-      const afEl = doc.getElementsByTagName("autoFilter")[0];
-      const afRef = afEl?.getAttribute("ref");
-      if (afRef) {
-        const rng = parseRangeRef(afRef);
-        if (rng) sheet.autoFilter = rng;
-      }
-      readXlsxPrintSetup(sheet, doc);
-      // Sheet protection: <sheetProtection sheet="1" .../>. Every boolean attribute names an action
-      // that is BLOCKED, and each has its own default, so only the stated ones are recorded.
-      const spEl = doc.getElementsByTagName("sheetProtection")[0];
-      if (spEl) sheet.protection = readSheetProtection(spEl);
-      // <sheetView showGridLines="0">: the author laid this sheet out as a document rather than a
-      // grid, so only the borders the cells carry are meant to be drawn.
-      const viewEl = doc.getElementsByTagName("sheetView")[0];
-      if (viewEl && xmlBool(viewEl, "showGridLines") === false) sheet.hideGridLines = true;
-      // <sheetPr><tabColor rgb="FFFFFF00"/>: a coloured tab is how a workbook flags one sheet
-      // among many, so it has to survive the trip to the tab strip.
-      const tabEl = doc.getElementsByTagName("tabColor")[0];
-      const tabCss = resolveColor(tabEl, theme);
-      if (tabCss) sheet.tabColor = tabCss;
-      // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
-      // xSplit / ySplit are the counts of frozen leading columns / rows.
-      const pane = doc.getElementsByTagName("pane")[0];
-      if (pane) {
-        const state = pane.getAttribute("state");
-        if (state === "frozen" || state === "frozenSplit") {
-          const rows = Math.max(0, Math.floor(Number(pane.getAttribute("ySplit") || "0")));
-          const cols = Math.max(0, Math.floor(Number(pane.getAttribute("xSplit") || "0")));
-          if (rows > 0 || cols > 0) sheet.freeze = { rows, cols };
-        } else if (state === "split" || state == null) {
-          // A draggable split measures xSplit / ySplit in TWIPS (1/20 pt), not in line counts, so
-          // the boundary is the line the offset falls on. topLeftCell names it directly when
-          // present, which avoids re-deriving it from the widths.
-          const x = Number(pane.getAttribute("xSplit") || "0");
-          const y = Number(pane.getAttribute("ySplit") || "0");
-          if (x > 0 || y > 0) {
-            const tl = pane.getAttribute("topLeftCell");
-            const at = tl ? parseA1Ref(tl) : null;
-            const cols = at ? at.col - 1 : linesForTwips(x, (c) => (sheet.colWidths?.get(c) ?? sheet.defaultColWidth ?? DEFAULT_COL_PX));
-            const rows = at ? at.row - 1 : linesForTwips(y, (r) => (sheet.rowHeights?.get(r) ?? sheet.defaultRowHeight ?? DEFAULT_ROW_PX));
-            if (rows > 0 || cols > 0) { sheet.freeze = { rows: Math.max(0, rows), cols: Math.max(0, cols) }; sheet.paneSplit = true; }
-          }
-        }
-      }
-      // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.
-      const mergeEls = doc.getElementsByTagName("mergeCell");
-      if (mergeEls.length) {
-        const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
-        for (const m of Array.from(mergeEls)) {
-          const ref = m.getAttribute("ref");
-          const [a, b] = (ref ?? "").split(":");
-          const p1 = a ? parseA1Ref(a) : null;
-          const p2 = b ? parseA1Ref(b) : null;
-          if (p1 && p2) merges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
-        }
-        if (merges.length) sheet.merges = merges;
-      }
-      if (sheetData) readSheetData(sheet, sheetData, shared, styles);
-      readHyperlinks(sheet, doc, files, path);
-      readDataValidations(sheet, doc);
-      readCondFormats(sheet, doc, dxfs, theme);
-      readComments(sheet, files, path);
-      readCharts(sheet, files, path, themeMap);
-      readImages(sheet, files, path);
-      readShapes(sheet, files, path, themeMap, shapeStyles);
-      readSparklines(sheet, doc);
+    const index = n - 1;
+    const load = (): void => {
+      if (wsFile) loadXlsxSheet(sheet, parseXml(wsFile), ctx);
+      readSheetControls(sheet, files); // form controls: the worksheet <controls>, ctrlProps and the VML
+      readSheetPrintNames(sheet, index, wbDoc); // after the sheet's own print setup, which the names extend
+    };
+    if (opts.lazySheets && wsFile) {
+      readSheetTab(sheet, wsFile, theme);
+      deferSheet(wb, sheet, load, () => mayHoldUncomputed(wsFile));
+    } else {
+      load();
     }
     wb.sheets.push(sheet);
   }
@@ -567,11 +432,199 @@ export function readXlsx(files: Record<string, Uint8Array>): Workbook {
   if (vbaBin) wb.vba = readVbaProject(vbaBin);
   wb.theme = readXlsxTheme(files["xl/theme/theme1.xml"]);
   wb.themeStyles = styles.xfStyles; // the resolved pool, so a theme switch can re-resolve it
-  readXlsxControls(wb, files); // form controls: the worksheet <controls>, ctrlProps and the VML
-  readXlsxPrintNames(wb, wbDoc); // sheet-scoped names, so every sheet must already be in place
   readXlsxSlicerStyles(wb, files, theme); // user-defined slicer styles, so the overlay can colour by name
   readTimelines(wb, files);
   return wb;
+}
+
+interface SheetContext {
+  files: Record<string, Uint8Array>;
+  shared: RichString[];
+  styles: XlsxStyles;
+  dxfs: ReturnType<typeof parseDxfs>;
+  theme: string[];
+  themeMap: ReturnType<typeof readThemeMap>;
+  shapeStyles: ReturnType<typeof readShapeStyleScheme>;
+  mdw: number;
+}
+
+/** Fill a sheet from its parsed worksheet part. */
+function loadXlsxSheet(sheet: Sheet, doc: Document, ctx: SheetContext): void {
+  const { files, shared, styles, dxfs, theme, themeMap, shapeStyles, mdw } = ctx;
+  const path = sheet.path!;
+  const sheetData = doc.getElementsByTagName("sheetData")[0];
+  sheet.doc = doc;
+  sheet.sheetData = sheetData;
+  // <sheetFormatPr>: what a row/column with no size of its own measures. Ignoring it left
+  // every unsized row at the grid's own height, which drifts anchored objects down the sheet.
+  const fmtPr = doc.getElementsByTagName("sheetFormatPr")[0];
+  const defHt = Number(fmtPr?.getAttribute("defaultRowHeight") || "0");
+  if (defHt > 0) sheet.defaultRowHeight = Math.round((defHt * 4) / 3);
+  const defW = Number(fmtPr?.getAttribute("defaultColWidth") || "0");
+  if (defW > 0) sheet.defaultColWidth = colWidthToPx(defW, mdw);
+  // Column widths: <cols><col min max width/></cols>. The width is in CHARACTER units, and
+  // ECMA-376 gives the conversion exactly: truncate(((256*width + truncate(128/MDW))/256)*MDW),
+  // where MDW is the NORMAL STYLE FONT's maximum digit width, not a constant: a workbook set
+  // in Calibri 14 has MDW 9, and hardcoding Calibri 11's 7 ran its every column ~28% narrow.
+  // That compounds across a sheet, since an anchored object's position is the sum of the
+  // widths to its left, so a wrong MDW pulls every control out of place.
+  sheet.maxDigitWidth = mdw;
+  const colsEl = doc.getElementsByTagName("cols")[0];
+  if (colsEl) {
+    const cw = new Map<number, number>();
+    const hiddenCols = new Set<number>();
+    const colOutline = new Map<number, number>();
+    const colCollapsed = new Set<number>();
+    for (const col of Array.from(colsEl.children)) {
+      if (col.localName !== "col") continue;
+      const min = Number(col.getAttribute("min") || "0");
+      const max = Number(col.getAttribute("max") || "0");
+      const width = Number(col.getAttribute("width") || "0");
+      if (!min) continue;
+      const last = Math.min(max || min, min + 1000);
+      const hidden = col.getAttribute("hidden") === "1" || col.getAttribute("hidden") === "true";
+      const level = Number(col.getAttribute("outlineLevel") || "0");
+      const collapsed = col.getAttribute("collapsed") === "1" || col.getAttribute("collapsed") === "true";
+      for (let c = min; c <= last; c++) {
+        if (width) cw.set(c, colWidthToPx(width, mdw));
+        if (hidden) hiddenCols.add(c);
+        if (level > 0) colOutline.set(c, level);
+        if (collapsed) colCollapsed.add(c);
+      }
+    }
+    if (cw.size) sheet.colWidths = cw;
+    if (hiddenCols.size) sheet.hiddenCols = hiddenCols;
+    if (colOutline.size) sheet.colOutline = colOutline;
+    if (colCollapsed.size) sheet.colCollapsed = colCollapsed;
+  }
+  // Row heights: <row r ht customHeight hidden/>. ht is in points; convert to px (~4/3 px/pt).
+  if (sheetData) {
+    const rh = new Map<number, number>();
+    const hiddenRows = new Set<number>();
+    const rowOutline = new Map<number, number>();
+    const rowCollapsed = new Set<number>();
+    for (const rowEl of Array.from(sheetData.children)) {
+      if (rowEl.localName !== "row") continue;
+      const r = Number(rowEl.getAttribute("r") || "0");
+      if (!r) continue;
+      const ht = Number(rowEl.getAttribute("ht") || "0");
+      if (ht) rh.set(r, Math.round((ht * 4) / 3));
+      if (rowEl.getAttribute("hidden") === "1" || rowEl.getAttribute("hidden") === "true") hiddenRows.add(r);
+      const level = Number(rowEl.getAttribute("outlineLevel") || "0");
+      if (level > 0) rowOutline.set(r, level);
+      if (rowEl.getAttribute("collapsed") === "1" || rowEl.getAttribute("collapsed") === "true") rowCollapsed.add(r);
+    }
+    if (rh.size) sheet.rowHeights = rh;
+    if (hiddenRows.size) sheet.hiddenRows = hiddenRows;
+    if (rowOutline.size) sheet.rowOutline = rowOutline;
+    if (rowCollapsed.size) sheet.rowCollapsed = rowCollapsed;
+  }
+  // <sheetPr codeName>: the name a sheet goes by in VBA, which is what its event module is
+  // called. Excel keeps it stable when the visible tab is renamed, so it cannot be derived.
+  const sheetPrEl = doc.getElementsByTagName("sheetPr")[0];
+  const codeName = sheetPrEl?.getAttribute("codeName");
+  if (codeName) sheet.codeName = codeName;
+  // <sheetPr><outlinePr summaryBelow summaryRight/>: which side of a group its summary sits on.
+  const outlinePr = doc.getElementsByTagName("outlinePr")[0];
+  if (outlinePr) {
+    const flag = (n: string): boolean => { const v = outlinePr.getAttribute(n); return v == null || v === "1" || v === "true"; };
+    sheet.summaryBelow = flag("summaryBelow");
+    sheet.summaryRight = flag("summaryRight");
+  }
+  // Autofilter range: <autoFilter ref="A1:D10"/>.
+  const afEl = doc.getElementsByTagName("autoFilter")[0];
+  const afRef = afEl?.getAttribute("ref");
+  if (afRef) {
+    const rng = parseRangeRef(afRef);
+    if (rng) sheet.autoFilter = rng;
+  }
+  readXlsxPrintSetup(sheet, doc);
+  // Sheet protection: <sheetProtection sheet="1" .../>. Every boolean attribute names an action
+  // that is BLOCKED, and each has its own default, so only the stated ones are recorded.
+  const spEl = doc.getElementsByTagName("sheetProtection")[0];
+  if (spEl) sheet.protection = readSheetProtection(spEl);
+  // <sheetView showGridLines="0">: the author laid this sheet out as a document rather than a
+  // grid, so only the borders the cells carry are meant to be drawn.
+  const viewEl = doc.getElementsByTagName("sheetView")[0];
+  if (viewEl && xmlBool(viewEl, "showGridLines") === false) sheet.hideGridLines = true;
+  // <sheetPr><tabColor rgb="FFFFFF00"/>: a coloured tab is how a workbook flags one sheet
+  // among many, so it has to survive the trip to the tab strip.
+  const tabEl = doc.getElementsByTagName("tabColor")[0];
+  const tabCss = resolveColor(tabEl, theme);
+  if (tabCss) sheet.tabColor = tabCss;
+  // Frozen panes: <sheetView><pane xSplit ySplit state="frozen"/></sheetView>.
+  // xSplit / ySplit are the counts of frozen leading columns / rows.
+  const pane = doc.getElementsByTagName("pane")[0];
+  if (pane) {
+    const state = pane.getAttribute("state");
+    if (state === "frozen" || state === "frozenSplit") {
+      const rows = Math.max(0, Math.floor(Number(pane.getAttribute("ySplit") || "0")));
+      const cols = Math.max(0, Math.floor(Number(pane.getAttribute("xSplit") || "0")));
+      if (rows > 0 || cols > 0) sheet.freeze = { rows, cols };
+    } else if (state === "split" || state == null) {
+      // A draggable split measures xSplit / ySplit in TWIPS (1/20 pt), not in line counts, so
+      // the boundary is the line the offset falls on. topLeftCell names it directly when
+      // present, which avoids re-deriving it from the widths.
+      const x = Number(pane.getAttribute("xSplit") || "0");
+      const y = Number(pane.getAttribute("ySplit") || "0");
+      if (x > 0 || y > 0) {
+        const tl = pane.getAttribute("topLeftCell");
+        const at = tl ? parseA1Ref(tl) : null;
+        const cols = at ? at.col - 1 : linesForTwips(x, (c) => (sheet.colWidths?.get(c) ?? sheet.defaultColWidth ?? DEFAULT_COL_PX));
+        const rows = at ? at.row - 1 : linesForTwips(y, (r) => (sheet.rowHeights?.get(r) ?? sheet.defaultRowHeight ?? DEFAULT_ROW_PX));
+        if (rows > 0 || cols > 0) { sheet.freeze = { rows: Math.max(0, rows), cols: Math.max(0, cols) }; sheet.paneSplit = true; }
+      }
+    }
+  }
+  // Merged ranges: <mergeCells><mergeCell ref="B1:C1"/></mergeCells>.
+  const mergeEls = doc.getElementsByTagName("mergeCell");
+  if (mergeEls.length) {
+    const merges: { r1: number; c1: number; r2: number; c2: number }[] = [];
+    for (const m of Array.from(mergeEls)) {
+      const ref = m.getAttribute("ref");
+      const [a, b] = (ref ?? "").split(":");
+      const p1 = a ? parseA1Ref(a) : null;
+      const p2 = b ? parseA1Ref(b) : null;
+      if (p1 && p2) merges.push({ r1: p1.row, c1: p1.col, r2: p2.row, c2: p2.col });
+    }
+    if (merges.length) sheet.merges = merges;
+  }
+  if (sheetData) readSheetData(sheet, sheetData, shared, styles);
+  readHyperlinks(sheet, doc, files, path);
+  readDataValidations(sheet, doc);
+  readCondFormats(sheet, doc, dxfs, theme);
+  readComments(sheet, files, path);
+  readCharts(sheet, files, path, themeMap);
+  readImages(sheet, files, path);
+  readShapes(sheet, files, path, themeMap, shapeStyles);
+  readSparklines(sheet, doc);
+}
+
+/** The tab colour, read from the head of an unparsed worksheet so the tab strip parses nothing. */
+function readSheetTab(sheet: Sheet, bytes: Uint8Array, theme: string[]): void {
+  const head = new TextDecoder().decode(bytes.subarray(0, 4096));
+  const pr = /<sheetPr\b[^>]*\/>|<sheetPr\b[^>]*>[\s\S]*?<\/sheetPr>/.exec(head)?.[0];
+  const tab = pr && /<tabColor\b[^>]*\/>/.exec(pr)?.[0];
+  if (!tab) return;
+  const css = resolveColor(new DOMParser().parseFromString(tab, "application/xml").documentElement, theme);
+  if (css) sheet.tabColor = css;
+}
+
+/** Whether a worksheet may hold a formula stored without its result. A false alarm costs only a recalc. */
+export function mayHoldUncomputed(bytes: Uint8Array): boolean {
+  const xml = new TextDecoder().decode(bytes);
+  // A formula closed straight by its cell, with no <v> at all.
+  if (/(?:<\/(?:\w+:)?f>|<(?:\w+:)?f\b[^>]*\/>)\s*<\/(?:\w+:)?c>/.test(xml)) return true;
+  // An empty <v> is a placeholder only on a number cell: on t="str" it is the computed "".
+  const empty = /<(?:\w+:)?v\s*\/>|<(?:\w+:)?v>\s*<\/(?:\w+:)?v>/g;
+  for (let m = empty.exec(xml); m; m = empty.exec(xml)) {
+    const open = Math.max(xml.lastIndexOf("<c ", m.index), xml.lastIndexOf(":c ", m.index));
+    if (open < 0) return true;
+    const cell = xml.slice(open, m.index);
+    const type = /^[^>]*\st="([^"]*)"/.exec(cell)?.[1];
+    if ((!type || type === "n") && /<(?:\w+:)?f[\s>/]/.test(cell)) return true;
+  }
+  return false;
 }
 
 /** Read the worksheet's <hyperlinks> and attach a link to each cell in every referenced range.

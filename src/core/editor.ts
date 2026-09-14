@@ -53,6 +53,7 @@ import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
+import { isSheetLoaded, loadSheet } from "./lazy-sheet";
 import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
@@ -381,7 +382,8 @@ export function createSheetEditor(
 
   let wb: Workbook;
   try {
-    wb = readWorkbook(bytes, { formatHint: options.formatHint }, preunzipped);
+    // Only the sheet on screen is parsed now; the others parse on first use or in idle time.
+    wb = readWorkbook(bytes, { formatHint: options.formatHint, lazySheets: true }, preunzipped);
     // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
     assignSheetIds(wb);
     assignImageIds(wb);
@@ -5571,6 +5573,20 @@ export function createSheetEditor(
   renderTabs();
   renderGrid();
 
+  // Parse the remaining sheets one per idle slot after the first paint, so a tab switch or a
+  // workbook-wide search later does not stall on them.
+  let idleStopped = false;
+  const whenIdle = (fn: () => void): void => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(fn, { timeout: 2000 });
+    else setTimeout(fn, 50);
+  };
+  const loadNextSheet = (): void => {
+    if (idleStopped) return;
+    const next = wb.sheets.find((s) => !isSheetLoaded(s));
+    if (next) whenIdle(() => { if (!idleStopped) { loadSheet(next); loadNextSheet(); } });
+  };
+  setTimeout(loadNextSheet, 500);
+
   return {
     isDirty() {
       return dirty;
@@ -6090,6 +6106,7 @@ export function createSheetEditor(
       return dirty ? writeWorkbookAsync(wb) : original.slice();
     },
     destroy() {
+      idleStopped = true;
       document.removeEventListener("copy", onDocCopy);
       document.removeEventListener("paste", onDocPaste);
       window.removeEventListener("pointerup", endDrag);
