@@ -109,6 +109,26 @@ describe("the end of the grid", () => {
     });
   });
 
+  // A host with no height grows with the grid, so the grid can never overflow it: filling the
+  // screen there added rows on every render, and a two-editor page grew without end.
+  it("does not keep adding rows in a host with no height of its own", () => {
+    cy.viewport(1900, 800);
+    open("cypress/fixtures/sample.xlsx"); // the demo hands out its factory once a workbook is open
+    cy.readFile("cypress/fixtures/sample.xlsx", null).then((buf) => {
+      cy.window().then((w) => {
+        const win = w as unknown as { createSheetEditor: (el: HTMLElement, bytes: Uint8Array) => unknown };
+        const host = w.document.createElement("div");
+        host.id = "unsized-host";
+        w.document.body.appendChild(host);
+        win.createSheetEditor(host, new Uint8Array(buf as ArrayBuffer));
+      });
+    });
+    cy.get("#unsized-host .sheetedit-table", { timeout: TIMEOUT }).should("exist");
+    cy.get("#unsized-host").should(($h) => expect($h[0].offsetHeight, "a sheet's height, not thousands of rows").to.be.lessThan(5000));
+    cy.window().then((w) => w.dispatchEvent(new Event("resize")));
+    cy.get("#unsized-host").should(($h) => expect($h[0].offsetHeight, "still, after a resize").to.be.lessThan(5000));
+  });
+
   it("has no + row / + column buttons left on the toolbar", () => {
     cy.viewport(1900, 420);
     open("cypress/fixtures/sample.xlsx");

@@ -5269,17 +5269,43 @@ export function createSheetEditor(
     const el = mainPane.scrollEl;
     if (!el.clientHeight || !el.clientWidth) return false; // not laid out yet, or no layout at all
     let grew = false;
-    if (el.scrollHeight <= el.clientHeight + EDGE_GROW && totalRows < MAX_ROW) {
+    if (!rowsUnbounded && el.scrollHeight <= el.clientHeight + EDGE_GROW && totalRows < MAX_ROW) {
       extraRows += ROW_CHUNK;
       grew = true;
     }
-    if (el.scrollWidth <= el.clientWidth + EDGE_GROW && totalCols < MAX_COL) {
+    if (!colsUnbounded && el.scrollWidth <= el.clientWidth + EDGE_GROW && totalCols < MAX_COL) {
       extraCols += COL_CHUNK;
       grew = true;
     }
     return grew;
   };
   let filling = false;
+  // A host with no size of its own grows with the grid, so the grid never overflows it: filling
+  // that axis would add rows on every render, without end. Found once, it stops until a resize.
+  let rowsUnbounded = false;
+  let colsUnbounded = false;
+  const fillScreen = (): void => {
+    if (filling) return;
+    filling = true;
+    try {
+      const el = mainPane.scrollEl;
+      for (let pass = 0; pass < 50; pass++) {
+        const [h, w, rows, cols] = [el.clientHeight, el.clientWidth, extraRows, extraCols];
+        if (!fillViewport()) break;
+        renderGrid();
+        const tall = extraRows > rows && el.clientHeight > h;
+        const wide = extraCols > cols && el.clientWidth > w;
+        if (tall) { extraRows = rows; rowsUnbounded = true; }
+        if (wide) { extraCols = cols; colsUnbounded = true; }
+        if (tall || wide) {
+          renderGrid();
+          break;
+        }
+      }
+    } finally {
+      filling = false;
+    }
+  };
 
   const onPaneScroll = (pane: Pane) => () => {
     shareScroll(pane); // the panes sharing this axis follow along
@@ -5395,17 +5421,13 @@ export function createSheetEditor(
     outlineLayer.refresh();
     paneDividers.refresh();
     pivotLayer.refresh();
-    if (!filling) {
-      filling = true;
-      try {
-        for (let pass = 0; pass < 50 && fillViewport(); pass++) renderGrid();
-      } finally {
-        filling = false;
-      }
-    }
+    fillScreen();
   };
   const onWindowResize = (): void => {
-    if (fillViewport()) renderGrid(); // a rotated phone or a closed keyboard can leave room below
+    // A rotated phone or a closed keyboard can leave room below, and a host may have been sized since.
+    rowsUnbounded = false;
+    colsUnbounded = false;
+    fillScreen();
   };
   window.addEventListener("resize", onWindowResize);
 
