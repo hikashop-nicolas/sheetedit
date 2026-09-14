@@ -287,6 +287,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): {
       const onUp = (): void => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
         if (now === was) return;
         // Only the turn changed, so the paint is left exactly as the file wrote it.
         sh.xfrmDirty = true;
@@ -294,6 +295,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): {
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
     });
   };
 
@@ -302,6 +304,14 @@ export function setupShapeLayer(deps: ShapeLayerDeps): {
       // Only the primary button drags. A right-click has its own job (the context menu), and
       // starting a move on it leaves the shape following the pointer with no button held down.
       if (e.button !== 0) return;
+      // A finger landing on a shape while panning the sheet must still pan: the first touch only
+      // picks the shape up. Once selected it stops the browser panning (touch-action), so the next
+      // drag moves it.
+      if (e.pointerType === "touch" && mode === "move" && sh !== selected) {
+        e.stopPropagation(); // the grid under it would take the touch as a tap away and deselect
+        select(sh);
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       select(sh);
@@ -320,6 +330,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): {
       const onUp = (): void => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
         const x = parseFloat(box.style.left) || 0, y = parseFloat(box.style.top) || 0;
         // A plain click (no drag) must not commit or refresh, or a double-click's box is replaced
         // between its two clicks and never fires.
@@ -333,6 +344,7 @@ export function setupShapeLayer(deps: ShapeLayerDeps): {
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp); // a gesture the browser took over ends the drag too
     };
     // Dragging from the text of a shape that is already selected selects the text instead, the
     // way clicking into a shape twice does elsewhere: the first click picks the shape up, the

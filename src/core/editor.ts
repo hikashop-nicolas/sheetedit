@@ -3432,7 +3432,16 @@ export function createSheetEditor(
     geom: () => ({ xOfCol, yOfRow, colAt: (px) => lineAt(px, totalCols, xOfCol), rowAt: (px) => lineAt(px, totalRows, yOfRow), rnW: rnW(), headerH: headerH() }),
     editable: () => wb.kind === "xlsx" || wb.kind === "ods",
     onEdit: () => { mark(); shapeLayer.refresh(); shapeBar?.refresh(); },
-    onSelect: () => shapeBar?.refresh(),
+    onSelect: (sh) => {
+      // A picked-up shape is what the user is working on now: leave the cell, which commits its
+      // text as any other blur does and lets a phone put its keyboard away.
+      if (sh) {
+        endEditing();
+        const ae = document.activeElement;
+        if (ae instanceof HTMLElement && wrap.contains(ae) && ae.matches("input, textarea")) ae.blur();
+      }
+      shapeBar?.refresh();
+    },
     onDelete: (sh) => deleteShape(sh),
     runMacro: wb.vba ? (name) => runControlMacro(name) : undefined,
     rotateTitle: t("shapeRotate"),

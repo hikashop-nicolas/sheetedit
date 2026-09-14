@@ -565,6 +565,7 @@ color:var(--sheetedit-accent-fg,#fff); font:600 11px/1 system-ui,sans-serif; cur
 .sheetedit-shapebox { position:absolute; }
 .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
 .sheetedit-shapebox.editable { pointer-events:auto; cursor:move; }
+.sheetedit-shapebox.editable.selected, .sheetedit-shape-resize, .sheetedit-shape-rotate { touch-action:none; }
 .sheetedit-shapebox.macro { pointer-events:auto; cursor:pointer; }
 .sheetedit-shapebox.macro.editable { cursor:move; }
 .sheetedit-shapebox.selected > svg { outline:1.5px dashed var(--sheetedit-accent,#4c8bf5); outline-offset:2px; }

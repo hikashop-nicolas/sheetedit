@@ -705,6 +705,8 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
 .sheetedit-shapebox { position:absolute; }
 .sheetedit-shapebox svg { width:100%; height:100%; display:block; overflow:visible; pointer-events:none; }
 .sheetedit-shapebox.editable { pointer-events:auto; cursor:move; }
+/* A selected shape takes a touch drag instead of the sheet panning under it; its grips always do. */
+.sheetedit-shapebox.editable.selected, .sheetedit-shape-resize, .sheetedit-shape-rotate { touch-action:none; }
 /* A shape with a macro is a button: it takes clicks even where the sheet is not editable. */
 .sheetedit-shapebox.macro { pointer-events:auto; cursor:pointer; }
 .sheetedit-shapebox.macro.editable { cursor:move; }
