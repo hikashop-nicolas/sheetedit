@@ -11,7 +11,11 @@ const childText = (el: Element, local: string): string => { const c = Array.from
 
 /** Populate sheet.sparklines from the worksheet's x14 sparkline groups. */
 export function readSparklines(sheet: Sheet, doc: Document): void {
-  const groups = kids(doc.documentElement, "sparklineGroup");
+  // Sparkline groups only live in the worksheet's <extLst>. Searching the whole document walked
+  // every cell of every sheet on open, for a feature most workbooks do not use.
+  const groups = Array.from(doc.documentElement.children)
+    .filter((c) => c.localName === "extLst")
+    .flatMap((ext) => kids(ext, "sparklineGroup"));
   if (!groups.length) return;
   const out: NonNullable<Sheet["sparklines"]> = [];
   for (const g of groups) {

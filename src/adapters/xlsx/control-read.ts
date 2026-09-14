@@ -135,8 +135,13 @@ export function readXlsxControls(wb: Workbook, files: Record<string, Uint8Array>
     // A control is written twice, once under mc:Choice with its placement and once under
     // mc:Fallback without it, so the same shape id appears twice and only the first is wanted.
     const seen = new Set<string>();
-    for (const el of Array.from(sheet.doc.getElementsByTagName("*"))) {
-      if (el.localName !== "control") continue;
+    // <control> elements sit in <controls>, directly or wrapped in mc:AlternateContent, at the top
+    // level of the worksheet. Searching only those blocks keeps document order and skips
+    // <sheetData>, which walking the whole sheet on every open spent most of its time in.
+    const controlEls = Array.from(sheet.doc.documentElement.children)
+      .filter((c) => c.localName === "controls" || c.localName === "AlternateContent")
+      .flatMap((block) => Array.from(block.getElementsByTagName("*")).filter((e) => e.localName === "control"));
+    for (const el of controlEls) {
       const dedupe = el.getAttribute("shapeId") ?? el.getAttribute("name") ?? "";
       if (dedupe && seen.has(dedupe)) continue;
       if (dedupe) seen.add(dedupe);
