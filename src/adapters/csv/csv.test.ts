@@ -165,3 +165,44 @@ describe("csvToXlsx", () => {
     expect(getCell(out.sheets[0]!, 3, 2)?.value).toBe("6");
   });
 });
+
+// A CSV exported in Europe writes "1 234,56" and separates its fields with a semicolon. Read as
+// text, as it used to be, every total over it came out 0: the one thing a spreadsheet is for.
+describe("a CSV written the European way", () => {
+  const FILE = "pays;total\nFrance;1 190,00\nSuisse;70,00\nTotal;=SUM(B2:B3)\n";
+
+  it("reads its numbers as numbers, and sums them", () => {
+    const wb = readCsv(FILE);
+    recalc(wb);
+    const s = wb.sheets[0]!;
+    expect(getCell(s, 2, 2)?.kind).toBe("n");
+    expect(getCell(s, 2, 2)?.value).toBe("1190.00");
+    expect(getCell(s, 4, 2)?.value).toBe("1260");
+  });
+
+  it("keeps the file's own way of writing them, on screen and on the way out", () => {
+    const wb = readCsv(FILE);
+    recalc(wb);
+    const s = wb.sheets[0]!;
+    expect(getCell(s, 2, 2)?.display).toBe("1 190,00"); // the cell shows what the file says
+    expect(getCell(s, 4, 2)?.display).toBe("1 260"); // and so does a total computed here
+    setCellInput(s, 3, 2, "80,50");
+    expect(getCell(s, 3, 2)?.kind).toBe("n");
+    expect(writeCsv(wb)).toContain("Suisse;80,50");
+    expect(writeCsv(wb)).toContain("France;1 190,00"); // untouched row, byte for byte
+  });
+
+  it("leaves a comma-separated file alone, where a comma cannot be a decimal point", () => {
+    const wb = readCsv("name,price\nwidget,1,5\n");
+    const s = wb.sheets[0]!;
+    expect(s.csvCommaDecimal).toBeUndefined();
+    expect(getCell(s, 2, 2)?.value).toBe("1"); // three fields, not one number
+  });
+
+  it("leaves a dot-decimal file alone", () => {
+    const wb = readCsv("name;price\nwidget;1.50\nbolt;2.25\n");
+    const s = wb.sheets[0]!;
+    expect(s.csvCommaDecimal).toBeUndefined();
+    expect(getCell(s, 2, 2)?.value).toBe("1.50");
+  });
+});

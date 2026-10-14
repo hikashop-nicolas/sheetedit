@@ -1,7 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type AsyncZippable, type Zippable } from "fflate";
 import type { Sheet, Workbook } from "./model";
 import { zipAsync } from "./zip";
-import { ensureCell, firstByLocal, formatNumber, getCell, isNumeric, numToStr, parseXmlOpt, serializeXml } from "./model";
+import { commaDecimalValue, ensureCell, firstByLocal, formatNumber, getCell, isCommaDecimal, isNumeric, numToStr, parseXmlOpt, serializeXml } from "./model";
 import { isDateFmt, parseDateInput } from "./dates";
 import { localeCode } from "./i18n";
 import { readCsv, writeCsv } from "../adapters/csv";
@@ -184,14 +184,17 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   cell.phonetic = undefined;
   // A CSV stores exactly what the user typed; typed dates/percents stay text.
   const csv = sheet.csvRows != null;
-  const commaDecimal = !csv && localeCode() === "fr" && /^[-+]?\d+,\d+$/.test(raw.trim());
+  // A CSV whose numbers are European ("1 234,56") takes them as numbers, like the rows it was
+  // read from; any other CSV stores exactly what was typed.
+  const csvComma = csv && sheet.csvCommaDecimal === true && isCommaDecimal(raw);
+  const commaDecimal = csvComma || (!csv && localeCode() === "fr" && /^[-+]?\d+,\d+$/.test(raw.trim()));
   const pct = !csv && /^[-+]?\d+(?:[.,]\d+)?\s?%$/.test(raw.trim());
   const date = csv || isNumeric(raw) || commaDecimal || pct ? null : parseDateInput(raw, localeCode() === "fr" ? "dmy" : "mdy");
   if (raw === "") {
     cell.value = "";
     cell.kind = "blank";
   } else if (isNumeric(raw) || commaDecimal) {
-    cell.value = raw.trim().replace(",", ".");
+    cell.value = commaDecimal ? commaDecimalValue(raw) : raw.trim();
     cell.kind = "n";
   } else if (pct) {
     // "50%" -> 0.5 with a percent format (decimals follow the typed precision).
@@ -221,6 +224,11 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   }
   // Re-apply the cell's number format (a typed value keeps the cell's format, like Excel).
   cell.display =
-    cell.kind === "n" && cell.numFmt != null ? formatNumber(cell.numFmt, cell.value) ?? undefined : undefined;
+    cell.kind === "n" && cell.numFmt != null
+      ? formatNumber(cell.numFmt, cell.value) ?? undefined
+      : // A European number keeps what was typed, which is what the file is written in.
+        csvComma
+        ? raw.trim()
+        : undefined;
 }
 

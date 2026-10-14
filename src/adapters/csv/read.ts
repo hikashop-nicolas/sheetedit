@@ -1,5 +1,5 @@
 import type { Cell, Sheet, Workbook } from "../../core/model";
-import { isNumeric, key, noteExtent } from "../../core/model";
+import { commaDecimalValue, isCommaDecimal, isNumeric, key, noteExtent } from "../../core/model";
 // ---------------------------------------------------------------------------
 // csv read: delimiter sniffing and span-preserving parsing. Each physical row
 // keeps its exact original text (sheet.csvRows) so the writer can emit
@@ -84,12 +84,39 @@ export function splitCsvRow(raw: string, delimiter: string): string[] {
   return cells;
 }
 
+const DOT_NUMBER = /^[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/;
+
+/**
+ * Which decimal separator the file writes. A comma can only be read as a decimal point where it
+ * is not the field delimiter, and then only when the file actually uses it that way more than it
+ * uses a dot: "1,5" in a comma-separated file is two fields, not one number.
+ */
+export function sniffCommaDecimal(text: string, delimiter: string): boolean {
+  if (delimiter === ",") return false;
+  let comma = 0;
+  let dot = 0;
+  for (const line of text.slice(0, SNIFF_CHARS).split(/\r?\n/).slice(0, SNIFF_LINES * 10)) {
+    for (const field of splitCsvRow(line, delimiter)) {
+      const t = field.trim();
+      if (!t || t.length > 24) continue;
+      if (isCommaDecimal(t)) comma++;
+      else if (DOT_NUMBER.test(t) && (t.includes(".") || t.includes(","))) dot++;
+    }
+  }
+  return comma > dot;
+}
+
 /** Type a parsed CSV field into a model cell (formulas start with "="). */
-function makeCell(row: number, col: number, text: string): Cell {
+function makeCell(row: number, col: number, text: string, commaDecimal: boolean): Cell {
   if (text.startsWith("=") && text.length > 1) {
     return { row, col, value: "", kind: "blank", formula: text.slice(1) };
   }
   if (isNumeric(text)) return { row, col, value: text.trim(), kind: "n" };
+  // A European number is a number, and keeps the file's own text on screen and on the way out:
+  // read as text it would sum to nothing, which is what a spreadsheet is for.
+  if (commaDecimal && isCommaDecimal(text)) {
+    return { row, col, value: commaDecimalValue(text), kind: "n", display: text.trim() };
+  }
   const up = text.toUpperCase();
   if (up === "TRUE" || up === "FALSE") return { row, col, value: up, kind: "b" };
   return { row, col, value: text, kind: "s" };
@@ -102,7 +129,9 @@ function makeCell(row: number, col: number, text: string): Cell {
  */
 export function readCsv(text: string, delimiterHint?: string, sheetName = "Sheet1"): Workbook {
   const delimiter = delimiterHint ?? sniffCsvDelimiter(text);
+  const commaDecimal = sniffCommaDecimal(text, delimiter);
   const sheet: Sheet = { name: sheetName, cells: new Map(), maxRow: 0, maxCol: 0 };
+  if (commaDecimal) sheet.csvCommaDecimal = true;
   const csvRows: { raw: string; terminator: string; dirty: boolean; width: number }[] = [];
   let i = 0;
   let rowStart = 0;
@@ -114,7 +143,7 @@ export function readCsv(text: string, delimiterHint?: string, sheetName = "Sheet
     const r = csvRows.length;
     cells.forEach((v, idx) => {
       if (v === "") return; // blank fields stay implicit (no model cell)
-      const cell = makeCell(r, idx + 1, v);
+      const cell = makeCell(r, idx + 1, v, commaDecimal);
       sheet.cells.set(key(r, idx + 1), cell);
       noteExtent(sheet, r, idx + 1);
     });

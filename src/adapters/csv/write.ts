@@ -9,7 +9,10 @@ import type { Cell, Sheet, Workbook } from "../../core/model";
 /** Serialize one cell for CSV output, quoting only where the format needs it. */
 function fieldOf(cell: Cell | undefined, delimiter: string): string {
   if (!cell) return "";
-  const text = cell.formula != null ? "=" + cell.formula : cell.value;
+  // A European number keeps the text it came in as ("1 234,56"), not the dotted value behind it:
+  // re-serializing a row must not quietly convert the rest of it to another convention.
+  const text =
+    cell.formula != null ? "=" + cell.formula : cell.kind === "n" && cell.display != null ? cell.display : cell.value;
   if (text.includes(delimiter) || text.includes('"') || text.includes("\n") || text.includes("\r")) {
     return '"' + text.replace(/"/g, '""') + '"';
   }

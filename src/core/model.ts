@@ -419,6 +419,9 @@ export interface Sheet {
       for byte-exact re-emission of untouched rows (index 0 = row 1). `width` is
       the parsed field count, so trailing empty fields survive a rewrite. */
   csvRows?: { raw: string; terminator: string; dirty: boolean; width: number }[];
+  /** csv: the file writes numbers the European way, "1 234,56". Its cells parse as numbers and
+      keep their original text to display and to write back, and a typed value follows suit. */
+  csvCommaDecimal?: boolean;
 }
 
 export interface Workbook {
@@ -850,6 +853,30 @@ export const isNumeric = (s: string): boolean => {
   const t = s.trim();
   return t !== "" && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t);
 };
+
+// Numbers written the European way: "1 234,56". The group separator is a space, a non-breaking
+// space or a narrow one, since that is what spreadsheets and banks export.
+const GROUP_SPACE = /[\u0020\u00A0\u202F]/g;
+const COMMA_NUMBER = /^[-+]?(?:\d{1,3}(?:[\u0020\u00A0\u202F]\d{3})+|\d+)(?:,\d+)?$/;
+
+/** Does this text read as a European number, rather than as a plain one? */
+export function isCommaDecimal(text: string): boolean {
+  const t = text.trim();
+  return COMMA_NUMBER.test(t) && (t.includes(",") || GROUP_SPACE.test(t));
+}
+
+/** The number behind a European field: "1 234,56" -> "1234.56". */
+export function commaDecimalValue(text: string): string {
+  return text.trim().replace(GROUP_SPACE, "").replace(",", ".");
+}
+
+/** The other way: "1234.56" -> "1 234,56", for a file that writes its numbers that way. */
+export function commaDecimalText(value: string): string {
+  if (!/^[-+]?\d+(?:\.\d+)?$/.test(value)) return value;
+  const sign = value.startsWith("-") ? "-" : "";
+  const [int, frac] = value.replace(/^[-+]/, "").split(".");
+  return sign + int!.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (frac ? "," + frac : "");
+}
 
 export function numToStr(n: number): string {
   if (Number.isInteger(n)) return String(n);

@@ -1,6 +1,6 @@
 import FormulaParser from "fast-formula-parser";
 import type { Cell, CellKind, Sheet, Workbook } from "./model";
-import { ensureCell, formatNumber, getCell, numToStr, parseA1Ref, shiftFormula, typedValue } from "./model";
+import { commaDecimalText, ensureCell, formatNumber, getCell, numToStr, parseA1Ref, shiftFormula, typedValue } from "./model";
 import { isDateFmt } from "./dates";
 import { dynamicArrayFunctions } from "./dynamic-arrays";
 import { extraFunctions } from "./functions";
@@ -500,6 +500,10 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     // (Excel behaviour); display-only, so the file's format is not changed on save.
     if (node.cell.numFmt == null && node.cell.kind === "n" && sawDateFmt) {
       node.cell.display = formatNumber(sawDateFmt, node.cell.value) ?? undefined;
+    } else if (node.cell.numFmt == null && node.cell.kind === "n" && node.sheet.csvCommaDecimal) {
+      // A CSV that writes "1 234,56" should see its totals written the same way, or the sum of a
+      // column looks like it belongs to another document. Display-only, as above.
+      node.cell.display = commaDecimalText(node.cell.value);
     }
   }
 }
