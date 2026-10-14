@@ -2852,17 +2852,39 @@ export function createSheetEditor(
       e.preventDefault();
       return;
     }
-    // Clamp to the used extent so a whole-column copy stays bounded.
+    e.clipboardData?.setData("text/plain", selectionTsv());
+    e.preventDefault();
+  };
+  /** The selection as tab-separated text, clamped to the used extent so a whole column stays bounded. */
+  const selectionTsv = (): string => {
+    if (!sel) return "";
+    const sheet = wb.sheets[active]!;
     const r2 = Math.min(sel.r2, Math.max(sel.r1, sheet.maxRow));
     const c2 = Math.min(sel.c2, Math.max(sel.c1, sheet.maxCol));
     const lines: string[] = [];
     for (let r = sel.r1; r <= r2; r++) {
       const vals: string[] = [];
-      for (let c = sel.c1; c <= c2; c++) vals.push(getCell(sheet, r, c)?.value ?? "");
+      for (let c = sel.c1; c <= c2; c++) {
+        const cell = getCell(sheet, r, c);
+        vals.push(cell ? (cell.formula != null ? "=" + cell.formula : cell.value) : "");
+      }
       lines.push(vals.join("\t"));
     }
-    e.clipboardData?.setData("text/plain", lines.join("\n"));
-    e.preventDefault();
+    return lines.join("\n");
+  };
+  /** Put text on the clipboard from a key press, where no cut/copy event of our own will fire. */
+  const toClipboard = (text: string): void => {
+    void navigator.clipboard?.writeText?.(text).catch(() => copyViaTextarea(text));
+    if (!navigator.clipboard?.writeText) copyViaTextarea(text);
+  };
+  const copyViaTextarea = (text: string): void => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch { /* nothing more to try */ }
+    ta.remove();
   };
   // Paste a TSV block (e.g. an Excel range) across cells, starting at the focused one.
   const pasteTsv = (e: ClipboardEvent, r0: number, c0: number) => {
@@ -4628,10 +4650,7 @@ export function createSheetEditor(
         else if (e.key === "ArrowLeft" && input.selectionStart === 0 && input.selectionEnd === 0) moveTo(r, c - 1);
         else if (e.key === "ArrowRight" && input.selectionStart === input.value.length && input.selectionEnd === input.value.length) moveTo(r, c + 1);
         else if (e.key === "Home" && (e.ctrlKey || e.metaKey)) moveTo(1, 1);
-        else if ((e.key === "Delete" || e.key === "Backspace") && sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
-          e.preventDefault();
-          clearRange(sel);
-        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
           // Mid-edit, native text undo applies; otherwise grid-level undo/redo.
           if (input.value === rawOf(r, c)) {
             e.preventDefault();
@@ -5247,6 +5266,35 @@ export function createSheetEditor(
     }
     if (tgt === document.body && sel) pasteTsv(e, sel.r1, sel.c1);
   };
+  /** True when the grid, rather than the formula bar or the page around it, owns this event. */
+  const gridOwns = (e: Event): boolean => {
+    const tgt = e.target as HTMLElement | null;
+    if (tgt?.closest?.(".sheetedit-fxbar")) return false;
+    if (tgt && tgt !== document.body && !wrap.contains(tgt)) return false;
+    return !!sel;
+  };
+  // Delete empties the selected cells, as a spreadsheet does. It used to be handled on the cell's
+  // own input, which a drag selection has blurred, so clearing a block you had just selected did
+  // nothing at all. While a cell is actually being edited the key belongs to the caret.
+  const onDocKeyDown = (e: KeyboardEvent) => {
+    if (editCell || !gridOwns(e)) return;
+    if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      clearRange(sel!);
+      return;
+    }
+    // Cut, which is how a block of cells is moved: take the text, then empty the cells. The
+    // browser raises no cut event of its own once a drag selection has blurred the grid, and
+    // preventing the key keeps it from raising one later over cells that are already empty.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "x") {
+      const text = selectionTsv();
+      if (!text) return;
+      e.preventDefault();
+      toClipboard(text);
+      clearRange(sel!);
+    }
+  };
+  document.addEventListener("keydown", onDocKeyDown);
   document.addEventListener("copy", onDocCopy);
   document.addEventListener("paste", onDocPaste);
 
@@ -6191,6 +6239,7 @@ export function createSheetEditor(
       window.removeEventListener("resize", onWindowResize);
       document.removeEventListener("copy", onDocCopy);
       document.removeEventListener("paste", onDocPaste);
+      document.removeEventListener("keydown", onDocKeyDown);
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
       chartLayer.teardown();

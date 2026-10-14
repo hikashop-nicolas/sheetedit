@@ -117,3 +117,75 @@ describe("row-number column width", () => {
     big.remove();
   });
 });
+
+// Delete over a selection used to be handled on the cell's own input, and a drag selection
+// blurs it: selecting a block and pressing Delete did nothing at all. Cut had no handler, so
+// there was no way to move a block either.
+describe("clearing and moving a selection", () => {
+  const select = (host: HTMLElement, from: string, to: string) => {
+    (host.querySelector(`td[data-rc="${from}"] input`) as HTMLInputElement).dispatchEvent(new FocusEvent("focus"));
+    (host.querySelector(`td[data-rc="${to}"] input`) as HTMLInputElement).dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }),
+    );
+    (document.activeElement as HTMLElement | null)?.blur?.();
+  };
+  const press = (key: string, mods: { metaKey?: boolean } = {}) =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods }));
+  const valueAt = (host: HTMLElement, rc: string) => (host.querySelector(`td[data-rc="${rc}"] input`) as HTMLInputElement).value;
+
+  it("Delete empties every cell of a block selected by dragging", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8("a,b\nc,d\n"), { formatHint: "csv" });
+    select(host, "1:1", "2:2");
+    press("Delete");
+    expect([valueAt(host, "1:1"), valueAt(host, "1:2"), valueAt(host, "2:1"), valueAt(host, "2:2")]).toEqual(["", "", "", ""]);
+    ed.destroy();
+    host.remove();
+  });
+
+  it("Delete empties the one selected cell too", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8("a,b\n"), { formatHint: "csv" });
+    const inp = host.querySelector('td[data-rc="1:2"] input') as HTMLInputElement;
+    inp.dispatchEvent(new FocusEvent("focus"));
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+    expect(valueAt(host, "1:2")).toBe("");
+    ed.destroy();
+    host.remove();
+  });
+
+  it("leaves the caret alone while a cell is being edited", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8("abc,b\n"), { formatHint: "csv" });
+    const inp = host.querySelector('td[data-rc="1:1"] input') as HTMLInputElement;
+    inp.dispatchEvent(new FocusEvent("focus"));
+    inp.dispatchEvent(new KeyboardEvent("dblclick", { bubbles: true })); // now editing
+    inp.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+    expect(valueAt(host, "1:1")).toBe("abc");
+    ed.destroy();
+    host.remove();
+  });
+
+  it("cut takes the block's text and empties it, so paste moves it", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8("a,b\nc,d\n"), { formatHint: "csv" });
+    let written = "";
+    const clip = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: (t: string) => ((written = t), Promise.resolve()) },
+    });
+    select(host, "1:1", "2:2");
+    press("x", { metaKey: true });
+    expect(written).toBe("a\tb\nc\td");
+    expect([valueAt(host, "1:1"), valueAt(host, "2:2")]).toEqual(["", ""]);
+    if (clip) Object.defineProperty(navigator, "clipboard", { configurable: true, value: clip });
+    ed.destroy();
+    host.remove();
+  });
+});
