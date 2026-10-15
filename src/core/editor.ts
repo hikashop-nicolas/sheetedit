@@ -5410,9 +5410,15 @@ export function createSheetEditor(
   // Delete empties the selected cells, as a spreadsheet does. It used to be handled on the cell's
   // own input, which a drag selection has blurred, so clearing a block you had just selected did
   // nothing at all. While a cell is actually being edited the key belongs to the caret.
+  /** Text selected inside the focused cell: the key belongs to that text, not to the cells. */
+  const editingText = (e: Event): boolean => {
+    const tgt = e.target as HTMLElement | null;
+    return tgt instanceof HTMLInputElement && !!tgt.closest("td[data-rc]") && tgt.selectionStart !== tgt.selectionEnd;
+  };
   const onDocKeyDown = (e: KeyboardEvent) => {
     if (editCell || !gridOwns(e)) return;
     if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (editingText(e)) return;
       e.preventDefault();
       clearRange(sel!);
       return;
@@ -5434,6 +5440,7 @@ export function createSheetEditor(
     // browser raises no cut event of its own once a drag selection has blurred the grid, and
     // preventing the key keeps it from raising one later over cells that are already empty.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "x") {
+      if (editingText(e)) return; // cutting text out of a cell, not the cells themselves
       const text = selectionTsv();
       if (!text) return;
       e.preventDefault();
