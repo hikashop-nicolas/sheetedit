@@ -309,6 +309,14 @@ font:inherit; padding:0 8px; box-sizing:border-box; outline:none;
 position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:1;
 background:var(--sheetedit-accent, #6e7bff); border:1px solid var(--sheetedit-handle-border); cursor:crosshair; touch-action:none;
 }
+.sheetedit-table td.sheetedit-selanchor { position:relative; }
+.sheetedit-selframe {
+position:absolute; left:0; top:0; z-index:1; pointer-events:none;
+border:2px solid var(--sheetedit-accent, #6e7bff);
+}
+.sheetedit-grid.sheetedit-canmove { cursor:move; }
+.sheetedit-table td.sheetedit-movedrop { box-shadow: inset 0 0 0 1px var(--sheetedit-accent, #6e7bff); }
+.sheetedit-table td.sheetedit-movedrop input { background:rgba(110,123,255,0.10); }
 .sheetedit-table td.sheetedit-fillprev input { background:rgba(110,123,255,0.10); }
 .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px var(--sheetedit-accent, #6e7bff); }
 .sheetedit-findbar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }

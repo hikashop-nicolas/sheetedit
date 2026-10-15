@@ -86,6 +86,40 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="E1"]').should("have.value", "7");
   });
 
+  // Moving a block had no gesture at all: the selection's border is what a spreadsheet gives
+  // you to drag, so the grid draws one and a drag from it moves the cells. force: true on the
+  // triggers because scrolling a virtualized grid between two of them invalidates the
+  // coordinates the drag is made of.
+  it("moves a selected block by dragging its border", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="A1"]').closest("td").trigger("pointerdown", { pointerType: "mouse", buttons: 1, force: true });
+    cy.get('input[aria-label="B2"]').closest("td").trigger("pointermove", { pointerType: "mouse", buttons: 1, force: true });
+    cy.window().then((win) => win.dispatchEvent(new win.PointerEvent("pointerup", { pointerType: "mouse" })));
+    cy.get(".sheetedit-selframe").should("exist");
+    cy.get('input[aria-label="A1"]').should("have.value", "item");
+
+    cy.document().then((doc) => {
+      const rect = (ref: string) => doc.querySelector(`input[aria-label="${ref}"]`)!.getBoundingClientRect();
+      const from = rect("A1");
+      const to = rect("E5");
+      const fire = (type: string, x: number, y: number) =>
+        doc.querySelector(`input[aria-label="${type === "pointerdown" ? "A1" : "E5"}"]`)!
+          .dispatchEvent(new (doc.defaultView as Window & typeof globalThis).PointerEvent(type, {
+            pointerType: "mouse", buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: y,
+          }));
+      fire("pointerdown", from.left + from.width / 2, from.top + 2); // the frame's top edge
+      fire("pointermove", to.left + to.width / 2, to.top + to.height / 2);
+      expect(doc.querySelectorAll("td.sheetedit-movedrop").length, "drop preview").to.equal(4);
+      (doc.defaultView as Window).dispatchEvent(new (doc.defaultView as Window & typeof globalThis).PointerEvent("pointerup", { pointerType: "mouse" }));
+    });
+    cy.get('input[aria-label="E5"]').should("have.value", "item");
+    cy.get('input[aria-label="A1"]').should("have.value", "");
+    // and it comes back in one step
+    cy.get("body").type("{meta}z");
+    cy.get('input[aria-label="A1"]').should("have.value", "item");
+    cy.get('input[aria-label="E5"]').should("have.value", "");
+  });
+
   it("edits through the formula bar", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C2"]').focus();

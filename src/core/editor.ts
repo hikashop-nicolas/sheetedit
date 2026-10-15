@@ -759,19 +759,64 @@ export function createSheetEditor(
     window.addEventListener("pointerup", onUp);
   });
 
+  // The selection's outline. Excel's affordance for moving a block is its border, so the grid
+  // draws one and takes a drag that starts on it as a move. pointer-events stay off: a click
+  // inside the selection must still reach the cell under it.
+  const selFrame = document.createElement("div");
+  selFrame.className = "sheetedit-selframe";
+  const placeSelFrame = () => {
+    selFrame.remove();
+    if (!sel) return;
+    const tl = tdAt(key(sel.r1, sel.c1));
+    const br = tdAt(key(sel.r2, sel.c2));
+    // Both corners have to be rendered, and in the same pane, for one box to frame them.
+    if (!tl || !br || tl.offsetParent == null || tl.offsetParent !== br.offsetParent) return;
+    selFrame.style.width = `${br.offsetLeft + br.offsetWidth - tl.offsetLeft}px`;
+    selFrame.style.height = `${br.offsetTop + br.offsetHeight - tl.offsetTop}px`;
+    tl.classList.add("sheetedit-selanchor");
+    tl.appendChild(selFrame);
+  };
+  /** The selection's outline in viewport coordinates, when it is on screen. */
+  const selFrameRect = (): { l: number; t: number; r: number; b: number } | null => {
+    if (!sel) return null;
+    const tl = tdAt(key(sel.r1, sel.c1));
+    const br = tdAt(key(sel.r2, sel.c2));
+    if (!tl || !br) return null;
+    const a = tl.getBoundingClientRect();
+    const d = br.getBoundingClientRect();
+    return { l: a.left, t: a.top, r: d.right, b: d.bottom };
+  };
+  const EDGE_GRAB = 5;
+  /** Is this point on the selection's border, where a drag means "move these cells"? */
+  const onSelEdge = (x: number, y: number): boolean => {
+    const box = selFrameRect();
+    if (!box) return false;
+    const inside = x >= box.l - EDGE_GRAB && x <= box.r + EDGE_GRAB && y >= box.t - EDGE_GRAB && y <= box.b + EDGE_GRAB;
+    if (!inside) return false;
+    return (
+      Math.abs(x - box.l) <= EDGE_GRAB ||
+      Math.abs(x - box.r) <= EDGE_GRAB ||
+      Math.abs(y - box.t) <= EDGE_GRAB ||
+      Math.abs(y - box.b) <= EDGE_GRAB
+    );
+  };
+
   const paintSel = () => {
     // Iterate the rendered window's cells (bounded), not the selection rectangle
     // (which can span a million virtual rows after a select-all).
     for (const [k, td] of panes.flatMap((p) => [...p.tds])) {
       if (!sel) {
         td.classList.remove("sheetedit-sel");
+        td.classList.remove("sheetedit-selanchor");
         continue;
       }
       const [r, c] = k.split(":").map(Number);
       td.classList.toggle("sheetedit-sel", r! >= sel.r1 && r! <= sel.r2 && c! >= sel.c1 && c! <= sel.c2);
       td.classList.remove("sheetedit-fillsrc");
+      td.classList.remove("sheetedit-selanchor");
     }
     placeFillHandle();
+    placeSelFrame();
     syncToolbar();
   };
   const setSel = (r1: number, c1: number, r2: number, c2: number) => {
@@ -802,6 +847,25 @@ export function createSheetEditor(
   };
   let dragAnchor: { r: number; c: number } | null = null;
   let dragActive = false;
+  // Dragging the selection's border moves the block, as in a spreadsheet. `moveFrom` is what
+  // was grabbed, `moveGrab` the cell the pointer went down on, so the block follows the hand.
+  let moveFrom: { r1: number; c1: number; r2: number; c2: number } | null = null;
+  let moveGrab: { r: number; c: number } | null = null;
+  let moveTo: { r: number; c: number } | null = null;
+  const paintMovePreview = () => {
+    for (const [k, td] of panes.flatMap((p) => [...p.tds])) {
+      const [r, c] = k.split(":").map(Number);
+      const on =
+        !!moveFrom &&
+        !!moveTo &&
+        !!moveGrab &&
+        r! >= moveFrom.r1 + (moveTo.r - moveGrab.r) &&
+        r! <= moveFrom.r2 + (moveTo.r - moveGrab.r) &&
+        c! >= moveFrom.c1 + (moveTo.c - moveGrab.c) &&
+        c! <= moveFrom.c2 + (moveTo.c - moveGrab.c);
+      td.classList.toggle("sheetedit-movedrop", on);
+    }
+  };
   let justDragged = false;
   let lpTimer: number | null = null;
   let lpStart: { x: number; y: number } | null = null;
@@ -830,6 +894,14 @@ export function createSheetEditor(
         setSel(cell.r, cell.c, cell.r, cell.c);
         return;
       }
+      if (sel && !pickCb && onSelEdge(e.clientX, e.clientY) && (e.target as HTMLElement)?.className !== "sheetedit-fillhandle") {
+        e.preventDefault();
+        moveFrom = { ...sel };
+        moveGrab = cell;
+        moveTo = cell;
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        return;
+      }
       dragAnchor = cell; // mouse: a click still edits; a drag selects
     }
   });
@@ -850,8 +922,19 @@ export function createSheetEditor(
           e.preventDefault();
           setSel(dragAnchor.r, dragAnchor.c, cell.r, cell.c);
         }
+      } else if (moveFrom && moveGrab) {
+        if (e.buttons === 0) return;
+        const cell = cellAtPoint(e.clientX, e.clientY);
+        if (!cell) return;
+        e.preventDefault();
+        moveTo = cell;
+        paintMovePreview();
       } else {
-        if (!dragAnchor || e.buttons === 0) return;
+        if (!dragAnchor || e.buttons === 0) {
+          // Not dragging: say that the border can be grabbed.
+          gridScroll.classList.toggle("sheetedit-canmove", !!sel && onSelEdge(e.clientX, e.clientY));
+          return;
+        }
         const cell = cellAtPoint(e.clientX, e.clientY);
         if (!cell || (cell.r === dragAnchor.r && cell.c === dragAnchor.c && !dragActive)) return;
         if (!dragActive) {
@@ -866,6 +949,19 @@ export function createSheetEditor(
     { passive: false },
   );
   const endDrag = () => {
+    if (moveFrom && moveGrab) {
+      const from = moveFrom;
+      const dr = (moveTo?.r ?? moveGrab.r) - moveGrab.r;
+      const dc = (moveTo?.c ?? moveGrab.c) - moveGrab.c;
+      moveFrom = null;
+      moveGrab = null;
+      moveTo = null;
+      paintMovePreview();
+      moveRange(from, dr, dc);
+      justDragged = true; // the trailing click must not drop a caret in the cell it landed on
+      setTimeout(() => (justDragged = false), 350);
+      return;
+    }
     if (pickCb && dragActive && sel) {
       // Deliver the picked range to the pending formula insertion. No justDragged
       // here: the pick's pointerdown was prevented, so no trailing tap can follow.
@@ -2838,6 +2934,44 @@ export function createSheetEditor(
     mark();
     refreshDisplays(sheet);
   };
+  /**
+   * Move the cells of `from` by (dr, dc): everything the cells carry travels, the source is
+   * emptied and whatever stood in the target is replaced, in one undoable step.
+   */
+  const moveRange = (from: { r1: number; c1: number; r2: number; c2: number }, dr: number, dc: number) => {
+    if (!dr && !dc) return;
+    const sheet = wb.sheets[active]!;
+    const to = { r1: from.r1 + dr, c1: from.c1 + dc, r2: from.r2 + dr, c2: from.c2 + dc };
+    if (to.r1 < 1 || to.c1 < 1 || to.r2 > totalRows || to.c2 > totalCols) return;
+    if (!allowRangeEdit(from) || !allowRangeEdit(to)) return;
+    const within = (range: { r1: number; c1: number; r2: number; c2: number }, r: number, c: number) =>
+      r >= range.r1 && r <= range.r2 && c >= range.c1 && c <= range.c2;
+    // Only cells that exist can move or be overwritten, which keeps a whole-column move bounded.
+    const moving: { r: number; c: number; fields: CellFields | null }[] = [];
+    const touched = new Map<string, { r: number; c: number }>();
+    const note = (r: number, c: number) => touched.set(`${r}:${c}`, { r, c });
+    for (const cell of sheet.cells.values()) {
+      if (within(from, cell.row, cell.col)) {
+        moving.push({ r: cell.row + dr, c: cell.col + dc, fields: snapFields(cell) });
+        note(cell.row, cell.col);
+        note(cell.row + dr, cell.col + dc);
+      } else if (within(to, cell.row, cell.col)) note(cell.row, cell.col);
+    }
+    if (!moving.length && !touched.size) return;
+    const positions = [...touched.values()];
+    recordCells(positions, () => {
+      // Clear both rectangles first: the source empties, the target is replaced, and an
+      // overlapping move still reads its cells from the snapshot rather than from the sheet.
+      for (const pos of positions) if (within(from, pos.r, pos.c) || within(to, pos.r, pos.c)) applyFields(sheet, pos.r, pos.c, null);
+      for (const m of moving) applyFields(sheet, m.r, m.c, m.fields);
+    });
+    recalc(wb);
+    mark();
+    refreshDisplays(sheet);
+    setSel(to.r1, to.c1, to.r2, to.c2);
+    anchor = { r: to.r1, c: to.c1 };
+  };
+
   // Copy a multi-cell selection as TSV (a single cell keeps the native copy).
   const copyRange = (e: ClipboardEvent) => {
     if (!sel) return;
@@ -5281,6 +5415,19 @@ export function createSheetEditor(
     if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       clearRange(sel!);
+      return;
+    }
+    // Undo and redo, which were on the cell's input too: after a drag, a move or a Delete the
+    // grid holds no focus, and ctrl+Z reached nothing.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) doRedo();
+      else doUndo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      doRedo();
       return;
     }
     // Cut, which is how a block of cells is moved: take the text, then empty the cells. The

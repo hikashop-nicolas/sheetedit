@@ -189,3 +189,25 @@ describe("clearing and moving a selection", () => {
     host.remove();
   });
 });
+
+// Undo was handled on the cell's input as well, so after a drag, a move or a Delete, all of
+// which leave the grid without focus, ctrl+Z reached nothing.
+describe("undo without a focused cell", () => {
+  it("takes back a Delete over a selection", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ed = createSheetEditor(host, strToU8("a,b\nc,d\n"), { formatHint: "csv" });
+    const inp = host.querySelector('td[data-rc="1:1"] input') as HTMLInputElement;
+    inp.dispatchEvent(new FocusEvent("focus"));
+    (host.querySelector('td[data-rc="2:2"] input') as HTMLInputElement).dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true, shiftKey: true }),
+    );
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+    expect((host.querySelector('td[data-rc="1:1"] input') as HTMLInputElement).value).toBe("");
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true }));
+    expect((host.querySelector('td[data-rc="1:1"] input') as HTMLInputElement).value).toBe("a");
+    ed.destroy();
+    host.remove();
+  });
+});
