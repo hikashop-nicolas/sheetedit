@@ -73,16 +73,14 @@ export function setupFindBar(ctx: FindBarCtx) {
     b.addEventListener("click", fn);
     return b;
   };
-  bar.append(
-    find,
-    replace,
-    count,
-    mkBtn("‹", t("frPrev"), () => step(-1)),
-    mkBtn("›", t("frNext"), () => step(1)),
-    mkBtn(t("frReplaceOne"), t("frReplaceOneTitle"), () => replaceCurrent()),
-    mkBtn(t("frReplaceAll"), t("frReplaceAllTitle"), () => replaceAll()),
-    mkBtn("✕", t("frClose"), () => hide()),
-  );
+  // Two rows, so a phone's width holds every control: find and its steppers, then replace.
+  const findRow = document.createElement("div");
+  findRow.className = "sheetedit-find-row";
+  findRow.append(find, count, mkBtn("‹", t("frPrev"), () => step(-1)), mkBtn("›", t("frNext"), () => step(1)), mkBtn("✕", t("frClose"), () => hide()));
+  const replaceRow = document.createElement("div");
+  replaceRow.className = "sheetedit-find-row";
+  replaceRow.append(replace, mkBtn(t("frReplaceOne"), t("frReplaceOneTitle"), () => replaceCurrent()), mkBtn(t("frReplaceAll"), t("frReplaceAllTitle"), () => replaceAll()));
+  bar.append(findRow, replaceRow);
   ctx.container.insertBefore(bar, ctx.beforeEl);
 
   let matches: Match[] = [];

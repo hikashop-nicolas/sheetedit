@@ -319,10 +319,12 @@ border:2px solid var(--sheetedit-accent, #6e7bff);
 .sheetedit-table td.sheetedit-movedrop input { background:rgba(110,123,255,0.10); }
 .sheetedit-table td.sheetedit-fillprev input { background:rgba(110,123,255,0.10); }
 .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px var(--sheetedit-accent, #6e7bff); }
-.sheetedit-findbar { display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); }
+.sheetedit-findbar { display:flex; flex-direction:column; gap:6px; padding:6px 8px; background:var(--sheetedit-chrome2, #23262c); border-top:1px solid var(--sheetedit-border, #1c1f24); }
+.sheetedit-find-row { display:flex; align-items:center; gap:6px; }
 .sheetedit-findbar[hidden] { display:none; }
-.sheetedit-findbar input { flex:0 1 180px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px system-ui,sans-serif; padding:4px 8px; }
-.sheetedit-findcount { color:var(--sheetedit-muted, #aab2bf); font:12px system-ui,sans-serif; min-width:64px; }
+.sheetedit-findbar input { flex:1 1 120px; min-width:0; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px system-ui,sans-serif; padding:4px 8px; }
+.sheetedit-findcount { flex:0 0 auto; color:var(--sheetedit-muted, #aab2bf); font:12px system-ui,sans-serif; min-width:48px; text-align:center; }
+.sheetedit-findbar .sheetedit-btn { flex:0 0 auto; white-space:nowrap; }
 .sheetedit-table td.sheetedit-calcerr { position:relative; }
 .sheetedit-table td.sheetedit-calcerr::after {
 content:""; position:absolute; top:0; right:0; z-index:1; pointer-events:none;
