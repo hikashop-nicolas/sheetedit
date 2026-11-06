@@ -279,7 +279,7 @@ background:transparent; border:1px solid transparent; border-radius:5px; color:v
 .sheetedit-grid:focus { outline:none; }
 table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif); }
 .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
-.sheetedit-table th { border:1px solid var(--sheetedit-head-border); }
+.sheetedit-table th { border:0; box-shadow:inset -1px -1px 0 0 var(--sheetedit-head-border); }
 .sheetedit-table td { background:var(--sheetedit-cell-bg); box-shadow: inset -1px -1px 0 0 var(--sheetedit-gridline); }
 .sheetedit-nogrid .sheetedit-table td { box-shadow:none; }
 .sheetedit-table th {

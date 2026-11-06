@@ -369,7 +369,8 @@
    filled in per file), because that is the font its column widths were measured against. */
 table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/1.3 var(--sheetedit-cell-font, ui-sans-serif, system-ui, sans-serif); }
 .sheetedit-table th, .sheetedit-table td { padding:0; margin:0; }
-.sheetedit-table th { border:1px solid var(--sheetedit-head-border); }
+/* Drawn inside the cell, not as a collapsed border: a sticky header leaves its border behind when the grid scrolls, and the sheet shows through the gap. */
+.sheetedit-table th { border:0; box-shadow:inset -1px -1px 0 0 var(--sheetedit-head-border); }
 /* Cell gridlines as box-shadows (not borders) so the file's own borders sit flush
    against their neighbours and touch, like a real spreadsheet. */
 .sheetedit-table td { background:var(--sheetedit-cell-bg); box-shadow: inset -1px -1px 0 0 var(--sheetedit-gridline); }
