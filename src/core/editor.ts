@@ -659,6 +659,8 @@ export function createSheetEditor(
     onWindowResize();
   };
   zoomSlider.addEventListener("input", () => setZoomLevel(Number(zoomSlider.value) / 100));
+  const gridObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => onWindowResize());
+  gridObserver?.observe(gridScroll);
   // Two-finger pinch zooms about the point between the fingers.
   let pinch: { dist: number; zoom: number } | null = null;
   let pinchRaf = 0;
@@ -681,6 +683,8 @@ export function createSheetEditor(
   const setReadingMode = (on: boolean): void => {
     wrap.classList.toggle("sheetedit-reading", on);
     if (on) (document.activeElement as HTMLElement | null)?.blur?.();
+    // The window changes size around this, and a bigger one needs more rows drawn to fill it.
+    requestAnimationFrame(() => { renderWindow(true); onWindowResize(); });
     wrap.style.setProperty("--se-tabs-h", `${tabs.isConnected ? tabs.offsetHeight : 0}px`);
     if (fsButton) {
       const label = t(on ? "exitFullscreen" : "fullscreen");
@@ -6487,6 +6491,7 @@ export function createSheetEditor(
     },
     destroy() {
       idleStopped = true;
+      gridObserver?.disconnect();
       window.removeEventListener("resize", onWindowResize);
       document.removeEventListener("copy", onDocCopy);
       document.removeEventListener("paste", onDocPaste);

@@ -979,4 +979,6 @@ overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 .sheetedit-reading .sheetedit-fs-btn { width:44px; height:44px; opacity:.75; background:var(--sheetedit-chrome, #2b2f36); }
 .sheetedit-reading .sheetedit-fs-btn svg { width:24px; height:24px; }
 .sheetedit-reading .sheetedit-grid { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
-.sheetedit-reading .sheetedit-grid * { pointer-events:none !important; }`;
+.sheetedit-reading .sheetedit-grid * { pointer-events:none !important; }
+.sheetedit-reading .sheetedit-selframe, .sheetedit-reading .sheetedit-fillhandle { display:none !important; }
+.sheetedit-reading .sheetedit-table td.sheetedit-sel input { background:transparent !important; }`;
