@@ -1888,7 +1888,7 @@ export function createSheetEditor(
   // Find and replace: finds across every sheet, replaces on the active one.
   const findBar = setupFindBar({
     container: wrap,
-    beforeEl: gridScroll,
+    beforeEl: bottomBar,
     getWorkbook: () => wb,
     getActiveSheet: () => active,
     setActiveSheet: (i) => switchSheet(i),

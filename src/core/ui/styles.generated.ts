@@ -428,10 +428,10 @@ font:12.5px/1.45 system-ui,sans-serif; box-shadow:0 6px 18px rgba(0,0,0,.35); po
 .sheetedit-grid td.pa-left { border-left:2px solid var(--sheetedit-printarea) !important; }
 .sheetedit-grid td.pa-right { border-right:2px solid var(--sheetedit-printarea) !important; }
 .sheetedit-grid td.pa-out { background-image:linear-gradient(rgba(120,120,130,.10), rgba(120,120,130,.10)); }
-.sheetedit-tabs { display:flex; align-items:center; gap:2px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
+.sheetedit-tabs { display:flex; align-items:flex-start; gap:2px; padding:0 8px 5px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); overflow-x:auto; }
 .sheetedit-tab {
-font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-bottom:none;
-border-radius:5px 5px 0 0; padding:4px 12px; cursor:pointer; white-space:nowrap;
+font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-top:none;
+border-radius:0 0 6px 6px; padding:5px 12px; cursor:pointer; white-space:nowrap;
 }
 .sheetedit-tab[aria-selected="true"] { background:var(--sheetedit-accent, #6e7bff); color:var(--sheetedit-accent-fg); border-color:var(--sheetedit-accent, #6e7bff); }
 .sheetedit-tab[style*="--sheetedit-tabcolor"] {
@@ -443,7 +443,7 @@ box-shadow: inset 0 -3px 0 0 var(--sheetedit-tabcolor);
 }
 .sheetedit-tab:focus-visible { outline:2px solid var(--sheetedit-accent-fg); outline-offset:1px; }
 .sheetedit-tab-rename { font:inherit; width:9ch; min-width:60px; box-sizing:border-box; background:var(--sheetedit-bg, #1f2227); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-accent, #6e7bff); border-radius:4px; padding:2px 5px; }
-.sheetedit-tab-add { display:inline-flex; align-items:center; justify-content:center; flex:none; width:26px; height:26px; margin-left:4px; padding:0; cursor:pointer; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
+.sheetedit-tab-add { align-self:center; display:inline-flex; align-items:center; justify-content:center; flex:none; width:26px; height:26px; margin-left:4px; padding:0; cursor:pointer; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-muted, #cfd3da); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; }
 .sheetedit-tab-add:hover { background:var(--sheetedit-btn-hover, #454b54); color:var(--sheetedit-text, #e6e6e6); }
 .sheetedit-tabmenu { bottom:40px; }
 .sheetedit-modal { position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center; background:var(--sheetedit-scrim, rgba(0,0,0,.45)); }
