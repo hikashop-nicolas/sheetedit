@@ -103,9 +103,8 @@ export function buildToolbar(ctx: {
   toolbar.append(
     undoBtn,
     redoBtn,
-    sep(),
     // No "+ row" / "+ column" buttons: the grid grows on its own when the scroll reaches its edge.
-    tbIcon(ICON.find, t("findReplace"), ctx.findReplace),
+    // Find is in the bottom bar.
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
   if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined, colours: () => ({ text: "#000000", fill: "#ffff00" }) };
