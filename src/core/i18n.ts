@@ -7,6 +7,9 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   sheets: "Sheets",
+  zoom: "Zoom",
+  fullscreen: "Fullscreen",
+  exitFullscreen: "Exit fullscreen",
   sheetAdd: "Add sheet",
   sheetRename: "Rename",
   sheetDelete: "Delete",
@@ -519,6 +522,9 @@ const en: Dict = {
 
 const fr: Dict = {
   sheets: "Feuilles",
+  zoom: "Zoom",
+  fullscreen: "Plein écran",
+  exitFullscreen: "Quitter le plein écran",
   sheetAdd: "Ajouter une feuille",
   sheetRename: "Renommer",
   sheetDelete: "Supprimer",
@@ -1031,6 +1037,9 @@ const fr: Dict = {
 
 const ja: Dict = {
   sheets: "シート",
+  zoom: "ズーム",
+  fullscreen: "全画面",
+  exitFullscreen: "全画面を終了",
   sheetAdd: "シートを追加",
   sheetRename: "名前を変更",
   sheetDelete: "削除",
@@ -1543,6 +1552,9 @@ const ja: Dict = {
 
 const es: Dict = {
   sheets: "Hojas",
+  zoom: "Zoom",
+  fullscreen: "Pantalla completa",
+  exitFullscreen: "Salir de pantalla completa",
   sheetAdd: "Añadir una hoja",
   sheetRename: "Cambiar el nombre",
   sheetDelete: "Eliminar",
@@ -2055,6 +2067,9 @@ const es: Dict = {
 
 const de: Dict = {
   sheets: "Blätter",
+  zoom: "Zoom",
+  fullscreen: "Vollbild",
+  exitFullscreen: "Vollbild beenden",
   sheetAdd: "Blatt hinzufügen",
   sheetRename: "Umbenennen",
   sheetDelete: "Löschen",
@@ -2567,6 +2582,9 @@ const de: Dict = {
 
 const pt: Dict = {
   sheets: "Folhas",
+  zoom: "Zoom",
+  fullscreen: "Ecrã inteiro",
+  exitFullscreen: "Sair do ecrã inteiro",
   sheetAdd: "Adicionar uma folha",
   sheetRename: "Mudar o nome",
   sheetDelete: "Eliminar",
@@ -3079,6 +3097,9 @@ const pt: Dict = {
 
 const ru: Dict = {
   sheets: "Листы",
+  zoom: "Масштаб",
+  fullscreen: "Во весь экран",
+  exitFullscreen: "Выйти из полноэкранного режима",
   sheetAdd: "Добавить лист",
   sheetRename: "Переименовать",
   sheetDelete: "Удалить",
@@ -3591,6 +3612,9 @@ const ru: Dict = {
 
 const zh: Dict = {
   sheets: "工作表",
+  zoom: "缩放",
+  fullscreen: "全屏",
+  exitFullscreen: "退出全屏",
   sheetAdd: "添加工作表",
   sheetRename: "重命名",
   sheetDelete: "删除",

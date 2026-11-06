@@ -176,6 +176,8 @@ export interface PeerCell {
 
 export interface SheetEditorOptions {
   onChange?: () => void;
+  /** Show a fullscreen button beside the zoom; the host enters or leaves fullscreen when it is pressed. */
+  onFullscreen?: () => void;
   /** The cell this person moved to, for a shared session to publish. */
   onSelectionChanged?: (at: { sheet: string; r: number; c: number }) => void;
   /**
@@ -345,6 +347,8 @@ export interface SheetEditor {
    * the addresses moved would restore the document to a shape nobody else has.
    */
   applyRemoteStructural(op: { kind: "insert" | "delete"; axis: "row" | "col"; sheet: string; at: number; count: number }): void;
+  /** Reading mode, for a host's fullscreen: no toolbars, and the grid cannot be edited or selected. */
+  setReadingMode(on: boolean): void;
   destroy(): void;
 }
 
@@ -423,6 +427,7 @@ export function createSheetEditor(
       printPages: () => null, // nothing opened, so nothing to print
       isDirty: () => false,
       markClean: () => undefined,
+      setReadingMode: () => undefined,
       getCellValue: () => "",
       setCellValue: () => undefined,
       cellInputs: () => [],
@@ -593,6 +598,97 @@ export function createSheetEditor(
   if (wb.kind === "csv") wrap.append(toolbar, fxbar.el, gridScroll);
   else wrap.append(toolbar, fxbar.el, gridScroll, tabs);
   wrap.appendChild(notice); // absolute, over the grid: never shifts the layout
+
+  // Bottom bar, like the other editors: find on the left, zoom and fullscreen on the right.
+  let zoomLevel = 1;
+  const svgIcon = (inner: string): string => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+  const ICON_FIND = svgIcon('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>');
+  const ICON_FS = svgIcon('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/>');
+  const ICON_FS_EXIT = svgIcon('<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" x2="21" y1="10" y2="3"/><line x1="3" x2="10" y1="21" y2="14"/>');
+  const bottomBar = document.createElement("div");
+  bottomBar.className = "sheetedit-bottombar";
+  const barButton = (className: string, html: string, label: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `sheetedit-bb-btn ${className}`;
+    b.innerHTML = html;
+    b.title = label;
+    b.setAttribute("aria-label", label);
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  const findButton = barButton("sheetedit-bb-find", ICON_FIND, t("findReplace"), () => findBar.toggle());
+  const zoomSlider = document.createElement("input");
+  zoomSlider.type = "range";
+  zoomSlider.className = "sheetedit-zoom-slider";
+  zoomSlider.min = "30";
+  zoomSlider.max = "300";
+  zoomSlider.step = "5";
+  zoomSlider.value = "100";
+  zoomSlider.title = t("zoom");
+  zoomSlider.setAttribute("aria-label", t("zoom"));
+  const zoomLabel = document.createElement("span");
+  zoomLabel.className = "sheetedit-zoom-label";
+  zoomLabel.textContent = "100%";
+  const fsButton = options.onFullscreen ? barButton("sheetedit-fs-btn", ICON_FS, t("fullscreen"), () => options.onFullscreen?.()) : null;
+  const barGrow = document.createElement("span");
+  barGrow.className = "sheetedit-bb-grow";
+  bottomBar.append(findButton, barGrow, zoomSlider, zoomLabel);
+  if (fsButton) bottomBar.append(fsButton);
+  wrap.appendChild(bottomBar);
+
+  // The grid is zoomed with CSS zoom: its own scroll and size stay in unzoomed pixels, so the
+  // windowing keeps working, and the zoomed grid simply shows more or fewer cells.
+  const setZoomLevel = (z: number, at?: { x: number; y: number }): void => {
+    const next = Math.max(0.3, Math.min(3, Math.round(z * 100) / 100));
+    zoomSlider.value = String(Math.round(next * 100));
+    zoomLabel.textContent = `${Math.round(next * 100)}%`;
+    if (next === zoomLevel) return;
+    const old = zoomLevel;
+    const rect = gridScroll.getBoundingClientRect();
+    const px = at ? at.x - rect.left : rect.width / 2;
+    const py = at ? at.y - rect.top : rect.height / 2;
+    const lx = gridScroll.scrollLeft + px / old;
+    const ly = gridScroll.scrollTop + py / old;
+    zoomLevel = next;
+    gridScroll.style.zoom = next === 1 ? "" : String(next);
+    gridScroll.scrollLeft = Math.max(0, lx - px / next);
+    gridScroll.scrollTop = Math.max(0, ly - py / next);
+    renderWindow(true);
+    onWindowResize();
+  };
+  zoomSlider.addEventListener("input", () => setZoomLevel(Number(zoomSlider.value) / 100));
+  // Two-finger pinch zooms about the point between the fingers.
+  let pinch: { dist: number; zoom: number } | null = null;
+  let pinchRaf = 0;
+  let pinchTo = 1;
+  let pinchAt = { x: 0, y: 0 };
+  const touchDist = (e: TouchEvent): number => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY) || 1;
+  gridScroll.addEventListener("touchstart", (e) => { pinch = e.touches.length === 2 ? { dist: touchDist(e), zoom: zoomLevel } : null; }, { passive: true });
+  gridScroll.addEventListener("touchmove", (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    pinchTo = pinch.zoom * (touchDist(e) / pinch.dist);
+    pinchAt = { x: (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2, y: (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2 };
+    if (!pinchRaf) pinchRaf = requestAnimationFrame(() => { pinchRaf = 0; setZoomLevel(pinchTo, pinchAt); });
+  }, { passive: false });
+  const endPinch = (e: TouchEvent): void => { if (e.touches.length < 2) pinch = null; };
+  gridScroll.addEventListener("touchend", endPinch, { passive: true });
+  gridScroll.addEventListener("touchcancel", endPinch, { passive: true });
+
+  // Reading, for a host's fullscreen: the grid and the sheet tabs only, and nothing can be touched but the tabs.
+  const setReadingMode = (on: boolean): void => {
+    wrap.classList.toggle("sheetedit-reading", on);
+    if (on) (document.activeElement as HTMLElement | null)?.blur?.();
+    wrap.style.setProperty("--se-tabs-h", `${tabs.isConnected ? tabs.offsetHeight : 0}px`);
+    if (fsButton) {
+      const label = t(on ? "exitFullscreen" : "fullscreen");
+      fsButton.innerHTML = on ? ICON_FS_EXIT : ICON_FS;
+      fsButton.title = label;
+      fsButton.setAttribute("aria-label", label);
+    }
+  };
   container.appendChild(wrap);
 
   // The sheet the file was left on, when it names one and that sheet is visible: opening on sheet
@@ -996,13 +1092,13 @@ export function createSheetEditor(
     resizing = true;
     const x0 = e.clientX;
     const onMove = (ev: PointerEvent) => {
-      const w = Math.max(24, Math.round(startW + (ev.clientX - x0)));
+      const w = Math.max(24, Math.round(startW + (ev.clientX - x0) / zoomLevel));
       colEl.style.width = `${w}px`;
     };
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      const w = Math.max(24, Math.round(startW + (ev.clientX - x0)));
+      const w = Math.max(24, Math.round(startW + (ev.clientX - x0) / zoomLevel));
       const sheet = wb.sheets[active];
       if (sheet && wb.kind === "xlsx") {
         setXlsxColWidth(sheet, col, w);
@@ -1025,13 +1121,13 @@ export function createSheetEditor(
     resizing = true;
     const y0 = e.clientY;
     const onMove = (ev: PointerEvent) => {
-      const h = Math.max(16, Math.round(startH + (ev.clientY - y0)));
+      const h = Math.max(16, Math.round(startH + (ev.clientY - y0) / zoomLevel));
       rowEl.style.height = `${h}px`;
     };
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      const h = Math.max(16, Math.round(startH + (ev.clientY - y0)));
+      const h = Math.max(16, Math.round(startH + (ev.clientY - y0) / zoomLevel));
       const sheet = wb.sheets[active];
       if (sheet && wb.kind === "xlsx") {
         setXlsxRowHeight(sheet, row, h);
@@ -5877,6 +5973,7 @@ export function createSheetEditor(
     markClean() {
       dirty = false;
     },
+    setReadingMode,
     getCellValue(ref: string) {
       const p = parseA1Ref(ref);
       const sheet = wb.sheets[active];

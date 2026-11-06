@@ -1120,6 +1120,52 @@ describe("editor API", () => {
   });
 });
 
+describe("bottom bar", () => {
+  const mount = (opts = {}) => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    return { container, ed: createSheetEditor(container, makeXlsx(), opts) };
+  };
+  it("has find and a zoom slider, and a fullscreen button only when the host asks", () => {
+    const a = mount();
+    expect(a.container.querySelector(".sheetedit-bb-find")).not.toBeNull();
+    expect(a.container.querySelector(".sheetedit-zoom-slider")).not.toBeNull();
+    expect(a.container.querySelector(".sheetedit-fs-btn")).toBeNull();
+    a.ed.destroy();
+    let asked = 0;
+    const b = mount({ onFullscreen: () => asked++ });
+    b.container.querySelector<HTMLButtonElement>(".sheetedit-fs-btn")!.click();
+    expect(asked).toBe(1);
+    b.ed.destroy();
+  });
+  it("zooms the grid from the slider", () => {
+    const { container, ed } = mount();
+    const slider = container.querySelector<HTMLInputElement>(".sheetedit-zoom-slider")!;
+    slider.value = "150";
+    slider.dispatchEvent(new Event("input"));
+    expect(container.querySelector<HTMLElement>(".sheetedit-grid")!.style.zoom).toBe("1.5");
+    expect(container.querySelector(".sheetedit-zoom-label")!.textContent).toBe("150%");
+    ed.destroy();
+  });
+  it("reading mode flags the editor and swaps the fullscreen button's label", () => {
+    const { container, ed } = mount({ onFullscreen: () => undefined });
+    const btn = container.querySelector<HTMLButtonElement>(".sheetedit-fs-btn")!;
+    const enter = btn.title;
+    ed.setReadingMode(true);
+    expect(container.querySelector(".sheetedit-wrap")!.classList.contains("sheetedit-reading")).toBe(true);
+    expect(btn.title).not.toBe(enter);
+    ed.setReadingMode(false);
+    expect(container.querySelector(".sheetedit-wrap")!.classList.contains("sheetedit-reading")).toBe(false);
+    expect(btn.title).toBe(enter);
+    ed.destroy();
+  });
+});
+
 describe("formula engine coverage", () => {
   const xlsx2 = (s1: string, s2: string): Uint8Array =>
     zipSync({

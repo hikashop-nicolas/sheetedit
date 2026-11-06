@@ -1199,3 +1199,20 @@ table.sheetedit-table { border-collapse:collapse; table-layout:fixed; font:13px/
   --sheetedit-cell-focus-bg: #262c4a;
   --sheetedit-zebra: #22252b;
 }
+
+/* Bottom bar: find on the left, zoom and fullscreen on the right. */
+.sheetedit-bottombar { flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--sheetedit-chrome, #2b2f36); border-top:1px solid var(--sheetedit-border, #1c1f24); }
+.sheetedit-bb-btn { width:30px; height:30px; flex:0 0 auto; padding:0; display:inline-flex; align-items:center; justify-content:center; font:inherit; background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); border:1px solid var(--sheetedit-btn-border, #4a4f57); border-radius:5px; cursor:pointer; }
+.sheetedit-bb-btn:hover { border-color:var(--sheetedit-accent, #6e7bff); }
+.sheetedit-bb-btn:focus-visible { outline:2px solid var(--sheetedit-accent, #6e7bff); outline-offset:1px; }
+.sheetedit-bb-grow { flex:1 1 auto; }
+.sheetedit-zoom-slider { flex:0 1 96px; width:96px; min-width:48px; accent-color:var(--sheetedit-accent, #6e7bff); }
+.sheetedit-zoom-label { flex:0 0 auto; min-width:3.2em; text-align:right; color:var(--sheetedit-muted, #aab2bf); }
+/* Reading: the grid and the sheet tabs, with the way out above the tabs in the corner it came from. */
+.sheetedit-reading .sheetedit-toolbar, .sheetedit-reading .sheetedit-fxbar, .sheetedit-reading .sheetedit-findbar,
+.sheetedit-reading .sheetedit-bottombar > :not(.sheetedit-fs-btn) { display:none !important; }
+.sheetedit-reading .sheetedit-bottombar { position:absolute; right:12px; bottom:calc(var(--se-tabs-h, 0px) + 12px); z-index:30; padding:0; border:0; background:transparent; }
+.sheetedit-reading .sheetedit-fs-btn { width:44px; height:44px; opacity:.75; background:var(--sheetedit-chrome, #2b2f36); }
+.sheetedit-reading .sheetedit-fs-btn svg { width:24px; height:24px; }
+.sheetedit-reading .sheetedit-grid { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+.sheetedit-reading .sheetedit-grid * { pointer-events:none !important; }
