@@ -321,6 +321,7 @@ border:2px solid var(--sheetedit-accent, #6e7bff);
 .sheetedit-table td.sheetedit-fillprev { box-shadow: inset 0 0 0 1px var(--sheetedit-accent, #6e7bff); }
 .sheetedit-findbar { display:flex; flex-direction:column; gap:6px; padding:6px 8px; background:var(--sheetedit-chrome2, #23262c); border-top:1px solid var(--sheetedit-border, #1c1f24); }
 .sheetedit-find-row { display:flex; align-items:center; gap:6px; }
+@media (min-width: 700px) { .sheetedit-findbar { flex-direction:row; align-items:center; gap:14px; } .sheetedit-find-row { flex:1 1 0; min-width:0; } }
 .sheetedit-findbar[hidden] { display:none; }
 .sheetedit-findbar input { flex:1 1 120px; min-width:0; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px system-ui,sans-serif; padding:4px 8px; }
 .sheetedit-findcount { flex:0 0 auto; color:var(--sheetedit-muted, #aab2bf); font:12px system-ui,sans-serif; min-width:48px; text-align:center; }
