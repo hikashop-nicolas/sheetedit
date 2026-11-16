@@ -661,46 +661,73 @@ export function createSheetEditor(
   zoomSlider.addEventListener("input", () => setZoomLevel(Number(zoomSlider.value) / 100));
   const gridObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => onWindowResize());
   gridObserver?.observe(gridScroll);
-  // Two-finger pinch zooms about the point between the fingers. While the fingers move the grid
-  // is only scaled (a transform, no re-render); the zoom is applied once when they lift.
-  let pinch: { dist: number; zoom: number; at: { x: number; y: number }; to: number; now: { x: number; y: number } } | null = null;
+  // Two-finger pinch zooms about the point between the fingers. Between real zoom steps (a re-render,
+  // at most every PINCH_STEP ms) the grid is only scaled with a transform, so it follows the fingers.
+  const PINCH_STEP = 100;
+  let pinch: { dist: number; zoom: number; to: number; at: { x: number; y: number }; now: { x: number; y: number }; applied: number; last: number } | null = null;
   const touchDist = (e: TouchEvent): number => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY) || 1;
   const touchMid = (e: TouchEvent): { x: number; y: number } => ({ x: (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2, y: (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2 });
   const clearPinchPreview = (): void => {
     gridScroll.style.transform = "";
     gridScroll.style.transformOrigin = "";
-    if (gridScroll.parentElement) gridScroll.parentElement.style.overflow = "";
+    const area = gridScroll.parentElement;
+    if (area) { area.style.overflow = ""; area.style.background = ""; }
+  };
+  // Apply the pinch so far as a real zoom: the point first under the fingers follows them.
+  const commitPinch = (p: NonNullable<typeof pinch>): void => {
+    clearPinchPreview(); // setZoomLevel measures the unscaled grid
+    setZoomLevel(p.to, p.at);
+    gridScroll.scrollLeft -= (p.now.x - p.at.x) / zoomLevel;
+    gridScroll.scrollTop -= (p.now.y - p.at.y) / zoomLevel;
+    p.applied = zoomLevel;
+    p.at = p.now;
+    p.last = performance.now();
+  };
+  // Touch events keep going to the element first touched, even after a zoom step re-renders it
+  // out of the grid, so the gesture is followed on those elements, not on the grid.
+  let pinchTargets: EventTarget[] = [];
+  const unhookPinch = (): void => {
+    for (const t of pinchTargets) {
+      t.removeEventListener("touchmove", onPinchMove as EventListener);
+      t.removeEventListener("touchend", endPinch as EventListener);
+      t.removeEventListener("touchcancel", endPinch as EventListener);
+    }
+    pinchTargets = [];
   };
   gridScroll.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 2) return;
     const at = touchMid(e);
-    pinch = { dist: touchDist(e), zoom: zoomLevel, at, to: zoomLevel, now: at };
+    pinch = { dist: touchDist(e), zoom: zoomLevel, to: zoomLevel, at, now: at, applied: zoomLevel, last: performance.now() };
+    unhookPinch();
+    pinchTargets = [...new Set([e.touches[0]!.target, e.touches[1]!.target])];
+    for (const t of pinchTargets) {
+      t.addEventListener("touchmove", onPinchMove as EventListener, { passive: false });
+      t.addEventListener("touchend", endPinch as EventListener, { passive: true });
+      t.addEventListener("touchcancel", endPinch as EventListener, { passive: true });
+    }
   }, { passive: true });
-  gridScroll.addEventListener("touchmove", (e) => {
+  function onPinchMove(e: TouchEvent): void {
     if (!pinch || e.touches.length !== 2) return;
     if (e.cancelable) e.preventDefault();
     pinch.to = Math.max(0.3, Math.min(3, pinch.zoom * (touchDist(e) / pinch.dist)));
     pinch.now = touchMid(e);
+    if (performance.now() - pinch.last >= PINCH_STEP && Math.abs(pinch.to / pinch.applied - 1) > 0.02) { commitPinch(pinch); return; }
     // The scroller is CSS-zoomed, so its own transform works in unzoomed pixels.
     const rect = gridScroll.getBoundingClientRect();
-    const z = pinch.zoom;
+    const z = pinch.applied;
     gridScroll.style.transformOrigin = `${(pinch.at.x - rect.left) / z}px ${(pinch.at.y - rect.top) / z}px`;
     gridScroll.style.transform = `translate(${(pinch.now.x - pinch.at.x) / z}px, ${(pinch.now.y - pinch.at.y) / z}px) scale(${pinch.to / z})`;
-    if (gridScroll.parentElement) gridScroll.parentElement.style.overflow = "hidden";
-  }, { passive: false });
-  const endPinch = (e: TouchEvent): void => {
+    const area = gridScroll.parentElement;
+    if (area) { area.style.overflow = "hidden"; area.style.background = "var(--sheetedit-cell-bg)"; }
+  }
+  function endPinch(e: TouchEvent): void {
     if (!pinch || e.touches.length >= 2) return;
     const p = pinch;
     pinch = null;
-    // Drop the preview first: setZoomLevel measures the unscaled grid.
+    unhookPinch();
     clearPinchPreview();
-    if (p.to === p.zoom && p.now.x === p.at.x && p.now.y === p.at.y) return;
-    setZoomLevel(p.to, p.at);
-    gridScroll.scrollLeft -= (p.now.x - p.at.x) / zoomLevel;
-    gridScroll.scrollTop -= (p.now.y - p.at.y) / zoomLevel;
-  };
-  gridScroll.addEventListener("touchend", endPinch, { passive: true });
-  gridScroll.addEventListener("touchcancel", endPinch, { passive: true });
+    if (p.to !== p.applied || p.now.x !== p.at.x || p.now.y !== p.at.y) commitPinch(p);
+  }
 
   // Reading, for a host's fullscreen: the grid and the sheet tabs only, and nothing can be touched but the tabs.
   const setReadingMode = (on: boolean): void => {
