@@ -661,21 +661,44 @@ export function createSheetEditor(
   zoomSlider.addEventListener("input", () => setZoomLevel(Number(zoomSlider.value) / 100));
   const gridObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => onWindowResize());
   gridObserver?.observe(gridScroll);
-  // Two-finger pinch zooms about the point between the fingers.
-  let pinch: { dist: number; zoom: number } | null = null;
-  let pinchRaf = 0;
-  let pinchTo = 1;
-  let pinchAt = { x: 0, y: 0 };
+  // Two-finger pinch zooms about the point between the fingers. While the fingers move the grid
+  // is only scaled (a transform, no re-render); the zoom is applied once when they lift.
+  let pinch: { dist: number; zoom: number; at: { x: number; y: number }; to: number; now: { x: number; y: number } } | null = null;
   const touchDist = (e: TouchEvent): number => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY) || 1;
-  gridScroll.addEventListener("touchstart", (e) => { pinch = e.touches.length === 2 ? { dist: touchDist(e), zoom: zoomLevel } : null; }, { passive: true });
+  const touchMid = (e: TouchEvent): { x: number; y: number } => ({ x: (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2, y: (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2 });
+  const clearPinchPreview = (): void => {
+    gridScroll.style.transform = "";
+    gridScroll.style.transformOrigin = "";
+    if (gridScroll.parentElement) gridScroll.parentElement.style.overflow = "";
+  };
+  gridScroll.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 2) return;
+    const at = touchMid(e);
+    pinch = { dist: touchDist(e), zoom: zoomLevel, at, to: zoomLevel, now: at };
+  }, { passive: true });
   gridScroll.addEventListener("touchmove", (e) => {
     if (!pinch || e.touches.length !== 2) return;
-    e.preventDefault();
-    pinchTo = pinch.zoom * (touchDist(e) / pinch.dist);
-    pinchAt = { x: (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2, y: (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2 };
-    if (!pinchRaf) pinchRaf = requestAnimationFrame(() => { pinchRaf = 0; setZoomLevel(pinchTo, pinchAt); });
+    if (e.cancelable) e.preventDefault();
+    pinch.to = Math.max(0.3, Math.min(3, pinch.zoom * (touchDist(e) / pinch.dist)));
+    pinch.now = touchMid(e);
+    // The scroller is CSS-zoomed, so its own transform works in unzoomed pixels.
+    const rect = gridScroll.getBoundingClientRect();
+    const z = pinch.zoom;
+    gridScroll.style.transformOrigin = `${(pinch.at.x - rect.left) / z}px ${(pinch.at.y - rect.top) / z}px`;
+    gridScroll.style.transform = `translate(${(pinch.now.x - pinch.at.x) / z}px, ${(pinch.now.y - pinch.at.y) / z}px) scale(${pinch.to / z})`;
+    if (gridScroll.parentElement) gridScroll.parentElement.style.overflow = "hidden";
   }, { passive: false });
-  const endPinch = (e: TouchEvent): void => { if (e.touches.length < 2) pinch = null; };
+  const endPinch = (e: TouchEvent): void => {
+    if (!pinch || e.touches.length >= 2) return;
+    const p = pinch;
+    pinch = null;
+    // Drop the preview first: setZoomLevel measures the unscaled grid.
+    clearPinchPreview();
+    if (p.to === p.zoom && p.now.x === p.at.x && p.now.y === p.at.y) return;
+    setZoomLevel(p.to, p.at);
+    gridScroll.scrollLeft -= (p.now.x - p.at.x) / zoomLevel;
+    gridScroll.scrollTop -= (p.now.y - p.at.y) / zoomLevel;
+  };
   gridScroll.addEventListener("touchend", endPinch, { passive: true });
   gridScroll.addEventListener("touchcancel", endPinch, { passive: true });
 
@@ -969,8 +992,21 @@ export function createSheetEditor(
   let justDragged = false;
   let lpTimer: number | null = null;
   let lpStart: { x: number; y: number } | null = null;
+  const pointersDown = new Set<number>(); // on the grid, to tell a pinch from a drag
+  const dropPointer = (e: PointerEvent): void => { pointersDown.delete(e.pointerId); };
+  window.addEventListener("pointerup", dropPointer);
+  window.addEventListener("pointercancel", dropPointer);
   gridScroll.addEventListener("pointerdown", (e) => {
     if (resizing) return;
+    pointersDown.add(e.pointerId);
+    if (pointersDown.size > 1) {
+      // A second finger: a pinch, so the first one's long-press or drag must not select.
+      if (lpTimer != null) clearTimeout(lpTimer);
+      lpTimer = null;
+      dragActive = false;
+      dragAnchor = null;
+      return;
+    }
     const cell = cellAtPoint(e.clientX, e.clientY);
     if (!cell) return;
     if (e.pointerType === "touch") {
@@ -1008,6 +1044,7 @@ export function createSheetEditor(
   gridScroll.addEventListener(
     "pointermove",
     (e) => {
+      if (pointersDown.size > 1) return;
       if (e.pointerType === "touch") {
         if (lpTimer != null && lpStart) {
           if (Math.abs(e.clientX - lpStart.x) > 8 || Math.abs(e.clientY - lpStart.y) > 8) {
@@ -6498,6 +6535,8 @@ export function createSheetEditor(
       document.removeEventListener("keydown", onDocKeyDown);
       window.removeEventListener("pointerup", endDrag);
       window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("pointerup", dropPointer);
+      window.removeEventListener("pointercancel", dropPointer);
       chartLayer.teardown();
       imageLayer.teardown();
       shapeLayer.teardown();

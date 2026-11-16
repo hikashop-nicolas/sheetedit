@@ -273,7 +273,7 @@ background:transparent; border:1px solid transparent; border-radius:5px; color:v
 .sheetedit-colband { min-width:0; display:flex; flex-direction:column; }
 .sheetedit-colband:first-child { flex:1; }
 .sheetedit-colband-right { flex:1; display:none; }
-.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
+.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); touch-action:pan-x pan-y; }
 .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid-right { border-left:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid:focus { outline:none; }

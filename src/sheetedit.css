@@ -358,7 +358,7 @@
 .sheetedit-colband-right { flex:1; display:none; }
 /* Positioned, because the floating layers live inside it: that is what makes them scroll with
    the cells instead of being dragged along a frame late by a scroll listener. */
-.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); }
+.sheetedit-grid { position:relative; flex:1; min-height:0; overflow:auto; background:var(--sheetedit-grid-bg); touch-action:pan-x pan-y; }
 /* The viewports past a boundary, on the side the divider sits on. */
 .sheetedit-grid-split { border-top:1px solid var(--sheetedit-border, #c8ccd2); }
 .sheetedit-grid-right { border-left:1px solid var(--sheetedit-border, #c8ccd2); }
