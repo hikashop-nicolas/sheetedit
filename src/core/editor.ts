@@ -1038,6 +1038,7 @@ export function createSheetEditor(
   window.addEventListener("pointercancel", dropPointer);
   gridScroll.addEventListener("pointerdown", (e) => {
     if (resizing) return;
+    if (e.pointerType === "mouse" || e.isPrimary) pointersDown.clear(); // a new gesture; drops a lost pointerup
     pointersDown.add(e.pointerId);
     if (pointersDown.size > 1) {
       // A second finger: a pinch, so the first one's long-press or drag must not select.
