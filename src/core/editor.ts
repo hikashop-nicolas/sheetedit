@@ -664,7 +664,7 @@ export function createSheetEditor(
   // Two-finger pinch zooms about the point between the fingers. A zoom step re-lays out every cell
   // (~100 ms on a phone), so while the fingers move the grid is only scaled with a transform, over a
   // grid pattern for the room it uncovers, and the zoom is applied once when they lift.
-  let pinch: { dist: number; zoom: number; to: number; at: { x: number; y: number }; now: { x: number; y: number } } | null = null;
+  let pinch: { dist: number; zoom: number; to: number; at: { x: number; y: number }; now: { x: number; y: number }; left: number; top: number } | null = null;
   let pinchRaf = 0;
   const touchDist = (e: TouchEvent): number => Math.hypot(e.touches[0]!.clientX - e.touches[1]!.clientX, e.touches[0]!.clientY - e.touches[1]!.clientY) || 1;
   const touchMid = (e: TouchEvent): { x: number; y: number } => ({ x: (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2, y: (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2 });
@@ -677,11 +677,11 @@ export function createSheetEditor(
   const pinchFrame = (): void => {
     pinchRaf = 0;
     if (!pinch) return;
-    // The scroller is CSS-zoomed, so its own transform works in unzoomed pixels.
-    const rect = gridScroll.getBoundingClientRect();
+    // The scroller is CSS-zoomed, so its own transform works in unzoomed pixels. Its origin is
+    // measured untransformed at the start: a rect read now would include this preview's scaling.
     const z = pinch.zoom;
     const k = pinch.to / z;
-    gridScroll.style.transformOrigin = `${(pinch.at.x - rect.left) / z}px ${(pinch.at.y - rect.top) / z}px`;
+    gridScroll.style.transformOrigin = `${(pinch.at.x - pinch.left) / z}px ${(pinch.at.y - pinch.top) / z}px`;
     gridScroll.style.transform = `translate(${(pinch.now.x - pinch.at.x) / z}px, ${(pinch.now.y - pinch.at.y) / z}px) scale(${k})`;
     const area = gridScroll.parentElement;
     if (area) {
@@ -711,7 +711,9 @@ export function createSheetEditor(
   gridScroll.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 2) return;
     const at = touchMid(e);
-    pinch = { dist: touchDist(e), zoom: zoomLevel, to: zoomLevel, at, now: at };
+    clearPinchPreview(); // a second pinch can start before the first one's release
+    const rect = gridScroll.getBoundingClientRect();
+    pinch = { dist: touchDist(e), zoom: zoomLevel, to: zoomLevel, at, now: at, left: rect.left, top: rect.top };
     unhookPinch();
     pinchTargets = [...new Set([e.touches[0]!.target, e.touches[1]!.target])];
     for (const t of pinchTargets) {
