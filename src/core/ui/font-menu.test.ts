@@ -56,7 +56,7 @@ describe("the font menu", () => {
     const { items, wrap, apply } = mount({ remote: { provider: "google" } });
     items().find((b) => b.textContent?.startsWith("Get more fonts"))!.click();
     expect(apply).not.toHaveBeenCalled();
-    expect(wrap.querySelector(".fontshelf-consent")?.textContent).toContain("GitHub");
+    expect(wrap.querySelector(".fontshelf-consent")?.textContent).toContain("Google Fonts");
   });
 
   it("moves with the arrow keys and closes on Escape, back to its button", () => {
