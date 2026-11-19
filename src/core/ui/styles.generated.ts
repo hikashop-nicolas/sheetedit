@@ -354,6 +354,8 @@ border:5px solid transparent; border-top-color:var(--sheetedit-danger); border-r
 .sheetedit-fxinput { flex:1; min-width:60px; background:var(--sheetedit-border, #1c1f24); border:1px solid var(--sheetedit-btn, #3a4047); border-radius:5px; color:var(--sheetedit-text, #e7eaf0); font:13px ui-monospace,monospace; padding:4px 8px; }
 .sheetedit-fxbar.is-picking .sheetedit-fxinput { border-color:var(--sheetedit-accent, #4f8ef7); }
 .sheetedit-fxmenu[hidden], .sheetedit-tb-groupmenu[hidden] { display:none; }
+.sheetedit-tb-groupmenu { max-width:calc(100% - 8px); box-sizing:border-box; }
+.sheetedit-tb-groupmenu:not(.sheetedit-tb-moremenu):not(.sheetedit-tb-listmenu) { flex-wrap:wrap; }
 .sheetedit-tb-listmenu { flex-direction:column; align-items:stretch; gap:1px; padding:4px; max-height:min(60vh,320px); overflow-y:auto; }
 .sheetedit-font-group { padding:6px 8px 2px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }
 .sheetedit-font-item[aria-checked="true"] { border-color:var(--sheetedit-accent, #6e7bff); }

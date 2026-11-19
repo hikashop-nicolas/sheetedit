@@ -149,9 +149,15 @@ export function buildToolbar(ctx: {
         const r = btn.getBoundingClientRect();
         const wr = wrap.getBoundingClientRect();
         menuEl.style.top = `${r.bottom - wr.top + 2}px`;
-        menuEl.style.left = `${Math.max(0, Math.min(r.left - wr.left, wr.width - 200))}px`;
+        menuEl.style.left = "0px"; // measured at the left edge, where it has the whole width to wrap in
       }
       menuEl.hidden = !open;
+      if (open) {
+        // Then under its button, as far as it stays on screen (a wide menu wraps its rows, see the CSS).
+        const r = btn.getBoundingClientRect();
+        const wr = wrap.getBoundingClientRect();
+        menuEl.style.left = `${Math.max(0, Math.min(r.left - wr.left, wr.width - menuEl.offsetWidth - 4))}px`;
+      }
       ctx.onMenuToggle?.(menus.some((m) => !m.hidden));
     });
     document.addEventListener("click", (e) => {
