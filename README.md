@@ -381,6 +381,25 @@ actually find it. Verified through LibreOffice: it resolves the switched cells t
 
 `.ods` has no equivalent palette that cells reference by index, so this is xlsx-only.
 
+## Fonts
+
+The toolbar's font menu comes from [fontshelf](https://github.com/hikashop-nicolas/fontshelf),
+shared with the other editors on the page. It lists the workbook's own fonts first (the Normal
+font, the theme's heading and body fonts, cell styles and rich-text runs), marking the ones this
+device cannot draw "(not installed)", then the common fonts the browser can actually draw.
+"Show my fonts" lists the fonts installed on the device (the Local Font Access API behind its own
+permission prompt, else canvas probing; nothing leaves the device). "Get more fonts" downloads
+families from Google Fonts after an in-app consent; it is **off by default**:
+
+```ts
+createSheetEditor(container, bytes, { fonts: { remote: { provider: "google" } } });
+// fonts: { local?: boolean (default true); remote?: false | { provider: "google" } (default false) }
+```
+
+Added families are remembered on the origin and loaded again on the next mount, as are catalog
+fonts the workbook uses but the device lacks (both only once the user consented). The menu's
+strings follow `setLocale()`, and its dialogs take the editor's `--sheetedit-*` colours.
+
 ## Dark and light
 
 The widget ships both. Colours resolve through `--sheetedit-*` custom properties, defaulting to

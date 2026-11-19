@@ -54,6 +54,7 @@ import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
 import { isSheetLoaded, loadSheet, onSheetLoaded } from "./lazy-sheet";
+import { workbookFonts, type FontOptions } from "./fonts";
 import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
@@ -210,6 +211,9 @@ export interface SheetEditorOptions {
   fileName?: string;
   /** csv mode: receives the "Convert to XLSX" result. Without it, a download starts. */
   onConvert?: (bytes: Uint8Array, name: string) => void;
+  /** The font picker: "Show my fonts" (default on) and "Get more fonts" from Google Fonts
+      after an in-app consent (default off, as a third party then sees each request). */
+  fonts?: FontOptions;
 }
 export interface SheetEditor {
   getBytes(): Promise<Uint8Array>;
@@ -1618,8 +1622,26 @@ export function createSheetEditor(
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
+  // The cell editor's text selection, kept while a font dialog has the focus.
+  let savedSel: { el: HTMLInputElement | HTMLTextAreaElement; start: number; end: number } | null = null;
   const toolbarHandle = buildToolbar({
     toolbar,
+    docFonts: workbookFonts(wb),
+    defaultFont: wb.defaultFontName,
+    fontOptions: options.fonts,
+    notify: showNotice,
+    captureSel: () => {
+      const el = document.activeElement;
+      savedSel = (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && wrap.contains(el)
+        ? { el, start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 } : null;
+    },
+    restoreSel: () => {
+      const s = savedSel;
+      savedSel = null;
+      if (!s?.el.isConnected) return;
+      s.el.focus();
+      try { s.el.setSelectionRange(s.start, s.end); } catch { /* not a text field */ }
+    },
     wrap,
     styled: wb.kind === "xlsx" || wb.kind === "ods",
     convert: wb.kind === "csv" ? doConvert : null,
@@ -6027,6 +6049,7 @@ export function createSheetEditor(
   // Results a producer left out are filled in once their sheet is parsed, by the idle loader or by
   // a tab switch. Deferred, because a sheet can be parsed from inside a render.
   let calcQueued = false;
+  onSheetLoaded(wb, () => toolbarHandle.fontMenu?.setDocFonts(workbookFonts(wb)));
   onSheetLoaded(wb, (sheet) => {
     if (calcQueued || !sheetNeedsCalc(sheet)) return;
     calcQueued = true;

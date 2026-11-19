@@ -1,6 +1,8 @@
 import { localeCode, t } from "../i18n";
 import { numFmtPresets } from "../dates";
 import type { CellStyle, StyleChange } from "../model";
+import type { FontOptions } from "../fonts";
+import { createFontMenu, type FontMenu } from "./font-menu";
 
 // The style toolbar, split out of the editor. The styling controls form one
 // collapsible cluster (richdoc's toolbar pattern): inline while there is room,
@@ -52,6 +54,8 @@ export interface ToolbarHandle {
   syncActive(): void;
   /** The colours the toolbar's two swatches are currently showing. */
   colours(): { text: string; fill: string };
+  /** The font picker (null without a style model). */
+  fontMenu: FontMenu | null;
 }
 
 export function buildToolbar(ctx: {
@@ -74,6 +78,15 @@ export function buildToolbar(ctx: {
   /** A toolbar menu opened or closed. The host uses it to keep the cell float bar out of the way:
       it offers the same controls, and two stacks of buttons over each other is just noise. */
   onMenuToggle?(open: boolean): void;
+  /** Fonts the workbook names, for the picker's "In this document" group. */
+  docFonts?: readonly string[];
+  /** The workbook's Normal font: what an unstyled cell shows. */
+  defaultFont?: string;
+  fontOptions?: FontOptions;
+  /** Keep the cell editor's text selection across a font dialog. */
+  captureSel?(): void;
+  restoreSel?(): void;
+  notify?(text: string): void;
 }): ToolbarHandle {
   const { toolbar, wrap } = ctx;
   toolbar.innerHTML = "";
@@ -107,7 +120,7 @@ export function buildToolbar(ctx: {
     // Find is in the bottom bar.
   );
   if (ctx.convert) toolbar.append(sep(), tbBtn(t("convertXlsx"), t("convertXlsxTitle"), ctx.convert));
-  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined, colours: () => ({ text: "#000000", fill: "#ffff00" }) };
+  if (!ctx.styled) return { relayout: () => undefined, teardown: () => undefined, setTrailing: () => undefined, syncActive: () => undefined, colours: () => ({ text: "#000000", fill: "#ffff00" }), fontMenu: null };
 
   const bold = tbBtn("B", t("bold"), () => ctx.applyStyle({ bold: !ctx.curStyle()?.bold }));
   bold.style.fontWeight = "700";
@@ -172,8 +185,21 @@ export function buildToolbar(ctx: {
     bindMenu(btn, menuEl);
     return btn;
   };
-  const FAMILIES = ["Arial", "Calibri", "Courier New", "Georgia", "Helvetica", "Times New Roman", "Verdana"];
-  const famSel = picker(t("fontFamily"), "Aa", FAMILIES.map((f) => [f, f]), (v) => ctx.applyStyle({ fontFamily: v }));
+  // Font family: fontshelf decides what is offered (drawable, the workbook's own, added ones).
+  const famSel = tbBtn("Aa ▾", t("fontFamily"), () => {});
+  const fontMenu = createFontMenu({
+    wrap,
+    button: famSel,
+    docFonts: ctx.docFonts ?? [],
+    fontOptions: ctx.fontOptions,
+    current: () => ctx.curStyle()?.fontFamily ?? ctx.defaultFont,
+    apply: (family) => ctx.applyStyle({ fontFamily: family }),
+    bindMenu,
+    closeMenus,
+    captureSel: ctx.captureSel,
+    restoreSel: ctx.restoreSel,
+    notify: ctx.notify,
+  });
   const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48];
   const sizeSel = picker(t("fontSize"), "pt", SIZES.map((n) => [String(n), String(n)]), (v) => ctx.applyStyle({ fontSize: Number(v) }));
 
@@ -350,8 +376,10 @@ export function buildToolbar(ctx: {
     setTrailing,
     syncActive,
     colours: () => ({ text: textColour, fill: fillColour }),
+    fontMenu,
     teardown() {
       observer.disconnect();
+      fontMenu.teardown();
       for (const m of menus) m.remove();
     },
   };

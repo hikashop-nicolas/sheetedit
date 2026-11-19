@@ -3,6 +3,8 @@
 // language, first match), English fallback. Adding a language = add a dict to LOCALES;
 // hosts may force one via setLocale().
 
+import { setFontLocale } from "fontshelf";
+
 type Dict = Record<string, string>;
 
 const en: Dict = {
@@ -4136,10 +4138,12 @@ function detect(): Dict {
     const base = tag.toLowerCase().split("-")[0]!;
     if (LOCALES[base]) {
       activeCode = base;
+      setFontLocale(base); // the font picker and its dialogs follow
       return LOCALES[base]!;
     }
   }
   activeCode = "en";
+  setFontLocale("en");
   return en;
 }
 
@@ -4148,6 +4152,7 @@ export function setLocale(code: string): void {
   const base = code.toLowerCase().split("-")[0]!;
   active = LOCALES[base] ?? en;
   activeCode = LOCALES[base] ? base : "en";
+  setFontLocale(activeCode);
 }
 
 /** The active base locale code ("en", "fr", "ja"): number/date input conventions. */

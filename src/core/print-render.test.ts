@@ -155,6 +155,15 @@ describe("print document", () => {
     expect(td.style.background).toBe("rgb(255, 0, 0)");
   });
 
+  // A web font added in the editor, or one missing here, prints like the grid shows it.
+  it("prints the cell's font the way the grid draws it", () => {
+    const sheet = sheetOf(2, 2, { printSetup: A4_PORTRAIT });
+    sheet.cells.get("1:1")!.cellStyle = { fontFamily: "Klee One" };
+    const td = buildPrintDocument(wbOf(sheet), 0, "b")!.querySelector("td") as HTMLElement;
+    expect(td.style.fontFamily).toMatch(/^"Klee One", /);
+    expect(td.style.fontFamily).toContain("sans-serif");
+  });
+
   it("spans a merged cell instead of printing it as separate ones", () => {
     const sheet = sheetOf(3, 3, { printSetup: A4_PORTRAIT, merges: [{ r1: 1, c1: 1, r2: 1, c2: 3 }] });
     const root = buildPrintDocument(wbOf(sheet), 0, "b")!;

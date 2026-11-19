@@ -1,4 +1,4 @@
-import { cellDisplay, colToLetters, getCell, key, type CellStyle, type Sheet, type Workbook } from "./model";
+import { cellDisplay, colToLetters, fontStack, getCell, key, type CellStyle, type Sheet, type Workbook } from "./model";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, MM_PER_INCH, PAPER_SIZES, effectivePrintArea, type HeaderFooter, type PrintSetup } from "./print";
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ const applyStyle = (el: HTMLElement, st: CellStyle | undefined): void => {
   if (st.italic) el.style.fontStyle = "italic";
   if (st.underline || st.strike) el.style.textDecoration = `${st.underline ? "underline" : ""} ${st.strike ? "line-through" : ""}`.trim();
   if (st.fontSize) el.style.fontSize = `${st.fontSize}pt`;
-  if (st.fontFamily) el.style.fontFamily = st.fontFamily;
+  if (st.fontFamily) el.style.fontFamily = fontStack(st.fontFamily); // quoted, with a sans fallback
   if (st.align) el.style.textAlign = st.align;
   if (st.valign) el.style.verticalAlign = st.valign === "middle" ? "middle" : st.valign;
   if (st.wrap) el.style.whiteSpace = "pre-wrap";

@@ -21,6 +21,7 @@ function loadBytes(bytes: Uint8Array, name: string): void {
     win.seCellChanges = [];
     win.seStructural = [];
     editor = createSheetEditor(editorEl, bytes, {
+      fonts: { remote: { provider: "google" } }, // the demo offers "Get more fonts"
       onChange: () => {
         win.seChangeCount = (win.seChangeCount as number) + 1;
         saveBtn.disabled = false;
