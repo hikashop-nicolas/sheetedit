@@ -1052,8 +1052,12 @@ export function createSheetEditor(
     pasteText(text, sel.r1, sel.c1);
   };
   const showTouchBar = (): void => {
-    const box = selFrameRect();
-    if (!box || !sel) return hideTouchBar();
+    if (!sel) return hideTouchBar();
+    // The selection's visible part: a corner scrolled away counts as the grid's own edge.
+    const tl = tdAt(key(sel.r1, sel.c1))?.getBoundingClientRect();
+    const br = tdAt(key(sel.r2, sel.c2))?.getBoundingClientRect();
+    const gb = gridScroll.getBoundingClientRect();
+    const box = { l: tl?.left ?? gb.left, t: tl?.top ?? gb.top, r: br?.right ?? gb.right, b: br?.bottom ?? gb.bottom };
     touchBar.replaceChildren(
       touchAction("touchCut", () => { const text = selectionTsv(); if (text) { toClipboard(text); clearRange(sel!); } }),
       touchAction("touchCopy", () => toClipboard(selectionTsv())),
@@ -1071,12 +1075,15 @@ export function createSheetEditor(
     touchBar.style.left = `${Math.max(4, left)}px`;
   };
   gridScroll.addEventListener("scroll", () => { if (!gripDrag) hideTouchBar(); }, { passive: true });
-  // A touch drag that selects must not also pan the page. Touch events stay with the element first
-  // touched even once it is re-rendered away, so the guard goes on that element (as for a pinch).
+  // A touch drag that selects must not also pan the page. Chrome only lets a touchmove cancel the
+  // pan when a blocking listener was already on the path at touchstart, hence the one on the grid;
+  // touch events stay with the element first touched even once it is re-rendered away, hence the
+  // one added on that element (as for a pinch).
+  const guard = (ev: Event): void => { if ((dragActive || gripDrag) && ev.cancelable) ev.preventDefault(); };
+  gridScroll.addEventListener("touchmove", guard, { passive: false });
   gridScroll.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) return;
     const target = e.target!;
-    const guard = (ev: Event): void => { if ((dragActive || gripDrag) && ev.cancelable) ev.preventDefault(); };
     const done = (): void => {
       target.removeEventListener("touchmove", guard);
       target.removeEventListener("touchend", done);
