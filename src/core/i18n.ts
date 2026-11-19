@@ -520,6 +520,13 @@ const en: Dict = {
   valignMiddle: "Align middle",
   valignBottom: "Align bottom",
   wrapText: "Wrap text",
+  touchCut: "Cut",
+  touchCopy: "Copy",
+  touchPaste: "Paste",
+  touchClear: "Clear",
+  touchFill: "Fill",
+  touchFillHint: "Drag the corner to fill",
+  pasteBlocked: "The browser blocked reading the clipboard",
 };
 
 const fr: Dict = {
@@ -1035,6 +1042,13 @@ const fr: Dict = {
   valignMiddle: "Centrer verticalement",
   valignBottom: "Aligner en bas",
   wrapText: "Renvoyer à la ligne",
+  touchCut: "Couper",
+  touchCopy: "Copier",
+  touchPaste: "Coller",
+  touchClear: "Effacer",
+  touchFill: "Recopier",
+  touchFillHint: "Faites glisser le coin pour recopier",
+  pasteBlocked: "Le navigateur a bloqué la lecture du presse-papiers",
 };
 
 const ja: Dict = {
@@ -1550,6 +1564,13 @@ const ja: Dict = {
   valignMiddle: "上下中央揃え",
   valignBottom: "下揃え",
   wrapText: "折り返して全体を表示",
+  touchCut: "切り取り",
+  touchCopy: "コピー",
+  touchPaste: "貼り付け",
+  touchClear: "クリア",
+  touchFill: "フィル",
+  touchFillHint: "角をドラッグしてフィル",
+  pasteBlocked: "ブラウザーがクリップボードの読み取りをブロックしました",
 };
 
 const es: Dict = {
@@ -2065,6 +2086,13 @@ const es: Dict = {
   valignMiddle: "Alinear en el medio",
   valignBottom: "Alinear abajo",
   wrapText: "Ajustar el texto",
+  touchCut: "Cortar",
+  touchCopy: "Copiar",
+  touchPaste: "Pegar",
+  touchClear: "Borrar",
+  touchFill: "Rellenar",
+  touchFillHint: "Arrastre la esquina para rellenar",
+  pasteBlocked: "El navegador bloqueó la lectura del portapapeles",
 };
 
 const de: Dict = {
@@ -2580,6 +2608,13 @@ const de: Dict = {
   valignMiddle: "Mittig ausrichten",
   valignBottom: "Unten ausrichten",
   wrapText: "Text umbrechen",
+  touchCut: "Ausschneiden",
+  touchCopy: "Kopieren",
+  touchPaste: "Einfügen",
+  touchClear: "Löschen",
+  touchFill: "Ausfüllen",
+  touchFillHint: "Ecke ziehen zum Ausfüllen",
+  pasteBlocked: "Der Browser hat das Lesen der Zwischenablage blockiert",
 };
 
 const pt: Dict = {
@@ -3095,6 +3130,13 @@ const pt: Dict = {
   valignMiddle: "Alinhar ao meio",
   valignBottom: "Alinhar em baixo",
   wrapText: "Moldar o texto",
+  touchCut: "Recortar",
+  touchCopy: "Copiar",
+  touchPaste: "Colar",
+  touchClear: "Limpar",
+  touchFill: "Preencher",
+  touchFillHint: "Arraste o canto para preencher",
+  pasteBlocked: "O navegador bloqueou a leitura da área de transferência",
 };
 
 const ru: Dict = {
@@ -3610,6 +3652,13 @@ const ru: Dict = {
   valignMiddle: "По середине",
   valignBottom: "По нижнему краю",
   wrapText: "Переносить текст",
+  touchCut: "Вырезать",
+  touchCopy: "Копировать",
+  touchPaste: "Вставить",
+  touchClear: "Очистить",
+  touchFill: "Заполнить",
+  touchFillHint: "Перетащите угол для заполнения",
+  pasteBlocked: "Браузер запретил чтение буфера обмена",
 };
 
 const zh: Dict = {
@@ -4125,6 +4174,13 @@ const zh: Dict = {
   valignMiddle: "垂直居中",
   valignBottom: "底端对齐",
   wrapText: "自动换行",
+  touchCut: "剪切",
+  touchCopy: "复制",
+  touchPaste: "粘贴",
+  touchClear: "清除",
+  touchFill: "填充",
+  touchFillHint: "拖动角来填充",
+  pasteBlocked: "浏览器阻止了读取剪贴板",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja, es, de, pt, ru, zh };

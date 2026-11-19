@@ -834,7 +834,8 @@ export function createSheetEditor(
   };
   const placeFillHandle = () => {
     fillHandle.remove();
-    if (!sel) return;
+    placeGrips();
+    if (!sel || touchSel) return;
     const td = tdAt(key(sel.r2, sel.c2));
     if (!td) return;
     td.classList.add("sheetedit-fillsrc");
@@ -890,13 +891,52 @@ export function createSheetEditor(
     mark();
     renderGrid();
   };
-  fillHandle.addEventListener("pointerdown", (e) => {
+  fillHandle.addEventListener("pointerdown", (e) => startFillDrag(e));
+  // While a drag nears the grid's edge, scroll that way and re-run the drag where the finger is,
+  // so a range can grow past the screen (the only way when zoomed in on a phone).
+  const edgeScroller = (step: (x: number, y: number) => void) => {
+    let x = 0, y = 0, raf = 0;
+    const tick = (): void => {
+      raf = 0;
+      const box = gridScroll.getBoundingClientRect();
+      const corner = gridScroll.querySelector("th.corner")?.getBoundingClientRect();
+      const zone = 32;
+      const left = box.left + (corner?.width ?? 0), top = box.top + (corner?.height ?? 0);
+      const push = (d: number): number => Math.round(Math.max(-1, Math.min(1, d / zone)) * 16);
+      const dx = x < left + zone ? push(x - left - zone) : x > box.right - zone ? push(x - box.right + zone) : 0;
+      const dy = y < top + zone ? push(y - top - zone) : y > box.bottom - zone ? push(y - box.bottom + zone) : 0;
+      if (!dx && !dy) return;
+      const sl = gridScroll.scrollLeft, st = gridScroll.scrollTop;
+      gridScroll.scrollLeft += dx;
+      gridScroll.scrollTop += dy;
+      if (gridScroll.scrollLeft === sl && gridScroll.scrollTop === st) return;
+      renderWindow(true);
+      step(Math.min(Math.max(x, left + 1), box.right - 2), Math.min(Math.max(y, top + 1), box.bottom - 2));
+      raf = window.setTimeout(tick, 16); // a timer, not a frame: frames stall in occluded windows
+    };
+    return {
+      at(px: number, py: number): void { x = px; y = py; if (!raf) raf = window.setTimeout(tick, 16); },
+      stop(): void { if (raf) clearTimeout(raf); raf = 0; },
+    };
+  };
+  /** Keep a touch drag's events on the grid, which outlives the cells re-rendered under the finger. */
+  const holdPointer = (e: PointerEvent): void => {
+    try { gridScroll.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ }
+  };
+  const startFillDrag = (e: PointerEvent): void => {
     e.preventDefault();
     e.stopPropagation();
     if (!sel) return;
+    hideTouchBar();
+    if (e.pointerType === "touch") holdPointer(e);
     let last: { r: number; c: number } | null = null;
+    const auto = edgeScroller((x, y) => preview(x, y));
     const onMove = (ev: PointerEvent) => {
-      const cell = cellAtPoint(ev.clientX, ev.clientY);
+      auto.at(ev.clientX, ev.clientY);
+      preview(ev.clientX, ev.clientY);
+    };
+    const preview = (x: number, y: number) => {
+      const cell = cellAtPoint(x, y);
       if (!cell || (last && cell.r === last.r && cell.c === last.c) || !sel) return;
       last = cell;
       clearFillPreview();
@@ -918,13 +958,134 @@ export function createSheetEditor(
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      auto.stop();
       clearFillPreview();
-      const cell = cellAtPoint(ev.clientX, ev.clientY);
+      fillMode = false;
+      const cell = ev.type === "pointerup" ? cellAtPoint(ev.clientX, ev.clientY) ?? last : null;
       if (cell) applyFill(cell.r, cell.c);
+      else placeFillHandle();
     };
     window.addEventListener("pointermove", onMove, { passive: false });
     window.addEventListener("pointerup", onUp);
-  });
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  // Touch, as in Excel mobile: round grips on two corners resize the selection, and lifting the
+  // finger after a touch selection offers Cut, Copy, Paste, Clear and Fill. Fill turns the
+  // bottom grip into a fill handle for the next drag.
+  let touchSel = false;
+  let fillMode = false;
+  let gripDrag = false;
+  const makeGrip = (corner: "tl" | "br"): HTMLElement => {
+    const g = document.createElement("div");
+    g.className = `sheetedit-grip sheetedit-grip-${corner}`;
+    g.addEventListener("pointerdown", (e) => {
+      if (corner === "br" && fillMode) return startFillDrag(e);
+      e.preventDefault();
+      e.stopPropagation();
+      if (!sel) return;
+      hideTouchBar();
+      holdPointer(e);
+      gripDrag = true;
+      const fixed = corner === "br" ? { r: sel.r1, c: sel.c1 } : { r: sel.r2, c: sel.c2 };
+      const to = (x: number, y: number): void => {
+        const cell = cellAtPoint(x, y);
+        if (!cell || !sel) return;
+        anchor = fixed;
+        setSel(fixed.r, fixed.c, cell.r, cell.c);
+      };
+      const auto = edgeScroller(to);
+      const onMove = (ev: PointerEvent): void => {
+        auto.at(ev.clientX, ev.clientY);
+        to(ev.clientX, ev.clientY);
+      };
+      const onUp = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        auto.stop();
+        gripDrag = false;
+        justDragged = true;
+        setTimeout(() => (justDragged = false), 350);
+        showTouchBar();
+      };
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    });
+    return g;
+  };
+  const gripTL = makeGrip("tl");
+  const gripBR = makeGrip("br");
+  const placeGrips = (): void => {
+    gripTL.remove();
+    gripBR.remove();
+    if (!sel || !touchSel) return;
+    const tl = tdAt(key(sel.r1, sel.c1));
+    const br = tdAt(key(sel.r2, sel.c2));
+    gripBR.classList.toggle("fill", fillMode);
+    if (tl && !fillMode) { tl.classList.add("sheetedit-selanchor"); tl.appendChild(gripTL); }
+    if (br) { br.classList.add("sheetedit-fillsrc"); br.appendChild(gripBR); }
+  };
+  const touchBar = document.createElement("div");
+  touchBar.className = "sheetedit-touchbar";
+  touchBar.setAttribute("role", "toolbar");
+  const hideTouchBar = (): void => touchBar.remove();
+  const touchAction = (label: string, run: () => void | Promise<void>): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = t(label);
+    b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    b.addEventListener("click", () => {
+      hideTouchBar();
+      void run();
+    });
+    return b;
+  };
+  const pasteFromClipboard = async (): Promise<void> => {
+    if (!sel) return;
+    let text: string;
+    try { text = await navigator.clipboard.readText(); } catch { return showNotice(t("pasteBlocked")); }
+    const sheet = wb.sheets[active];
+    if (!sheet || !sel) return;
+    pasteText(text, sel.r1, sel.c1);
+  };
+  const showTouchBar = (): void => {
+    const box = selFrameRect();
+    if (!box || !sel) return hideTouchBar();
+    touchBar.replaceChildren(
+      touchAction("touchCut", () => { const text = selectionTsv(); if (text) { toClipboard(text); clearRange(sel!); } }),
+      touchAction("touchCopy", () => toClipboard(selectionTsv())),
+      touchAction("touchPaste", pasteFromClipboard),
+      touchAction("touchClear", () => clearRange(sel!)),
+      touchAction("touchFill", () => { fillMode = true; placeGrips(); showNotice(t("touchFillHint")); }),
+    );
+    wrap.appendChild(touchBar);
+    const g = gridScroll.getBoundingClientRect();
+    const w = touchBar.offsetWidth, h = touchBar.offsetHeight;
+    // Above the selection when there is room, else below it, and always inside the grid.
+    const top = box.t - h - 10 >= g.top ? box.t - h - 10 : Math.min(box.b + 14, g.bottom - h - 4);
+    const left = Math.min(Math.max(g.left + 4, (box.l + box.r) / 2 - w / 2), g.right - w - 4);
+    touchBar.style.top = `${Math.max(g.top + 4, top)}px`;
+    touchBar.style.left = `${Math.max(4, left)}px`;
+  };
+  gridScroll.addEventListener("scroll", () => { if (!gripDrag) hideTouchBar(); }, { passive: true });
+  // A touch drag that selects must not also pan the page. Touch events stay with the element first
+  // touched even once it is re-rendered away, so the guard goes on that element (as for a pinch).
+  gridScroll.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    const target = e.target!;
+    const guard = (ev: Event): void => { if ((dragActive || gripDrag) && ev.cancelable) ev.preventDefault(); };
+    const done = (): void => {
+      target.removeEventListener("touchmove", guard);
+      target.removeEventListener("touchend", done);
+      target.removeEventListener("touchcancel", done);
+    };
+    target.addEventListener("touchmove", guard, { passive: false });
+    target.addEventListener("touchend", done, { passive: true });
+    target.addEventListener("touchcancel", done, { passive: true });
+  }, { passive: true });
 
   // The selection's outline. Excel's affordance for moving a block is its border, so the grid
   // draws one and takes a drag that starts on it as a move. pointer-events stay off: a click
@@ -1005,8 +1166,9 @@ export function createSheetEditor(
   // Rectangular range selection by dragging: mouse drag, or touch long-press then drag.
   // A plain tap still focuses a cell for editing; header/corner taps select a whole line.
   const cellAtPoint = (x: number, y: number): { r: number; c: number } | null => {
-    const el = document.elementFromPoint(x, y) as HTMLElement | null;
-    const td = el?.closest("td") as HTMLElement | null;
+    // Look through what floats over the cells (the format bar, grips, pictures) to the cell itself.
+    const stack = document.elementsFromPoint?.(x, y) ?? [document.elementFromPoint(x, y)];
+    const td = stack.map((el) => el?.closest?.("td[data-rc]") as HTMLElement | null).find((c) => c && wrap.contains(c)) ?? null;
     const rc = td?.dataset.rc;
     if (!rc) return null;
     const [r, c] = rc.split(":").map(Number);
@@ -1040,8 +1202,18 @@ export function createSheetEditor(
   const dropPointer = (e: PointerEvent): void => { pointersDown.delete(e.pointerId); };
   window.addEventListener("pointerup", dropPointer);
   window.addEventListener("pointercancel", dropPointer);
+  const dragScroll = edgeScroller((x, y) => {
+    const cell = dragActive && dragAnchor ? cellAtPoint(x, y) : null;
+    if (cell && dragAnchor) setSel(dragAnchor.r, dragAnchor.c, cell.r, cell.c);
+  });
   gridScroll.addEventListener("pointerdown", (e) => {
     if (resizing) return;
+    hideTouchBar();
+    fillMode = false;
+    if (touchSel !== (e.pointerType === "touch")) {
+      touchSel = e.pointerType === "touch";
+      placeFillHandle(); // grips for a finger, the small square for a mouse or pen
+    }
     if (e.pointerType === "mouse" || e.isPrimary) pointersDown.clear(); // a new gesture; drops a lost pointerup
     pointersDown.add(e.pointerId);
     if (pointersDown.size > 1) {
@@ -1061,6 +1233,7 @@ export function createSheetEditor(
         dragActive = true;
         dragAnchor = cell;
         anchor = cell;
+        holdPointer(e);
         (document.activeElement as HTMLElement | null)?.blur?.();
         setSel(cell.r, cell.c, cell.r, cell.c);
       }, 250);
@@ -1099,6 +1272,7 @@ export function createSheetEditor(
           return;
         }
         if (!dragActive || !dragAnchor) return;
+        dragScroll.at(e.clientX, e.clientY);
         const cell = cellAtPoint(e.clientX, e.clientY);
         if (cell) {
           e.preventDefault();
@@ -1125,12 +1299,15 @@ export function createSheetEditor(
           (document.activeElement as HTMLElement | null)?.blur?.();
         }
         e.preventDefault();
+        dragScroll.at(e.clientX, e.clientY);
         setSel(dragAnchor.r, dragAnchor.c, cell.r, cell.c);
       }
     },
     { passive: false },
   );
-  const endDrag = () => {
+  const endDrag = (e?: PointerEvent) => {
+    dragScroll.stop();
+    if (dragActive && !pickCb && e?.type === "pointerup" && e.pointerType === "touch") setTimeout(showTouchBar, 0);
     if (moveFrom && moveGrab) {
       const from = moveFrom;
       const dr = (moveTo?.r ?? moveGrab.r) - moveGrab.r;
@@ -3225,6 +3402,9 @@ export function createSheetEditor(
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text.includes("\t") && !text.includes("\n")) return; // single value: native paste
     e.preventDefault();
+    pasteText(text, r0, c0);
+  };
+  const pasteText = (text: string, r0: number, c0: number) => {
     const sheet = wb.sheets[active]!;
     const rows = text.replace(/\r\n?/g, "\n").split("\n");
     if (rows.length && rows[rows.length - 1] === "") rows.pop(); // Excel's trailing newline

@@ -309,6 +309,16 @@ font:inherit; padding:0 8px; box-sizing:border-box; outline:none;
 position:absolute; right:-4px; bottom:-4px; width:8px; height:8px; z-index:1;
 background:var(--sheetedit-accent, #6e7bff); border:1px solid var(--sheetedit-handle-border); cursor:crosshair; touch-action:none;
 }
+.sheetedit-grip { position:absolute; z-index:3; width:44px; height:44px; touch-action:none; }
+.sheetedit-grip::after { content:""; position:absolute; left:15px; top:15px; width:14px; height:14px; box-sizing:border-box;
+border-radius:50%; background:var(--sheetedit-handle-border); border:2px solid var(--sheetedit-accent, #6e7bff); }
+.sheetedit-grip-tl { left:-22px; top:-22px; }
+.sheetedit-grip-br { right:-22px; bottom:-22px; }
+.sheetedit-grip.fill::after { left:13px; top:13px; width:18px; height:18px; border-radius:4px; background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-handle-border); }
+.sheetedit-touchbar { position:fixed; z-index:46; display:flex; gap:2px; padding:4px; background:var(--sheetedit-chrome, #2b2f36);
+border:1px solid var(--sheetedit-border, #1c1f24); border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.35); max-width:calc(100vw - 8px); overflow-x:auto; }
+.sheetedit-touchbar button { flex:none; min-height:40px; padding:0 12px; border:0; border-radius:7px; background:none; color:var(--sheetedit-text, #e6e6e6); font:14px system-ui, sans-serif; }
+.sheetedit-touchbar button:active, .sheetedit-touchbar button:focus-visible { background:var(--sheetedit-accent, #6e7bff); color:var(--sheetedit-accent-fg, #fff); outline:none; }
 .sheetedit-table td.sheetedit-selanchor { position:relative; }
 .sheetedit-selframe {
 position:absolute; left:0; top:0; z-index:1; pointer-events:none;
@@ -993,5 +1003,5 @@ overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 .sheetedit-reading .sheetedit-grid { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
 .sheetedit-reading .sheetedit-grid * { pointer-events:none !important; }
 .sheetedit-reading .sheetedit-tab-add { display:none !important; }
-.sheetedit-reading .sheetedit-selframe, .sheetedit-reading .sheetedit-fillhandle { display:none !important; }
+.sheetedit-reading .sheetedit-selframe, .sheetedit-reading .sheetedit-fillhandle, .sheetedit-reading .sheetedit-grip, .sheetedit-reading .sheetedit-touchbar { display:none !important; }
 .sheetedit-reading .sheetedit-table td.sheetedit-sel input { background:transparent !important; }`;
