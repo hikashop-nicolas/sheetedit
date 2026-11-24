@@ -177,6 +177,11 @@ export interface PeerCell {
 
 export interface SheetEditorOptions {
   onChange?: () => void;
+  /**
+   * Turns a picked picture into one the workbook can keep (say a phone's HEIC or WebP photo
+   * into JPEG or PNG). Without it the picture goes in as picked. A rejection cancels the insert.
+   */
+  convertPicture?: (file: File) => Promise<{ name: string; bytes: Uint8Array; mime: string }>;
   /** Show a fullscreen button beside the zoom; the host enters or leaves fullscreen when it is pressed. */
   onFullscreen?: () => void;
   /** The cell this person moved to, for a shared session to publish. */
@@ -3900,9 +3905,10 @@ export function createSheetEditor(
       const file = input.files?.[0];
       input.remove();
       if (!file) return;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const ext = (file.name.split(".").pop() || (file.type.split("/")[1] ?? "png")).toLowerCase();
-      const size = await imagePixelSize(bytes, file.type || `image/${ext}`);
+      const picked = await pickedPicture(file);
+      if (!picked) return;
+      const { bytes, ext } = picked;
+      const size = await imagePixelSize(bytes, picked.mime);
       const sheet = wb.sheets[active];
       const at = { r: sel?.r1 ?? 1, c: sel?.c1 ?? 1 };
       const anchor = {
@@ -3918,6 +3924,20 @@ export function createSheetEditor(
     });
     document.body.appendChild(input);
     input.click();
+  };
+
+  /** A picked picture's bytes, extension and type, through the host's converter when it has one. */
+  const pickedPicture = async (file: File): Promise<{ bytes: Uint8Array; ext: string; mime: string } | null> => {
+    if (options.convertPicture) {
+      try {
+        const p = await options.convertPicture(file);
+        return { bytes: p.bytes, ext: (p.name.split(".").pop() || p.mime.split("/")[1] || "png").toLowerCase(), mime: p.mime };
+      } catch {
+        return null;
+      }
+    }
+    const ext = (file.name.split(".").pop() || (file.type.split("/")[1] ?? "png")).toLowerCase();
+    return { bytes: new Uint8Array(await file.arrayBuffer()), ext, mime: file.type || `image/${ext}` };
   };
 
   /** A picture's natural size, so it goes in at its own proportions. */
@@ -3953,9 +3973,10 @@ export function createSheetEditor(
       const file = input.files?.[0];
       input.remove();
       if (!file) return;
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const ext = (file.name.split(".").pop() || (file.type.split("/")[1] ?? "png")).toLowerCase();
-      const mime = file.type || `image/${ext}`;
+      const picked = await pickedPicture(file);
+      if (!picked) return;
+      const { bytes, ext } = picked;
+      const mime = picked.mime;
       let bin = "";
       for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
       im.replaceBytes = bytes;
