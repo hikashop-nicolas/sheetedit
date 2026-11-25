@@ -1,4 +1,12 @@
-import { formatNumber, type Sheet, type Workbook } from "../model";
+import { formatNumber as ssfFormat, type Sheet, type Workbook } from "../model";
+import { isDateFmt } from "../dates";
+import { localizeDateNames, localizeNumberText } from "../regional";
+
+/** A chart label in the user's region: "1 234,5", "nov. 2026". */
+const formatNumber = (fmt: string | number, value: string): string | undefined => {
+  const s = ssfFormat(fmt, value);
+  return s == null ? s : isDateFmt(fmt) ? localizeDateNames(s) : localizeNumberText(s);
+};
 import { CHART_PALETTE, type ChartDataLabels, type ChartModel, type ChartTextStyle } from "../chart-model";
 import { resolveNumbers, resolveLabels, seriesName } from "../chart-data";
 import { backgroundPlugin, bar3DPlugin, errorBarsPlugin, line3DPlugin, multiLevelAxisPlugin, ofPiePlugin, pie3DPlugin, stockPlugin, surfacePlugin, trendlinePlugin } from "./chart-plugins";

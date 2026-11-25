@@ -2198,6 +2198,8 @@ export function createSheetEditor(
     setActiveSheet: (i) => switchSheet(i),
     focusCell: (r, c) => focusCell(r, c),
     commitValue: (r, c, raw) => commitValue(r, c, raw),
+    textOf: (si, r, c) => copyText(getCell(wb.sheets[si]!, r, c)),
+    fromText: (text) => fromTyped(text),
     applyBatch: (changes) => {
       const sheet = wb.sheets[active];
       if (!sheet || !changes.length) return;
@@ -5585,7 +5587,7 @@ export function createSheetEditor(
       menu.appendChild(it);
     };
     if (dv.allowBlank) add(t("dvBlank"), "");
-    for (const v of values) add(v, v);
+    for (const v of values) add(regionalOn ? localNumberInput(v) : v, v);
     if (!values.length && !dv.allowBlank) { const e = document.createElement("div"); e.className = "sheetedit-pop-item"; e.style.opacity = ".6"; e.textContent = t("dvEmpty"); menu.appendChild(e); }
     wrap.appendChild(menu);
     const rect = td.getBoundingClientRect();

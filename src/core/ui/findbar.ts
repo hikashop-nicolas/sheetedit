@@ -16,6 +16,10 @@ export interface FindBarCtx {
   commitValue(r: number, c: number, raw: string): void;
   /** Batched replacement on the active sheet (one undo step). */
   applyBatch(changes: { r: number; c: number; raw: string }[]): void;
+  /** A cell's content as the user reads it (local formulas and numbers); default the stored text. */
+  textOf?(sheet: number, r: number, c: number): string;
+  /** That text, after a replacement, back to what setCellInput takes. */
+  fromText?(text: string): string;
 }
 
 interface Match {
@@ -84,6 +88,8 @@ export function setupFindBar(ctx: FindBarCtx) {
   ctx.container.insertBefore(bar, ctx.beforeEl);
 
   let matches: Match[] = [];
+  const text = (si: number, r: number, c: number): string => ctx.textOf?.(si, r, c) ?? rawOf(ctx.getWorkbook(), { sheet: si, r, c });
+  const back = (s: string): string => ctx.fromText?.(s) ?? s;
   let current = -1;
 
   const search = (): void => {
@@ -94,7 +100,7 @@ export function setupFindBar(ctx: FindBarCtx) {
       wb.sheets.forEach((sheet, si) => {
         const cells = [...sheet.cells.values()].sort((a, b) => a.row - b.row || a.col - b.col);
         for (const cell of cells) {
-          const raw = cell.formula != null ? "=" + cell.formula : cell.value;
+          const raw = text(si, cell.row, cell.col);
           if (raw.toLowerCase().includes(q)) matches.push({ sheet: si, r: cell.row, c: cell.col });
         }
       });
@@ -130,8 +136,7 @@ export function setupFindBar(ctx: FindBarCtx) {
       goTo(m); // bring the match into the active sheet first; a second click replaces
       return;
     }
-    const wb = ctx.getWorkbook();
-    ctx.commitValue(m.r, m.c, replaceOnce(rawOf(wb, m), find.value, replace.value));
+    ctx.commitValue(m.r, m.c, back(replaceOnce(text(m.sheet, m.r, m.c), find.value, replace.value)));
     search();
     if (matches.length) goTo(matches[Math.min(current, matches.length - 1)]!);
   };
@@ -139,14 +144,13 @@ export function setupFindBar(ctx: FindBarCtx) {
   const replaceAll = (): void => {
     const q = find.value;
     if (!q) return;
-    const wb = ctx.getWorkbook();
     const si = ctx.getActiveSheet();
     search();
     const changes: { r: number; c: number; raw: string }[] = [];
     for (const m of matches) {
       if (m.sheet !== si) continue;
       // Replace every occurrence within the cell, not just the first.
-      changes.push({ r: m.r, c: m.c, raw: replaceEvery(rawOf(wb, m), q, replace.value) });
+      changes.push({ r: m.r, c: m.c, raw: back(replaceEvery(text(m.sheet, m.r, m.c), q, replace.value)) });
     }
     if (changes.length) ctx.applyBatch(changes);
     search();

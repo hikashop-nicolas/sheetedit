@@ -55,6 +55,10 @@ form (`SUM(A1:A3,0.5)`, `.` decimals), exactly as Excel stores it, so files stay
   language uses that word for another function (French `TRIM` is `MIRR`, as in French Excel).
 - Separators: `;` between arguments and a decimal comma for French, German, Spanish,
   Portuguese and Russian; array constants use `.` between columns and `;` between rows.
+- Rule dialogs: data validation and conditional formatting take and show bounds, values and
+  formulas the same way (`3,5`, `25/11/2026`, `=ET(A1>0;A1<10)`, a list typed `oui;non`), store
+  them as Excel does (`3.5`, the date serial, `AND(A1>0,A1<10)`, `"oui,non"`), and reopen on the
+  rule that holds the selection to edit it. Find and replace, and chart labels, follow suit.
 - Display: decimal and thousands separators, the built-in short date, month and day names,
   `VRAI`/`FAUX` and error codes such as `#VALEUR!`. An `.ods` cell keeps the text its producer
   wrote unless it is plain English formatting. CSV files are shown and edited as written.

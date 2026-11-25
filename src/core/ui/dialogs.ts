@@ -1,4 +1,6 @@
-import { colToLetters, getCell, parseA1Ref, type ShapeGeom, type Sheet, type Workbook } from "../model";
+import { colToLetters, getCell, parseA1Ref, type CfRule, type ShapeGeom, type Sheet, type Workbook } from "../model";
+import { isDateFmt } from "../dates";
+import { formulaFromLocal, listFromLocal, listToLocal, operandFromLocal, operandToLocal, type OperandKind } from "../formula-locale";
 import { t } from "../i18n";
 import { newDrawingId } from "../sheet-ops";
 import { formDialog, type FormField } from "./form-dialog";
@@ -27,6 +29,15 @@ export interface DialogCtx {
   viewBox: (w: number, h: number) => import("../chart-model").ChartAnchor;
   applySparkline: (sheet: Sheet, host: { r: number; c: number }, spec: SparkSpec) => void;
 }
+
+/** The rule (validation, conditional format) that already holds the whole selection, if any. */
+function ruleAt<T extends { ranges: Rect[] }>(rules: T[] | undefined, s: Rect): T | undefined {
+  return rules?.find((x) => x.ranges.some((g) => s.r1 >= g.r1 && s.r2 <= g.r2 && s.c1 >= g.c1 && s.c2 <= g.c2));
+}
+
+/** A formula field as the user types it in their language ("=ET(A1>0;A1<10)" -> "AND(A1>0,A1<10)"). */
+const formulaIn = (text: string): string => formulaFromLocal(text.trim().replace(/^=/, "").trim());
+const formulaOut = (stored: string | undefined): string => (stored ? operandToLocal(stored) : "");
 
 /** Parse an A1 range ("B2:F5") or single cell ("G2") into a normalised rect, or null. */
 function parseRange(raw: string): Rect | null {
@@ -69,7 +80,11 @@ export function setupDialogs(ctx: DialogCtx): {
 
   const openDvDialog = (): void => {
     const s = ctx.getSelRect(); const sheet = sheetNow();
-    const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    // A selection inside an existing rule edits that rule, shown in the user's conventions.
+    const cur = ruleAt(sheet.validations, s);
+    const ranges = cur ? cur.ranges : [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    const curType = cur?.type ?? "list";
+    const kindOf = (type: string): OperandKind => ({ date: type === "date", time: type === "time" });
     const typeOpts = [
       { value: "list", label: t("dvKindList") },
       { value: "whole", label: t("dvKindWhole") },
@@ -82,36 +97,37 @@ export function setupDialogs(ctx: DialogCtx): {
     const compared = ["whole", "decimal", "date", "time", "textLength"]; // types that take an operator + operands
     const opOpts = [["between", t("dvOpBetween")], ["notBetween", t("dvOpNotBetween")], ["greaterThanOrEqual", "≥"], ["lessThanOrEqual", "≤"], ["greaterThan", ">"], ["lessThan", "<"], ["equal", "="], ["notEqual", "≠"]];
     dialog(t("dvEdit"), [
-      { key: "type", label: t("dvType"), type: "select", value: "list", options: typeOpts },
-      { key: "values", label: t("dvList"), type: "text", value: "", showFor: { key: "type", values: ["list"] } },
-      { key: "range", label: t("dvRange"), type: "text", value: "", showFor: { key: "type", values: ["list"] } },
-      { key: "op", label: t("dvOp"), type: "select", value: "between", options: opOpts.map(([v2, l]) => ({ value: v2!, label: l! })), showFor: { key: "type", values: compared } },
-      { key: "v1", label: t("dvValue1"), type: "text", value: "", showFor: { key: "type", values: compared } },
-      { key: "v2", label: t("dvValue2"), type: "text", value: "", showFor: { key: "op", values: ["between", "notBetween"] } },
-      { key: "formula", label: t("dvFormula"), type: "text", value: "", showFor: { key: "type", values: ["custom"] } },
-      { key: "blank", label: t("dvAllowBlank"), type: "checkbox", value: true },
-      { key: "prompt", label: t("dvPrompt"), type: "text", value: "" },
-      { key: "error", label: t("dvError"), type: "text", value: "" },
+      { key: "type", label: t("dvType"), type: "select", value: curType, options: typeOpts },
+      { key: "values", label: t("dvList"), type: "text", value: cur?.values ? listToLocal(cur.values) : "", showFor: { key: "type", values: ["list"] } },
+      { key: "range", label: t("dvRange"), type: "text", value: cur?.rangeRef ?? "", showFor: { key: "type", values: ["list"] } },
+      { key: "op", label: t("dvOp"), type: "select", value: cur?.operator ?? "between", options: opOpts.map(([v2, l]) => ({ value: v2!, label: l! })), showFor: { key: "type", values: compared } },
+      { key: "v1", label: t("dvValue1"), type: "text", value: compared.includes(curType) ? operandToLocal(cur?.formula1, kindOf(curType)) : "", showFor: { key: "type", values: compared } },
+      { key: "v2", label: t("dvValue2"), type: "text", value: compared.includes(curType) ? operandToLocal(cur?.formula2, kindOf(curType)) : "", showFor: { key: "op", values: ["between", "notBetween"] } },
+      { key: "formula", label: t("dvFormula"), type: "text", value: curType === "custom" ? formulaOut(cur?.formula1) : "", showFor: { key: "type", values: ["custom"] } },
+      { key: "blank", label: t("dvAllowBlank"), type: "checkbox", value: cur?.allowBlank ?? true },
+      { key: "prompt", label: t("dvPrompt"), type: "text", value: cur?.promptMessage ?? "" },
+      { key: "error", label: t("dvError"), type: "text", value: cur?.errorMessage ?? "" },
     ], (v) => {
       const type = String(v.type) as NonNullable<import("../model").DataValidation["type"]>;
       const allowBlank = !!v.blank;
       let spec: import("../model").DvSpec | null;
       if (type === "list") {
-        const values = String(v.values).split(",").map((x) => x.trim()).filter(Boolean);
+        const values = listFromLocal(String(v.values)); // "oui;non" in French, stored "oui,non"
         const range = String(v.range).trim();
         spec = !values.length && !range ? null : { type: "list", values: range ? undefined : values, rangeRef: range || undefined, allowBlank };
       } else if (type === "custom") {
-        const f = String(v.formula).trim();
+        const f = formulaIn(String(v.formula));
         spec = f ? { type: "custom", formula1: f, allowBlank } : null;
       } else {
         const op = String(v.op) as NonNullable<import("../model").DataValidation["operator"]>;
-        const f1 = String(v.v1).trim();
-        const f2 = String(v.v2).trim();
+        const f1 = operandFromLocal(String(v.v1), kindOf(type));
+        const f2 = operandFromLocal(String(v.v2), kindOf(type));
         spec = f1 || f2 ? { type, operator: op, formula1: f1 || undefined, formula2: (op === "between" || op === "notBetween") ? (f2 || undefined) : undefined, allowBlank } : null;
       }
       // The rule's own words travel with it, whichever kind it turned out to be.
       const promptMessage = String(v.prompt ?? "").trim();
       const errorMessage = String(v.error ?? "").trim();
+      if (spec && cur) { spec.errorTitle = cur.errorTitle; spec.errorStyle = cur.errorStyle; spec.promptTitle = cur.promptTitle; }
       if (spec && (promptMessage || errorMessage)) {
         if (promptMessage) spec.promptMessage = promptMessage;
         if (errorMessage) spec.errorMessage = errorMessage;
@@ -124,7 +140,17 @@ export function setupDialogs(ctx: DialogCtx): {
 
   const openCfDialog = (): void => {
     const s = ctx.getSelRect(); const sheet = sheetNow();
-    const ranges = [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    // A selection inside a single-rule format edits it; a group of several rules is left alone.
+    const group = ruleAt(sheet.condFormats, s);
+    const rule: CfRule | undefined = group?.rules.length === 1 ? group.rules[0] : undefined;
+    const ranges = rule ? group!.ranges : [{ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+    // A highlight over date cells shows its bounds as dates.
+    const g0 = ranges[0]!;
+    const valueKind: OperandKind = { text: true, date: isDateFmt(getCell(sheet, g0.r1, g0.c1)?.numFmt) };
+    const curKind = !rule ? "cellIs"
+      : rule.type === "top10" ? "top" : rule.type === "aboveAverage" ? "average"
+      : rule.type === "duplicateValues" || rule.type === "uniqueValues" ? "dupUnique"
+      : ["containsText", "notContainsText", "beginsWith", "endsWith"].includes(rule.type) ? "text" : rule.type;
     // The graphical rules (colour scale / data bar / icon set) and the text / rank / formula rules
     // have no interoperable ODF form (calcext is dropped by LibreOffice on external author), so ODS
     // offers only the standard highlight (cellIs, incl. between).
@@ -150,22 +176,22 @@ export function setupDialogs(ctx: DialogCtx): {
     const iconSets = ["3TrafficLights1", "3Arrows", "3Symbols", "3Flags", "4Arrows", "4Rating", "5Arrows", "5Quarters", "5Rating"];
     const hasFill = ["cellIs", "text", "top", "average", "dupUnique", "expression", "timePeriod"];
     dialog(t("cfEdit"), [
-      { key: "kind", label: t("cfKind"), type: "select", value: "cellIs", options: kindOpts },
-      { key: "operator", label: t("cfOperator"), type: "select", value: "greaterThan", options: opOpts.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["cellIs"] } },
-      { key: "value", label: t("cfValue"), type: "text", value: "", showFor: { key: "kind", values: ["cellIs"] } },
-      { key: "value2", label: t("cfValue2"), type: "text", value: "", showFor: { key: "operator", values: ["between", "notBetween"] } },
-      { key: "textOp", label: t("cfOperator"), type: "select", value: "containsText", options: textOps.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["text"] } },
-      { key: "text", label: t("cfText"), type: "text", value: "", showFor: { key: "kind", values: ["text"] } },
-      { key: "rank", label: t("cfRank"), type: "text", value: "10", showFor: { key: "kind", values: ["top"] } },
-      { key: "bottom", label: t("cfBottom"), type: "checkbox", value: false, showFor: { key: "kind", values: ["top"] } },
-      { key: "percent", label: t("cfPercent"), type: "checkbox", value: false, showFor: { key: "kind", values: ["top"] } },
-      { key: "below", label: t("cfBelow"), type: "checkbox", value: false, showFor: { key: "kind", values: ["average"] } },
-      { key: "equal", label: t("cfEqualAvg"), type: "checkbox", value: false, showFor: { key: "kind", values: ["average"] } },
-      { key: "unique", label: t("cfUnique"), type: "checkbox", value: false, showFor: { key: "kind", values: ["dupUnique"] } },
-      { key: "formula", label: t("cfFormula"), type: "text", value: "", showFor: { key: "kind", values: ["expression"] } },
-      { key: "period", label: t("cfPeriod"), type: "select", value: "today", options: periodOpts, showFor: { key: "kind", values: ["timePeriod"] } },
-      { key: "iconset", label: t("cfIconSet"), type: "select", value: "3TrafficLights1", options: iconSets.map((v) => ({ value: v, label: v })), showFor: { key: "kind", values: ["iconSet"] } },
-      { key: "color", label: t("cfColour"), type: "color", value: "#ffc7ce", showFor: { key: "kind", values: [...hasFill, "dataBar"] } },
+      { key: "kind", label: t("cfKind"), type: "select", value: kindOpts.some((o) => o.value === curKind) ? curKind : "cellIs", options: kindOpts },
+      { key: "operator", label: t("cfOperator"), type: "select", value: rule?.type === "cellIs" ? rule.operator ?? "greaterThan" : "greaterThan", options: opOpts.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["cellIs"] } },
+      { key: "value", label: t("cfValue"), type: "text", value: rule?.type === "cellIs" ? operandToLocal(rule.formulas?.[0], valueKind) : "", showFor: { key: "kind", values: ["cellIs"] } },
+      { key: "value2", label: t("cfValue2"), type: "text", value: rule?.type === "cellIs" ? operandToLocal(rule.formulas?.[1], valueKind) : "", showFor: { key: "operator", values: ["between", "notBetween"] } },
+      { key: "textOp", label: t("cfOperator"), type: "select", value: curKind === "text" ? rule!.type : "containsText", options: textOps.map(([v, l]) => ({ value: v!, label: l! })), showFor: { key: "kind", values: ["text"] } },
+      { key: "text", label: t("cfText"), type: "text", value: curKind === "text" ? rule!.text ?? "" : "", showFor: { key: "kind", values: ["text"] } },
+      { key: "rank", label: t("cfRank"), type: "text", value: String(rule?.rank ?? 10), showFor: { key: "kind", values: ["top"] } },
+      { key: "bottom", label: t("cfBottom"), type: "checkbox", value: !!rule?.bottom, showFor: { key: "kind", values: ["top"] } },
+      { key: "percent", label: t("cfPercent"), type: "checkbox", value: !!rule?.percent, showFor: { key: "kind", values: ["top"] } },
+      { key: "below", label: t("cfBelow"), type: "checkbox", value: rule?.aboveAverage === false, showFor: { key: "kind", values: ["average"] } },
+      { key: "equal", label: t("cfEqualAvg"), type: "checkbox", value: !!rule?.equalAverage, showFor: { key: "kind", values: ["average"] } },
+      { key: "unique", label: t("cfUnique"), type: "checkbox", value: rule?.type === "uniqueValues", showFor: { key: "kind", values: ["dupUnique"] } },
+      { key: "formula", label: t("cfFormula"), type: "text", value: rule?.type === "expression" ? formulaOut(rule.formulas?.[0]) : "", showFor: { key: "kind", values: ["expression"] } },
+      { key: "period", label: t("cfPeriod"), type: "select", value: rule?.timePeriod ?? "today", options: periodOpts, showFor: { key: "kind", values: ["timePeriod"] } },
+      { key: "iconset", label: t("cfIconSet"), type: "select", value: rule?.iconSet?.set ?? "3TrafficLights1", options: iconSets.map((v) => ({ value: v, label: v })), showFor: { key: "kind", values: ["iconSet"] } },
+      { key: "color", label: t("cfColour"), type: "color", value: rule?.dxf?.bg ?? rule?.dataBar?.color ?? "#ffc7ce", showFor: { key: "kind", values: [...hasFill, "dataBar"] } },
     ], (v) => {
       const kind = String(v.kind), color = String(v.color);
       const fill = color || "#ffc7ce";
@@ -174,12 +200,12 @@ export function setupDialogs(ctx: DialogCtx): {
       else if (kind === "dataBar") spec = { kind: "dataBar", color: color || "#638ec6" };
       else if (kind === "iconSet") { const set = String(v.iconset); spec = { kind: "iconSet", set, count: Number(set[0]) || 3 }; }
       else if (kind === "text") spec = { kind: "text", operator: String(v.textOp) as "containsText", text: String(v.text), fill };
-      else if (kind === "top") spec = { kind: "top", rank: Math.max(1, Number(v.rank) || 10), percent: !!v.percent, bottom: !!v.bottom, fill };
+      else if (kind === "top") spec = { kind: "top", rank: Math.max(1, Math.round(Number(operandFromLocal(String(v.rank)))) || 10), percent: !!v.percent, bottom: !!v.bottom, fill };
       else if (kind === "average") spec = { kind: "average", below: !!v.below, equal: !!v.equal, fill };
       else if (kind === "dupUnique") spec = { kind: "dupUnique", unique: !!v.unique, fill };
-      else if (kind === "expression") spec = { kind: "expression", formula: String(v.formula), fill };
+      else if (kind === "expression") spec = { kind: "expression", formula: formulaIn(String(v.formula)), fill };
       else if (kind === "timePeriod") spec = { kind: "timePeriod", period: String(v.period), fill };
-      else { const op = String(v.operator); spec = { kind: "cellIs", operator: op, value: String(v.value), value2: op === "between" || op === "notBetween" ? String(v.value2) : undefined, fill }; }
+      else { const op = String(v.operator); spec = { kind: "cellIs", operator: op, value: operandFromLocal(String(v.value), valueKind), value2: op === "between" || op === "notBetween" ? operandFromLocal(String(v.value2), valueKind) : undefined, fill }; }
       if (wb.kind === "ods") setOdsCondFormat(wb, sheet, ranges, spec);
       else setXlsxCondFormat(wb, sheet, ranges, spec);
       ctx.mark(); ctx.renderGrid();

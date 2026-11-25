@@ -1,3 +1,4 @@
+import { localDisplay } from "./regional";
 import { cellDisplay, getCell, parseA1Ref, type Sheet, type Workbook } from "./model";
 import type { ChartRef } from "./chart-model";
 
@@ -31,7 +32,7 @@ export function resolveNumbers(wb: Workbook, ref: ChartRef | undefined): (number
 export function resolveLabels(wb: Workbook, ref: ChartRef | undefined): string[] {
   if (ref?.ref) {
     const cells = resolveCells(wb, ref.ref);
-    if (cells) return cells.map(({ sheet, row, col }) => { const c = getCell(sheet, row, col); return c ? cellDisplay(c) : ""; });
+    if (cells) return cells.map(({ sheet, row, col }) => { const c = getCell(sheet, row, col); return !c ? "" : sheet.csvRows != null ? cellDisplay(c) : localDisplay(c); });
   }
   return (ref?.cache ?? []).map((v) => (v == null ? "" : String(v)));
 }

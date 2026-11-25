@@ -2,7 +2,9 @@
 // A small tokenizer swaps function names, booleans, error literals, decimal and argument
 // separators, leaving strings, quoted sheet names and structured-reference items untouched.
 
-import { isInvariant, parseLocalNumber, regional, type Regional } from "./regional";
+import { isInvariant, localDateEditText, localNumberInput, parseLocalNumber, regional, type Regional } from "./regional";
+import { parseDateInput, serialToEditText } from "./dates";
+import { numToStr } from "./model";
 
 const INV_ERRORS = ["#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A"];
 
@@ -139,4 +141,65 @@ export function inputFromLocal(raw: string, r: Regional = regional()): string {
   if (r.bool && up === r.bool[0]) return "TRUE";
   if (r.bool && up === r.bool[1]) return "FALSE";
   return raw;
+}
+
+/** How a rule operand reads: a date or time bound, or a value that may be plain text. */
+export interface OperandKind {
+  date?: boolean;
+  time?: boolean;
+  /** Plain words become a quoted string, as Excel's dialogs do ("oui" -> "\"oui\""). */
+  text?: boolean;
+}
+
+const CELL_REF = /^(?:(?:'[^']+'|[\p{L}\p{N}_.]+)!)?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/u;
+const INVARIANT_NUM = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+
+/**
+ * A rule operand typed in a dialog (validation bound, highlight value), made invariant: a local
+ * formula, a number ("3,5" -> "3.5"), a date ("25/11/2026" -> its serial) or a quoted text.
+ */
+export function operandFromLocal(text: string, kind: OperandKind = {}, r: Regional = regional()): string {
+  const t = text.trim();
+  if (!t) return "";
+  if (t.startsWith("=")) return formulaFromLocal(t.slice(1).trim(), r);
+  if (kind.date || kind.time) {
+    const d = parseDateInput(t, r.dayOrder);
+    if (d) return numToStr(d.serial);
+  }
+  const n = parseLocalNumber(t, r) ?? (INVARIANT_NUM.test(t) ? t : null);
+  if (n != null) return n;
+  if (kind.text && !t.startsWith('"') && !CELL_REF.test(t)) return `"${t.replace(/"/g, '""')}"`;
+  return formulaFromLocal(t, r);
+}
+
+/** The other way, to show a stored operand in a dialog: "46351" -> "25/11/2026", "3.5" -> "3,5". */
+export function operandToLocal(stored: string | undefined, kind: OperandKind = {}, r: Regional = regional()): string {
+  const s = (stored ?? "").trim();
+  if (!s) return "";
+  if (INVARIANT_NUM.test(s)) {
+    const serial = Number(s);
+    if (kind.time && !kind.date && serial >= 0 && serial < 1) {
+      const secs = Math.round(serial * 86400);
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      return `${p2(Math.floor(secs / 3600))}:${p2(Math.floor((secs % 3600) / 60))}${secs % 60 ? ":" + p2(secs % 60) : ""}`;
+    }
+    if (kind.date) {
+      const withTime = !Number.isInteger(serial);
+      const d = localDateEditText(serial, withTime, r) ?? serialToEditText(serial, withTime);
+      if (d != null) return d;
+    }
+    return localNumberInput(s, r);
+  }
+  if (kind.text && /^"(?:[^"]|"")*"$/.test(s)) return s.slice(1, -1).replace(/""/g, '"');
+  return "=" + formulaToLocal(s, r);
+}
+
+/** A validation list typed locally ("oui;non" in French) -> its items, numbers made invariant. */
+export function listFromLocal(text: string, r: Regional = regional()): string[] {
+  return text.split(r.argSep).map((x) => x.trim()).filter(Boolean).map((x) => parseLocalNumber(x, r) ?? x);
+}
+
+/** A validation list's items as the user types them back. */
+export function listToLocal(values: string[], r: Regional = regional()): string {
+  return values.map((v) => localNumberInput(v, r)).join(r.argSep);
 }
