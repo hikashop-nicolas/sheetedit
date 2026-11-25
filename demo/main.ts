@@ -1,4 +1,8 @@
-import { createSheetEditor, type SheetEditor } from "../src/index";
+import { createSheetEditor, setLocale, type SheetEditor } from "../src/index";
+
+// ?lang=fr opens the demo in another language, with its numbers and formula names.
+const lang = new URLSearchParams(location.search).get("lang");
+if (lang) setLocale(lang);
 
 const fileInput = document.getElementById("file") as HTMLInputElement;
 const openBtn = document.getElementById("open") as HTMLButtonElement;

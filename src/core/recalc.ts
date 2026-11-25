@@ -80,6 +80,7 @@ export function applyResult(cell: Cell, res: unknown): void {
   }
   // Refresh the formatted display from the (possibly new) value.
   cell.display = kind === "n" && cell.numFmt != null ? formatNumber(cell.numFmt, value) ?? undefined : undefined;
+  cell.displayRaw = undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import type { Sheet, Workbook } from "./model";
 import { zipAsync } from "./zip";
 import { commaDecimalValue, ensureCell, firstByLocal, formatNumber, getCell, isCommaDecimal, isNumeric, numToStr, parseXmlOpt, serializeXml } from "./model";
 import { isDateFmt, parseDateInput } from "./dates";
-import { localeCode } from "./i18n";
+import { regional } from "./regional";
 import { readCsv, writeCsv } from "../adapters/csv";
 import { readOds, writeOds } from "../adapters/ods";
 import { writeOdsCharts } from "../adapters/ods/chart-write";
@@ -187,9 +187,9 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   // A CSV whose numbers are European ("1 234,56") takes them as numbers, like the rows it was
   // read from; any other CSV stores exactly what was typed.
   const csvComma = csv && sheet.csvCommaDecimal === true && isCommaDecimal(raw);
-  const commaDecimal = csvComma || (!csv && localeCode() === "fr" && /^[-+]?\d+,\d+$/.test(raw.trim()));
+  const commaDecimal = csvComma || (!csv && regional().decimal === "," && /^[-+]?\d+,\d+$/.test(raw.trim()));
   const pct = !csv && /^[-+]?\d+(?:[.,]\d+)?\s?%$/.test(raw.trim());
-  const date = csv || isNumeric(raw) || commaDecimal || pct ? null : parseDateInput(raw, localeCode() === "fr" ? "dmy" : "mdy");
+  const date = csv || isNumeric(raw) || commaDecimal || pct ? null : parseDateInput(raw, regional().dayOrder);
   if (raw === "") {
     cell.value = "";
     cell.kind = "blank";
@@ -230,5 +230,6 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
         csvComma
         ? raw.trim()
         : undefined;
+  cell.displayRaw = csvComma ? true : undefined;
 }
 

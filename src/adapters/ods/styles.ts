@@ -215,6 +215,7 @@ export function setOdsCellNumFmt(wb: Workbook, _sheet: Sheet, cell: Cell, fmt: s
     cell.odsCurrency = currency;
   } else cell.odsValueType = undefined;
   cell.display = cell.kind === "n" && fmt != null ? formatNumber(fmt, cell.value) ?? undefined : undefined;
+  cell.displayRaw = undefined;
   // Emit an ODF data-style so other apps render the chosen format; reference it on the cell's
   // table-cell style. General (fmt == null) clears any data-style-name.
   const doc = wb.contentDoc;

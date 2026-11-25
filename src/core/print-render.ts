@@ -1,3 +1,4 @@
+import { localDisplay } from "./regional";
 import { cellDisplay, colToLetters, fontStack, getCell, key, type CellStyle, type Sheet, type Workbook } from "./model";
 import { DEFAULT_MARGINS, DEFAULT_PAPER, MM_PER_INCH, PAPER_SIZES, effectivePrintArea, type HeaderFooter, type PrintSetup } from "./print";
 
@@ -241,7 +242,7 @@ function buildPageTable(sheet: Sheet, p: Pagination, cols: number[], rows: numbe
         if (span.cs > 1) td.colSpan = span.cs;
       }
       const cell = getCell(sheet, r, c);
-      td.textContent = cellDisplay(cell);
+      td.textContent = sheet.csvRows != null ? cellDisplay(cell) : localDisplay(cell); // as the grid shows it
       if (cell?.kind === "n") td.classList.add("num");
       applyStyle(td, cell?.cellStyle);
       tr.appendChild(td);

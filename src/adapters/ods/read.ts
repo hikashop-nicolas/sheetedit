@@ -2,6 +2,7 @@ import type { Cell, CellKind, CellStyle, CondFormat, Phonetic, Sheet, TextRun, W
 import { formatNumber, getCell, key, noteExtent, numToStr, parseA1Ref, parseXml, parseXmlOpt } from "../../core/model";
 import { pivotColumnItems, type PivotFunc } from "../../core/pivot";
 import { durationToSerial, isoToSerial } from "../../core/dates";
+import { isInvariantText } from "../../core/regional";
 import type { SheetLock, SheetProtection } from "../../core/protection";
 import { readOdsPrintSetup } from "./print-read";
 
@@ -967,6 +968,8 @@ export function parseOdsRow(rowEl: Element, styles: OdsStyles): ParsedOdsCell[] 
       value,
       kind,
       display: display ?? (kind === "n" && numFmt != null ? formatNumber(numFmt, value) ?? undefined : undefined),
+      // An English-style producer text can still follow the user's region; any other is kept as is.
+      displayRaw: display != null && !(kind === "n" && odsValueType !== "date" && odsValueType !== "time" && isInvariantText(display, value)) ? true : undefined,
       numFmt,
       odsValueType,
       odsCurrency,

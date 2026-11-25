@@ -43,6 +43,26 @@ The UI is **multilingual**: English, French, Japanese, Spanish, German, Portugue
 auto-detected from the browser with an English fallback. `setLocale()` forces one, and a host
 can override individual strings.
 
+## Regional conventions
+
+Numbers, dates and formulas follow the user's language, as in Excel or LibreOffice. In French a
+cell shows `1 234,5` and `25/11/2026`, takes `1 234,5` or `3,25` as numbers, and formulas read and
+type as `=SOMME(A1:A3;0,5)` or `=SI(NB.SI(A:A;"x")>0;VRAI;FAUX)`. The workbook keeps the invariant
+form (`SUM(A1:A3,0.5)`, `.` decimals), exactly as Excel stores it, so files stay portable.
+
+- Function names: French covers every function sheetedit implements; German and Spanish cover
+  the everyday ones (others stay in English). English names typed anywhere still work, unless the
+  language uses that word for another function (French `TRIM` is `MIRR`, as in French Excel).
+- Separators: `;` between arguments and a decimal comma for French, German, Spanish,
+  Portuguese and Russian; array constants use `.` between columns and `;` between rows.
+- Display: decimal and thousands separators, the built-in short date, month and day names,
+  `VRAI`/`FAUX` and error codes such as `#VALEUR!`. An `.ods` cell keeps the text its producer
+  wrote unless it is plain English formatting. CSV files are shown and edited as written.
+
+The conventions follow the UI locale (`setLocale()`); `setRegionalLocale("en")` keeps English
+formulas and numbers under a translated UI, and `setRegionalLocale(null)` follows the UI again.
+`formulaToLocal()`, `formulaFromLocal()` and `inputFromLocal()` expose the conversions.
+
 ## Formulas and recalculation
 
 - Type `=B2*2` or `=SUM(C2:C3)` into a cell; the result is computed and shown.

@@ -13,6 +13,8 @@ import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, StyleChange, Workbook, SheetControl } from "./model";
 import { cannotOverflow, fontPx } from "./spill";
+import { localDateEditText, localDisplay, localNumberInput } from "./regional";
+import { formulaToLocal, inputFromLocal } from "./formula-locale";
 import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, MAX_COL, MAX_ROW, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, sheetNeedsCalc, recalc } from "./recalc";
@@ -549,10 +551,20 @@ export function createSheetEditor(
   const refName = (r: number, c: number) => `${colToLetters(c)}${r}`;
   const rangeRef = (g: { r1: number; c1: number; r2: number; c2: number }) =>
     g.r1 === g.r2 && g.c1 === g.c2 ? refName(g.r1, g.c1) : `${refName(g.r1, g.c1)}:${refName(g.r2, g.c2)}`;
+  // A CSV holds text: it is shown and edited exactly as written, in every locale.
+  const regionalOn = wb.kind !== "csv";
+  /** What a cell shows: its display in the user's region (decimal comma, local dates...). */
+  const shownOf = (cell: Cell | undefined): string => (regionalOn ? localDisplay(cell) : cellDisplay(cell));
+  /** User-typed text made invariant: local formulas, numbers and booleans. */
+  const fromTyped = (raw: string): string => (regionalOn ? inputFromLocal(raw) : raw);
+  const toLocalFormula = (f: string): string => (regionalOn ? formulaToLocal(f) : f);
+  /** A cell's content as copied to the clipboard: formulas and numbers in the user's region. */
+  const copyText = (cell: Cell | undefined): string =>
+    !cell ? "" : cell.formula != null ? "=" + toLocalFormula(cell.formula) : cell.kind === "n" && regionalOn ? localNumberInput(cell.value) : cell.value;
   const rawOf = (r: number, c: number): string => {
     const live = getCell(wb.sheets[active]!, r, c);
     if (!live) return "";
-    if (live.formula != null) return "=" + live.formula;
+    if (live.formula != null) return "=" + toLocalFormula(live.formula);
     // Date cells edit as a date, not as the underlying serial number.
     if (live.kind === "n" && isDateFmt(live.numFmt)) {
       const serial = Number(live.value);
@@ -561,9 +573,12 @@ export function createSheetEditor(
         const p2 = (n: number) => String(n).padStart(2, "0");
         return `${p2(Math.floor(secs / 3600))}:${p2(Math.floor((secs % 3600) / 60))}:${p2(secs % 60)}`;
       }
-      const text = serialToEditText(serial, hasTimeFmt(live.numFmt));
+      const withTime = hasTimeFmt(live.numFmt);
+      const text = (regionalOn ? localDateEditText(serial, withTime) : null) ?? serialToEditText(serial, withTime);
       if (text != null) return text;
     }
+    if (live.kind === "n" && regionalOn) return localNumberInput(live.value);
+    if (live.kind === "b" && regionalOn) return localDisplay(live);
     return live.value;
   };
   const fxbar = createFormulaBar({
@@ -577,7 +592,7 @@ export function createSheetEditor(
     },
     onEnter: (v) => {
       if (!activeCell) return;
-      commitValue(activeCell.r, activeCell.c, v);
+      commitValue(activeCell.r, activeCell.c, fromTyped(v));
       fxbar.setValue(rawOf(activeCell.r, activeCell.c));
       endEditing();
     },
@@ -1457,7 +1472,7 @@ export function createSheetEditor(
     const sheet = wb.sheets[active]!;
     const inp = inputAt(key(rt.r, rt.c));
     // Commit any uncommitted typing first so the run offsets match the model's text.
-    if (inp && inp.value !== rawOf(rt.r, rt.c)) commitValue(rt.r, rt.c, inp.value);
+    if (inp && inp.value !== rawOf(rt.r, rt.c)) commitValue(rt.r, rt.c, fromTyped(inp.value));
     const cell = getCell(sheet, rt.r, rt.c);
     if (!cell || cell.kind === "n" || cell.kind === "b" || cell.formula != null || cell.value === "") { syncToolbar(); return; }
     recordCells([{ r: rt.r, c: rt.c }], () => {
@@ -2244,7 +2259,7 @@ export function createSheetEditor(
     td.appendChild(flags);
   };
 
-  const displayValue = (sheet: Sheet, r: number, c: number): string => cellDisplay(getCell(sheet, r, c));
+  const displayValue = (sheet: Sheet, r: number, c: number): string => shownOf(getCell(sheet, r, c));
 
   const refreshDisplays = (sheet: Sheet, except?: HTMLInputElement) => {
     for (const [k, input] of panes.flatMap((p) => [...p.inputs])) {
@@ -3252,7 +3267,7 @@ export function createSheetEditor(
       const tgt = assistTarget();
       commitValue(tgt.r, tgt.c, formula);
       renderGrid();
-      fxbar.setValue(formula);
+      fxbar.setValue(rawOf(tgt.r, tgt.c));
     },
   });
 
@@ -3288,7 +3303,7 @@ export function createSheetEditor(
       fxbar.setHint(null);
       const base = editing ? editor.value : ""; // not editing: start a fresh formula
       const empty = base.trim() === "" || base.trim() === "=";
-      const insert = `${fn}(${ref})`;
+      const insert = toLocalFormula(`${fn}(${ref})`);
       const caret = editing ? (editor.selectionStart ?? base.length) : 0;
       const next = empty ? `=${insert}` : base.slice(0, caret) + insert + base.slice(caret);
       // Focus first (its handler may reset the value), then write the pending text.
@@ -3371,7 +3386,7 @@ export function createSheetEditor(
       const tgt = e.target as HTMLElement | null;
       if (tgt instanceof HTMLInputElement && tgt.selectionStart !== tgt.selectionEnd) return;
       const cell = getCell(sheet, sel.r1, sel.c1);
-      e.clipboardData?.setData("text/plain", cell ? (cell.formula != null ? "=" + cell.formula : cell.value) : "");
+      e.clipboardData?.setData("text/plain", copyText(cell));
       e.preventDefault();
       return;
     }
@@ -3389,7 +3404,7 @@ export function createSheetEditor(
       const vals: string[] = [];
       for (let c = sel.c1; c <= c2; c++) {
         const cell = getCell(sheet, r, c);
-        vals.push(cell ? (cell.formula != null ? "=" + cell.formula : cell.value) : "");
+        vals.push(copyText(cell));
       }
       lines.push(vals.join("\t"));
     }
@@ -3426,7 +3441,7 @@ export function createSheetEditor(
     const positions: { r: number; c: number }[] = [];
     grid2.forEach((vals, i) => vals.forEach((_v, j) => positions.push({ r: r0 + i, c: c0 + j })));
     recordCells(positions, () => {
-      grid2.forEach((vals, i) => vals.forEach((val, j) => setCellInput(sheet, r0 + i, c0 + j, val)));
+      grid2.forEach((vals, i) => vals.forEach((val, j) => setCellInput(sheet, r0 + i, c0 + j, fromTyped(val))));
     });
     recalc(wb);
     mark();
@@ -3648,7 +3663,7 @@ export function createSheetEditor(
     const pad = 16; // the editor's 8px each side
     if (cell.richRuns?.length)
       return pad + cell.richRuns.reduce((a, run) => a + measureLine(run.text, { bold: run.bold ?? cs?.bold, italic: run.italic ?? cs?.italic, size: run.size ?? cs?.fontSize, font: run.font ?? cs?.fontFamily }), 0);
-    return pad + measureLine(cellDisplay(cell), { bold: cs?.bold, italic: cs?.italic, size: cs?.fontSize, font: cs?.fontFamily });
+    return pad + measureLine(shownOf(cell), { bold: cs?.bold, italic: cs?.italic, size: cs?.fontSize, font: cs?.fontFamily });
   };
 
   /**
@@ -3661,12 +3676,12 @@ export function createSheetEditor(
   const spillOf = (sheet: Sheet, cell: Cell | undefined, r: number, c: number): { left: number; right: number } | undefined => {
     if (!cell || cell.kind === "n" || cell.cellStyle?.wrap || cell.phonetic?.length) return undefined;
     if (spanAtMap.has(key(r, c)) || coveredSet.has(key(r, c))) return undefined;
-    if (!cellDisplay(cell).trim()) return undefined;
+    if (!shownOf(cell).trim()) return undefined;
     // Most text cells cannot reach their neighbour whatever the font: skip measuring those.
     const colW = effColW(sheet, c);
     const cs = cell.cellStyle;
     const largestPt = cell.richRuns?.length ? Math.max(cs?.fontSize ?? 0, ...cell.richRuns.map((run) => run.size ?? 0)) || undefined : cs?.fontSize;
-    if (cannotOverflow(cellDisplay(cell), fontPx(largestPt), colW)) return undefined;
+    if (cannotOverflow(shownOf(cell), fontPx(largestPt), colW)) return undefined;
     const over = measureCell(cell) - colW;
     if (over <= 0) return undefined;
     const free = (dir: -1 | 1, budget: number): number => {
@@ -3674,7 +3689,7 @@ export function createSheetEditor(
       for (let n = c + dir, i = 0; got < budget && n >= 1 && i < SPILL_MAX_COLS; n += dir, i++) {
         if (coveredSet.has(key(r, n)) || spanAtMap.has(key(r, n))) break;
         const nb = getCell(sheet, r, n);
-        if (nb && cellDisplay(nb) !== "") break;
+        if (nb && shownOf(nb) !== "") break;
         got += effColW(sheet, n);
       }
       return Math.min(got, budget);
@@ -3713,7 +3728,7 @@ export function createSheetEditor(
       if (merge && merge.r2 > merge.r1) continue; // spans rows: those rows are the space it gets
       let width = effColW(sheet, cell.col);
       if (merge) for (let c = merge.c1 + 1; c <= merge.c2; c++) width += effColW(sheet, c);
-      const h = measureWrap(cellDisplay(cell) ?? cell.value, width, cell.cellStyle) + 2; // gridline buffer
+      const h = measureWrap(shownOf(cell) ?? cell.value, width, cell.cellStyle) + 2; // gridline buffer
       if (h > (sheet.defaultRowHeight ?? ROW_H)) wrapH.set(cell.row, Math.max(wrapH.get(cell.row) ?? 0, h));
     }
   };
@@ -4852,7 +4867,7 @@ export function createSheetEditor(
       ov.className = rot === 255 ? "sheetedit-cellrot stacked" : "sheetedit-cellrot";
       ov.setAttribute("aria-hidden", "true");
       const sp = document.createElement("span");
-      sp.textContent = cellDisplay(cell);
+      sp.textContent = shownOf(cell);
       // 1..90 is anticlockwise by that many degrees; 91..180 is clockwise by (value - 90).
       if (rot !== 255) sp.style.transform = `rotate(${rot <= 90 ? -rot : rot - 90}deg)`;
       if (cs.color) ov.style.color = cs.color;
@@ -4919,7 +4934,7 @@ export function createSheetEditor(
       // Furigana: render the phonetic guide as ruby in a display overlay. The input keeps the
       // base text (edited/saved as-is); CSS shows the ruby until the cell is focused for editing.
       td.classList.add("has-ruby");
-      td.appendChild(buildRuby(cellDisplay(cell), cell.phonetic));
+      td.appendChild(buildRuby(shownOf(cell), cell.phonetic));
     } else if (cell?.cellStyle?.wrap && cell.value !== "") {
       // Wrap: the single-line input can't wrap, so show a wrapping display overlay (hidden
       // while editing). The row was grown to fit by computeWrapHeights.
@@ -4927,7 +4942,7 @@ export function createSheetEditor(
       const ov = document.createElement("div");
       ov.className = "sheetedit-cellwrap";
       ov.setAttribute("aria-hidden", "true");
-      ov.textContent = cellDisplay(cell);
+      ov.textContent = shownOf(cell);
       const cs = cell.cellStyle;
       if (cs.align) ov.style.textAlign = cs.align;
       if (cs.color) ov.style.color = cs.color;
@@ -4943,7 +4958,7 @@ export function createSheetEditor(
         const ov = document.createElement("div");
         ov.className = "sheetedit-cellspill";
         ov.setAttribute("aria-hidden", "true");
-        ov.textContent = cellDisplay(cell!);
+        ov.textContent = shownOf(cell!);
         const cs = cell?.cellStyle;
         if (cs?.align) ov.style.textAlign = cs.align;
         if (cs?.color) ov.style.color = cs.color;
@@ -4972,7 +4987,7 @@ export function createSheetEditor(
       const sheetProtected = isProtected(sheet);
       const input = document.createElement("input");
       input.type = "text";
-      input.value = cellDisplay(cell);
+      input.value = shownOf(cell);
       input.setAttribute("aria-label", `${colToLetters(c)}${r}`);
       paintPeers(td, sheet.cid ?? sheet.name, r, c);
       // A locked cell on a protected sheet stays selectable and copyable (Excel's default) but
@@ -5161,7 +5176,7 @@ export function createSheetEditor(
           input.value = displayValue(sheet, r, c);
           return;
         }
-        commitValue(r, c, raw);
+        commitValue(r, c, fromTyped(raw));
         input.value = displayValue(sheet, r, c);
         input.parentElement?.classList.toggle("num", getCell(sheet, r, c)?.kind === "n");
       };

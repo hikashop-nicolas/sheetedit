@@ -10,6 +10,7 @@ export interface CellFields {
   value: string;
   kind: CellKind;
   display?: string;
+  displayRaw?: boolean;
   formula?: string;
   odfFormula?: string;
   style?: string;
@@ -43,6 +44,7 @@ export function snapFields(cell: Cell | undefined): CellFields | null {
     value: cell.value,
     kind: cell.kind,
     display: cell.display,
+    displayRaw: cell.displayRaw,
     formula: cell.formula,
     odfFormula: cell.odfFormula,
     style: cell.style,
@@ -67,6 +69,7 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
     cur.value = "";
     cur.kind = "blank";
     cur.display = undefined;
+    cur.displayRaw = undefined;
     cur.formula = undefined;
     cur.odfFormula = undefined;
     if (cur.numFmt != null) cur.numFmtDirty = true;
@@ -84,6 +87,7 @@ export function applyFields(sheet: Sheet, r: number, c: number, f: CellFields | 
   cell.value = f.value;
   cell.kind = f.kind;
   cell.display = f.display;
+  cell.displayRaw = f.displayRaw;
   cell.formula = f.formula;
   cell.odfFormula = f.odfFormula;
   cell.style = f.style;

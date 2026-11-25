@@ -266,6 +266,7 @@ export function setXlsxCellNumFmt(wb: Workbook, sheet: Sheet, cell: Cell, fmt: s
   cell.numFmt = fmt;
   cell.numFmtDirty = false;
   cell.display = cell.kind === "n" && fmt != null ? formatNumber(fmt, cell.value) ?? undefined : undefined;
+  cell.displayRaw = undefined;
   cell.edited = true;
   wb.stylesDirty = true;
 }

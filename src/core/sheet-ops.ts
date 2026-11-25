@@ -163,7 +163,7 @@ export function copySheet(wb: Workbook, index: number): number {
   for (const cell of src.cells.values()) {
     const copy: Cell = {
       row: cell.row, col: cell.col, value: cell.value, kind: cell.kind,
-      display: cell.display, formula: cell.formula, numFmt: cell.numFmt, style: cell.style,
+      display: cell.display, displayRaw: cell.displayRaw, formula: cell.formula, numFmt: cell.numFmt, style: cell.style,
       cellStyle: cell.cellStyle, edited: true, fDirty: cell.formula != null, numFmtDirty: cell.numFmt != null,
     };
     dst.cells.set(`${cell.row}:${cell.col}`, copy);

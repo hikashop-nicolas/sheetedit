@@ -14,4 +14,6 @@ export * from "./core/recalc";
 export * from "./core/workbook";
 export * from "./core/editor";
 export { setLocale, localeCode } from "./core/i18n";
+export { setRegionalLocale, regional, localDisplay, parseLocalNumber, type Regional } from "./core/regional";
+export { formulaToLocal, formulaFromLocal, inputFromLocal } from "./core/formula-locale";
 export type { FontOptions } from "./core/fonts";

@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { regional } from "../regional";
 
 // The formula bar above the grid: the active cell's reference, the function buttons
 // (Σ plus a small menu), and a wide input mirroring the cell being edited, so a
@@ -61,7 +62,7 @@ export function createFormulaBar(opts: {
     b.type = "button";
     b.className = "sheetedit-fxmenu-item";
     b.setAttribute("role", "menuitem");
-    b.textContent = fn;
+    b.textContent = regional().fn[fn] ?? fn; // the name the user types in their language
     b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", () => {
       menu.hidden = true;

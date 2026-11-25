@@ -221,6 +221,8 @@ export interface Cell {
   kind: CellKind;
   /** Formatted text for the grid (number format applied). Falls back to `value`. */
   display?: string;
+  /** `display` is the producer's own text (an .ods <text:p>), not ours: shown as is in every locale. */
+  displayRaw?: boolean;
   /** Number format for this cell: an xlsx format code, a built-in numFmtId, or none. */
   numFmt?: string | number;
   /** Formula text in A1 syntax, without the leading "=". Undefined if not a formula. */
