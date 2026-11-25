@@ -11,6 +11,8 @@ export const FX_FUNCTIONS = ["SUM", "AVERAGE", "MIN", "MAX", "COUNT"] as const;
 export interface FormulaBar {
   el: HTMLElement;
   input: HTMLInputElement;
+  /** The name box: shows the active cell or the selection's name, and takes one to go to. */
+  refInput: HTMLInputElement;
   setRef(name: string): void;
   setValue(v: string): void;
   /** Show a hint (e.g. "select a range") in place of the value; null restores. */
@@ -24,6 +26,10 @@ export function createFormulaBar(opts: {
   onEnter(value: string): void;
   onEscape(): void;
   onFn(fn: string): void;
+  /** Enter in the name box: a cell, a range or a name to go to, or a new name to define. */
+  onRefEnter?(text: string): void;
+  /** The name box gave up (Escape or blur): show the current reference again. */
+  onRefCancel?(): void;
   /** When provided, an on-device "help me write a formula" button is shown; it calls this
       with its own element so the caller can anchor a popover under it. */
   onAssist?(anchor: HTMLElement): void;
@@ -31,9 +37,24 @@ export function createFormulaBar(opts: {
   const el = document.createElement("div");
   el.className = "sheetedit-fxbar";
 
-  const ref = document.createElement("span");
+  const ref = document.createElement("input");
+  ref.type = "text";
   ref.className = "sheetedit-fxref";
   ref.title = t("activeCell");
+  ref.setAttribute("aria-label", t("nameBox"));
+  ref.autocomplete = "off";
+  ref.spellcheck = false;
+  ref.addEventListener("focus", () => ref.select());
+  ref.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      opts.onRefEnter?.(ref.value.trim());
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      opts.onRefCancel?.();
+    }
+  });
+  ref.addEventListener("blur", () => opts.onRefCancel?.());
 
   // Σ applies SUM directly; the caret opens the function menu. mousedown is
   // prevented on both so clicking them never blurs (and commits) a pending edit.
@@ -126,8 +147,9 @@ export function createFormulaBar(opts: {
   return {
     el,
     input,
+    refInput: ref,
     setRef(name) {
-      ref.textContent = name;
+      if (document.activeElement !== ref) ref.value = name;
     },
     setValue(v) {
       if (input.value !== v) input.value = v;

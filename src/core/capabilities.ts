@@ -35,6 +35,8 @@ export interface WorkbookCapabilities {
   themes: boolean;
   /** Form controls (checkbox, dropdown, spinner) rendered and driving their linked cell. */
   formControls: boolean;
+  /** Defined names: the Name Manager and defining or jumping to a name from the name box. */
+  definedNames: boolean;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -53,6 +55,7 @@ const NONE: WorkbookCapabilities = {
   printSetup: false,
   themes: false,
   formControls: false,
+  definedNames: false,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -71,6 +74,7 @@ const XLSX: WorkbookCapabilities = {
   printSetup: true,
   themes: true,
   formControls: true,
+  definedNames: true,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -101,6 +105,7 @@ const ODS: WorkbookCapabilities = {
   // ODF keeps controls in office:forms with a draw:control frame, a different model that is
   // preserved rather than rendered.
   formControls: false,
+  definedNames: true,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */

@@ -7,6 +7,7 @@ import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } 
 import { writeOdsFreezes } from "./freeze-write";
 import { writeOdsProtections } from "./protection-write";
 import { writeOdsPrintSetups } from "./print-write";
+import { writeOdsDefinedNames } from "./names-write";
 // ---------------------------------------------------------------------------
 // ods write: cell/row emission and the save pass
 // ---------------------------------------------------------------------------
@@ -784,6 +785,7 @@ export function writeOds(wb: Workbook): void {
   writeOdsFreezes(wb); // frozen panes live in settings.xml, not content.xml
   writeOdsProtections(wb); // sheet / workbook protection lives on the table elements
   writeOdsPrintSetups(wb); // page setup spans styles.xml (layout + master) and the table itself
+  writeOdsDefinedNames(wb); // workbook-level named ranges and expressions
   const doc = wb.contentDoc!;
   for (const sheet of wb.sheets) {
     const table = sheet.tableEl;

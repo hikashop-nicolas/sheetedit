@@ -75,6 +75,20 @@ formulas and numbers under a translated UI, and `setRegionalLocale(null)` follow
 - Formula cells display their computed value, and the formula itself when focused.
 - Existing formulas in the file are preserved on save with refreshed cached values.
 
+## Defined names
+
+- The **Name Manager** (toolbar, or Ctrl+F3) lists the workbook's names with what each refers to,
+  shown in the user's conventions (`=Feuil1!$A$1:$B$5`, `=0,5`, `=SOMME(...)` in French) and stored
+  invariant. Add, edit and delete names; a new name defaults to the selection, absolute and
+  sheet-qualified. Names follow Excel's rules (a letter, `_` or `\` first, no spaces, never a cell
+  reference such as `A1` or `R1C1`, unique in any case).
+- The **name box** takes a name, a cell or a range to go to, and a new name defines the selection,
+  as in Excel. It shows the name when the selection is exactly a named range.
+- Renaming a name rewrites the formulas that use it. Names holding a constant or a formula
+  evaluate too. Every change is one undo step, syncs to collaborators, and is written to `.xlsx`
+  (`<definedName>`) and `.ods` (`table:named-range` / `table:named-expression`).
+- Sheet-scoped names are shown with their sheet and evaluate on it, but are kept as they are.
+
 ## Number formats
 
 Cells are shown using their number format: dates, currency, percentages and

@@ -50,12 +50,14 @@ import { setupPaneDividers } from "./ui/pane-divider";
 import { clearOutline, groupLines, maxOutlineLevel, outlineLevel, setGroupCollapsed, showOutlineLevel, ungroupLines, type Axis } from "./outline";
 import { setupPivotUi } from "./ui/pivot-ui";
 import { setupDialogs } from "./ui/dialogs";
+import { openNameManager, type NameRow } from "./ui/name-manager";
+import { absoluteRangeRef, findName, formulaUsesName, looksLikeCellRef, nameError, parseRangeRef, renameInFormula } from "./names";
 import { validateCell } from "./datavalidation";
 import { setupPivotLayer } from "./ui/pivot-layer";
 import { setupChartUi } from "./ui/chart-insert";
 import { readWorkbook, setCellInput, writeWorkbookAsync } from "./workbook";
 import { assignDrawingIds, assignImageIds, assignPivotIds, assignSheetIds, newImageId, sheetById } from "./sheet-ops";
-import { isSheetLoaded, loadSheet, onSheetLoaded } from "./lazy-sheet";
+import { isSheetLoaded, loadAllSheets, loadSheet, onSheetLoaded } from "./lazy-sheet";
 import { workbookFonts, type FontOptions } from "./fonts";
 import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sheet-settings";
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
@@ -610,6 +612,8 @@ export function createSheetEditor(
     },
     onFn: (fn) => applyFn(fn),
     onAssist: (anchor) => formulaAssist?.open(anchor),
+    onRefEnter: (text) => nameBoxEnter(text),
+    onRefCancel: () => syncNameBox(),
   });
   // Wired up once commitValue/context helpers below exist (the button only fires on click).
   let formulaAssist: { open(anchor: HTMLElement): void } | null = null;
@@ -834,6 +838,8 @@ export function createSheetEditor(
   let extraCols = 0;
   // Assigned once the toolbar is built; reflects the active cell's style on the toggle buttons.
   let syncToolbar: () => void = () => undefined;
+  // Assigned with the defined-names helpers; keeps the name box in step with the selection.
+  let syncNameBox: () => void = () => undefined;
   // Selection rectangle (1-based, inclusive) and the anchor for shift-extend.
   let sel: { r1: number; c1: number; r2: number; c2: number } | null = null;
   /** Where the other people in a session are, keyed by "sheet!r,c" for O(1) lookup per cell. */
@@ -1173,6 +1179,7 @@ export function createSheetEditor(
     placeFillHandle();
     placeSelFrame();
     syncToolbar();
+    syncNameBox();
   };
   const setSel = (r1: number, c1: number, r2: number, c2: number) => {
     sel = { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) };
@@ -2220,6 +2227,9 @@ export function createSheetEditor(
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       findBar.show();
+    } else if (e.ctrlKey && e.key === "F3" && caps.definedNames) {
+      e.preventDefault(); // Excel's Name Manager shortcut
+      openNames();
     }
   });
 
@@ -4686,6 +4696,10 @@ export function createSheetEditor(
     const DV_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9.5h4M11 9l1 1 1.5-1.5"/></svg>`;
     trailingIcons.push(tbIcon(DV_ICON, t("dvEdit"), () => openDvDialog()));
   }
+  if (caps.definedNames) {
+    const NAMES_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h4l1 1.5-1 1.5h-4zM2.5 9.5h11M2.5 12.5h7M9.5 6h4"/></svg>`;
+    trailingIcons.push(tbIcon(NAMES_ICON, t("nameManager"), () => openNames()));
+  }
   if (caps.comments) {
     const NOTE_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>`;
     trailingIcons.push(tbIcon(NOTE_ICON, t("noteEdit"), () => openNoteDialog()));
@@ -5149,7 +5163,7 @@ export function createSheetEditor(
         }
         selectCell(r, c, false); // tapping a cell selects it; toolbar styles target the selection
         activeCell = { r, c };
-        fxbar.setRef(refName(r, c));
+        syncNameBox();
         // Show the editable underlying value (formula or raw), not the formatted display.
         if (skipFocusValue) skipFocusValue = false;
         else input.value = rawOf(r, c);
@@ -5759,6 +5773,104 @@ export function createSheetEditor(
     viewBox: (w, h) => centredAnchor(w, h),
     applySparkline: (sheet, host, spec) => sparkSingle(sheet, host, spec),
   });
+
+  // --- defined names: the Name Manager and the name box ----------------------------
+  const nameRows = (): NameRow[] => [
+    ...[...(wb.definedNames ?? new Map<string, string>())].map(([name, ref]) => ({ name, ref })),
+    ...(wb.localNames ?? []).map((n) => ({ name: n.name, ref: n.ref, sheet: n.sheet })),
+  ];
+  const selectionRef = (): string => absoluteRangeRef(wb.sheets[active]!.name, getSelRect());
+  /** Add, edit or delete a workbook-level name as one undo step; a rename follows into formulas. */
+  const changeName = (from: string | null, to: { name: string; ref: string } | null): void => {
+    const before = new Map(wb.definedNames ?? []);
+    const after = new Map<string, string>();
+    const fromKey = from != null ? findName(before, from) : undefined;
+    for (const [k, v] of before) {
+      if (k !== fromKey) after.set(k, v);
+      else if (to) after.set(to.name, to.ref); // an edit keeps the name's place in the list
+    }
+    if (to && fromKey == null) after.set(to.name, to.ref);
+    // Formulas naming the old name are rewritten, so a rename does not leave them at #NAME?.
+    const rewrites: { sheet: Sheet; cell: Cell; was: string; now: string }[] = [];
+    if (fromKey != null && to && to.name !== fromKey) {
+      loadAllSheets(wb);
+      for (const sheet of wb.sheets)
+        for (const cell of sheet.cells.values())
+          if (cell.formula != null && formulaUsesName(cell.formula, fromKey))
+            rewrites.push({ sheet, cell, was: cell.formula, now: renameInFormula(cell.formula, fromKey, to.name) });
+    }
+    const setNames = (m: Map<string, string>, which: "was" | "now"): void => {
+      wb.definedNames = new Map(m);
+      wb.namesDirty = true;
+      for (const rw of rewrites) {
+        rw.cell.formula = rw[which];
+        rw.cell.edited = true;
+        rw.cell.fDirty = true;
+        if (wb.kind === "ods") rw.sheet.odsDirty = true;
+      }
+    };
+    recordWorkbook(() => setNames(after, "now"), () => setNames(before, "was"));
+    if (rewrites.length)
+      options.onCellsChanged?.(rewrites.map((rw) => ({ sheet: rw.sheet.cid ?? rw.sheet.name, r: rw.cell.row, c: rw.cell.col, input: inputOf(rw.sheet, rw.cell.row, rw.cell.col), fmt: formatOf(rw.sheet, rw.cell.row, rw.cell.col) })));
+    recalc(wb);
+    mark();
+    renderGrid();
+    syncNameBox();
+  };
+  const openNames = (startNew = false): void => {
+    openNameManager({ wrap, rows: nameRows, selectionRef, apply: changeName }, { startNew });
+  };
+  /** Select a rectangle on a sheet (by name, or the active one) and bring it into view. */
+  const goToRange = (sheetName: string | undefined, r: { r1: number; c1: number; r2: number; c2: number }): boolean => {
+    const idx = sheetName != null ? wb.sheets.findIndex((sh) => sh.name.toLowerCase() === sheetName.toLowerCase()) : active;
+    if (idx < 0) return false;
+    switchSheet(idx);
+    focusCell(r.r1, r.c1);
+    activeCell = { r: r.r1, c: r.c1 };
+    anchor = { r: r.r1, c: r.c1 };
+    setSel(r.r1, r.c1, r.r2, r.c2);
+    return true;
+  };
+  /** The name box took Enter: go to a name, a cell or a range, or define a new name (as Excel). */
+  const nameBoxEnter = (text: string): void => {
+    const done = (): void => { fxbar.refInput.blur(); syncNameBox(); };
+    if (!text) return done();
+    const key = caps.definedNames ? findName(wb.definedNames, text) : undefined;
+    const local = caps.definedNames ? wb.localNames?.find((n) => n.sheet === wb.sheets[active]?.name && n.name.toLowerCase() === text.toLowerCase()) : undefined;
+    const target = local?.ref ?? (key != null ? wb.definedNames!.get(key)! : text);
+    const range = parseRangeRef(target);
+    if (range) {
+      if (!goToRange(range.sheet, range.rect)) showNotice(t("nameBoxBad", { text }));
+      return done();
+    }
+    if (key != null || local) {
+      showNotice(t("nameNotRange", { name: text }));
+      return done();
+    }
+    const bad = caps.definedNames && !looksLikeCellRef(text) ? nameError(text, wb.definedNames?.keys() ?? []) : "chars";
+    if (bad) {
+      showNotice(t("nameBoxBad", { text }));
+      return done();
+    }
+    changeName(null, { name: text, ref: selectionRef() });
+    showNotice(t("nameDefined", { name: text }));
+    done();
+  };
+  /** The name box shows the selection's name when it is exactly a named range, else the cell. */
+  syncNameBox = (): void => {
+    const sheetName = wb.sheets[active]?.name;
+    let shown: string | undefined;
+    if (sel && wb.definedNames?.size && sheetName != null) {
+      for (const [name, ref] of wb.definedNames) {
+        const p = parseRangeRef(ref);
+        if (!p || (p.sheet ?? sheetName).toLowerCase() !== sheetName.toLowerCase()) continue;
+        const r = p.rect;
+        if (r.r1 === sel.r1 && r.c1 === sel.c1 && r.r2 === sel.r2 && r.c2 === sel.c2) { shown = name; break; }
+      }
+    }
+    const at = activeCell ?? (sel ? { r: sel.r1, c: sel.c1 } : null);
+    fxbar.setRef(shown ?? (at ? refName(at.r, at.c) : ""));
+  };
 
   // Comment popover: shown while hovering a cell that carries notes / threaded comments.
   let commentPop: HTMLElement | null = null;
@@ -6430,6 +6542,7 @@ export function createSheetEditor(
         const next = new Map(Object.entries(names));
         if (JSON.stringify(Object.fromEntries(next)) === JSON.stringify(namesObject())) return;
         wb.definedNames = next;
+        wb.namesDirty = true;
         dirty = true;
         reportDefinedNames();
         recalc(wb); // a name a formula refers to may have just appeared or moved

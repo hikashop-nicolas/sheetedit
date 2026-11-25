@@ -354,10 +354,14 @@ export function readXlsx(files: Record<string, Uint8Array>, opts: { lazySheets?:
   // Workbook-level defined names: <definedNames><definedName name="X">Sheet1!$A$1:$A$10<...
   // Skip sheet-scoped names (localSheetId) and function/print built-ins; recalc reads the map.
   const definedNames = new Map<string, string>();
+  const sheetTabs = Array.from(wbDoc.getElementsByTagName("sheet")).map((el) => el.getAttribute("name") ?? "");
   for (const dn of Array.from(wbDoc.getElementsByTagName("definedName"))) {
     const name = dn.getAttribute("name");
     const target = dn.textContent?.trim();
-    if (name && target && dn.getAttribute("localSheetId") == null && !name.startsWith("_xlnm")) definedNames.set(name, target);
+    if (!name || !target || name.startsWith("_xlnm")) continue;
+    const local = dn.getAttribute("localSheetId");
+    if (local == null) definedNames.set(name, target);
+    else if (sheetTabs[Number(local)] != null) (wb.localNames ??= []).push({ name, sheet: sheetTabs[Number(local)]!, ref: target });
   }
   if (definedNames.size) wb.definedNames = definedNames;
   // <workbookProtection lockStructure="1" lockWindows="1"/>: the sheet set / window layout is locked.

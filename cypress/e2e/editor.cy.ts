@@ -123,7 +123,7 @@ describe("sheetedit", () => {
   it("edits through the formula bar", () => {
     open("cypress/fixtures/sample.xlsx");
     cy.get('input[aria-label="C2"]').focus();
-    cy.get(".sheetedit-fxref").should("have.text", "C2");
+    cy.get(".sheetedit-fxref").should("have.value", "C2");
     cy.get(".sheetedit-fxinput").should("have.value", "=B2*2");
     cy.get(".sheetedit-fxinput").clear().type("=B2*3{enter}");
     cy.get('input[aria-label="C2"]').should("have.value", "9");

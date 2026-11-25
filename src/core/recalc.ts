@@ -9,9 +9,19 @@ import { allowRawRefs, fixBlankCompare, fixIndexSheet, referenceFunctions } from
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
+import { expandValueNames, findName } from "./names";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
+
+/** A name's target: the formula's own sheet-scoped name first, then the workbook's, any case. */
+function nameTarget(wb: Workbook, name: string, sheet?: string): string | undefined {
+  const low = name.toLowerCase();
+  const local = sheet != null ? wb.localNames?.find((n) => n.sheet === sheet && n.name.toLowerCase() === low) : undefined;
+  if (local) return local.ref;
+  const k = findName(wb.definedNames, name);
+  return k != null ? wb.definedNames!.get(k) : undefined;
+}
 
 // Parse a defined-name target ("Sheet1!$A$1:$B$2", "A1") into a cell or range reference for
 // fast-formula-parser. The $ absolute markers and an optional (quoted) sheet prefix are handled.
@@ -253,8 +263,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
 
   // Resolve a defined name to a cell/range reference (null = unknown name -> #NAME?). A bare table
   // name is the other thing that looks like one: it means that table's data body.
-  const nameToRef = (name: string): CellRef | RangeRef | null => {
-    const ref = wb.definedNames?.get(name);
+  const nameToRef = (name: string, sheet?: string): CellRef | RangeRef | null => {
+    const ref = nameTarget(wb, name, sheet);
     if (ref) return parseNameRef(ref, defaultSheet ?? "");
     const body = tableBodyRef(wb, name);
     return body ? parseNameRef(body, defaultSheet ?? "") : null;
@@ -266,10 +276,10 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     let f = formula;
     if (hasTableRef(f)) f = expandTableRefs(f, wb, row);
     if (hasLet(f)) f = expandLet(f);
-    return f;
+    return expandValueNames(f, wb.definedNames);
   };
 
-  const depParser = new FP.DepParser({ onVariable: (name: string) => nameToRef(name) });
+  const depParser = new FP.DepParser({ onVariable: (name: string, sheet?: string) => nameToRef(name, sheet) });
   for (const node of nodes) {
     let refs: Array<Record<string, unknown>> = [];
     try {
@@ -357,7 +367,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     if (c?.numFmt != null && isDateFmt(c.numFmt)) sawDateFmt ??= c.numFmt;
   };
   const parser = new FP({
-    onVariable: (name: string) => nameToRef(name),
+    onVariable: (name: string, sheet?: string) => nameToRef(name, sheet),
     onCell: (ref: { sheet?: string; row: number; col: number }) => {
       if (sheetOf(ref.sheet) === null) return FE.REF;
       const c = lookup(ref.sheet, ref.row, ref.col);
@@ -536,12 +546,12 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     const sheet = sheetOf(name);
     return sheet ? getCell(sheet, r, c) : undefined;
   };
-  const nameToRef = (name: string): CellRef | RangeRef | null => {
-    const ref = wb.definedNames?.get(name) ?? tableBodyRef(wb, name);
+  const nameToRef = (name: string, sheet?: string): CellRef | RangeRef | null => {
+    const ref = nameTarget(wb, name, sheet) ?? tableBodyRef(wb, name);
     return ref ? parseNameRef(ref, defaultSheet ?? "") : null;
   };
   const parser = new FP({
-    onVariable: (name: string) => nameToRef(name),
+    onVariable: (name: string, sheet?: string) => nameToRef(name, sheet),
     onCell: (ref: { sheet?: string; row: number; col: number }) => {
       if (sheetOf(ref.sheet) === null) return FE.REF;
       return typedValue(lookup(ref.sheet, ref.row, ref.col));
@@ -566,6 +576,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
       let f = shiftFormula(formula.replace(/^=/, ""), r - r0, c - c0);
       if (hasTableRef(f)) f = expandTableRefs(f, wb, r);
       if (hasLet(f)) f = expandLet(f);
+      f = expandValueNames(f, wb.definedNames);
       try {
         return parser.parse(f, { row: r, col: c, sheet: sheetName }, false);
       } catch {

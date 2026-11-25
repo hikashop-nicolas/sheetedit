@@ -439,6 +439,10 @@ export interface Workbook {
   /** Workbook-level defined names -> an A1 reference ("Sheet1!A1:A10", "A1"), so recalc
       can resolve named ranges in formulas. */
   definedNames?: Map<string, string>;
+  /** Sheet-scoped names, read so they show and evaluate; the writer leaves them as they are. */
+  localNames?: { name: string; sheet: string; ref: string }[];
+  /** The workbook-level names changed and must be written back. */
+  namesDirty?: boolean;
   /** Named data ranges: xlsx tables and ODF named database ranges, in one shape. */
   tables?: import("./table-ops").TableDef[];
   /** xlsx: pivot caches backed by a worksheet range; a source edit flags one for refresh. */

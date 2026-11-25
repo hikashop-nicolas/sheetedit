@@ -345,7 +345,9 @@ border:5px solid transparent; border-top-color:var(--sheetedit-danger); border-r
 .sheetedit-tb-slot { display:inline-flex; align-items:center; gap:5px; }
 .sheetedit-tb-groupmenu { position:absolute; z-index:45; display:flex; align-items:center; gap:5px; padding:6px 8px; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
 .sheetedit-fxbar { display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--sheetedit-chrome2, #23262c); border-bottom:1px solid var(--sheetedit-border, #1c1f24); position:relative; }
-.sheetedit-fxref { min-width:52px; text-align:center; font:12px/1.6 ui-monospace,monospace; color:var(--sheetedit-muted, #aab2bf); background:var(--sheetedit-chrome, #2b2f36); border-radius:5px; padding:2px 6px; }
+.sheetedit-fxref { width:88px; min-width:52px; box-sizing:border-box; text-align:center; font:12px/1.6 ui-monospace,monospace; color:var(--sheetedit-muted, #aab2bf); background:var(--sheetedit-chrome, #2b2f36); border:1px solid transparent; border-radius:5px; padding:2px 6px; }
+.sheetedit-fxref:focus { text-align:left; color:var(--sheetedit-text, #e7eaf0); background:var(--sheetedit-border, #1c1f24); border-color:var(--sheetedit-accent, #4f8ef7); outline:none; }
+@media (max-width:600px) { .sheetedit-fxref { width:64px; } }
 .sheetedit-fxbtns { position:relative; display:inline-flex; gap:2px; }
 .sheetedit-fxsum { font-weight:700; }
 .sheetedit-fxmenu { position:absolute; top:100%; left:0; z-index:30; display:flex; flex-direction:column; background:var(--sheetedit-chrome, #2b2f36); border:1px solid var(--sheetedit-border, #1c1f24); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.4); padding:4px; }
@@ -499,6 +501,15 @@ background:var(--sheetedit-btn, #3a3f47); color:var(--sheetedit-text, #e6e6e6); 
 }
 .sheetedit-dlg-btn.is-primary { background:var(--sheetedit-accent, #6e7bff); border-color:var(--sheetedit-accent, #6e7bff); color:var(--sheetedit-accent-fg, #fff); }
 .sheetedit-field.is-hidden { display:none; }
+.sheetedit-names-table { width:100%; border-collapse:collapse; margin-bottom:8px; }
+.sheetedit-names-table th { text-align:left; font-weight:600; color:var(--sheetedit-muted, #aab2bf); padding:4px 6px; border-bottom:1px solid var(--sheetedit-btn, #3a4047); }
+.sheetedit-names-table td { padding:4px 6px; border-bottom:1px solid var(--sheetedit-border, #1c1f24); vertical-align:middle; overflow-wrap:anywhere; }
+.sheetedit-names-ref { font-family:ui-monospace,monospace; font-size:12px; }
+.sheetedit-names-tools { white-space:nowrap; text-align:right; }
+.sheetedit-names-tools .sheetedit-dlg-btn { padding:3px 10px; margin-left:4px; }
+.sheetedit-dlg-btn:disabled { opacity:.5; cursor:default; }
+.sheetedit-names-form[hidden], .sheetedit-names .sheetedit-actions[hidden] { display:none; }
+.sheetedit-names-error { margin:0 0 6px; min-height:1em; color:var(--sheetedit-danger, #ff8a8a); font-size:12px; }
 .sheetedit-pivot-menu {
 position:fixed; z-index:80; min-width:150px; padding:4px; font:13px system-ui,sans-serif;
 background:var(--sheetedit-chrome, #2b2f36); color:var(--sheetedit-text, #e6e6e6);

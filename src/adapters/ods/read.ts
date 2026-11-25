@@ -252,11 +252,18 @@ export function readOds(files: Record<string, Uint8Array>): Workbook {
   const wb: Workbook = { kind: "ods", sheets: [], files, contentDoc, contentPath: "content.xml" };
   // Defined names: <table:named-range table:name="X" table:cell-range-address="$Sheet1.$A$1:.$B$2"/>.
   // Convert the ODF address to an A1 reference ("Sheet1!A1:B2") for recalc.
+  // A named range inside a table is that sheet's own; named expressions hold a constant or formula.
   const definedNames = new Map<string, string>();
-  for (const nr of Array.from(contentDoc.getElementsByTagName("table:named-range"))) {
+  const namedEls = [...Array.from(contentDoc.getElementsByTagName("table:named-range")), ...Array.from(contentDoc.getElementsByTagName("table:named-expression"))];
+  for (const nr of namedEls) {
     const name = nr.getAttribute("table:name");
-    const addr = nr.getAttribute("table:cell-range-address");
-    if (name && addr) definedNames.set(name, odfAddrToA1(addr));
+    const range = nr.localName === "named-range";
+    const raw = range ? nr.getAttribute("table:cell-range-address") : nr.getAttribute("table:expression");
+    if (!name || !raw) continue;
+    const target = range ? odfAddrToA1(raw) : odfToA1(raw);
+    const table = nr.parentElement?.parentElement;
+    if (table?.localName === "table") (wb.localNames ??= []).push({ name, sheet: table.getAttribute("table:name") ?? "", ref: target });
+    else definedNames.set(name, target);
   }
   if (definedNames.size) wb.definedNames = definedNames;
   // Workbook structure protection sits on <office:spreadsheet>.
