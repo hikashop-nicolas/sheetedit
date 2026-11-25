@@ -82,6 +82,16 @@ describe("formulas in French", () => {
 });
 
 describe("formulas in German and Spanish", () => {
+  it("round-trips every German and Spanish name", () => {
+    for (const code of ["de", "es"]) {
+      setRegionalLocale(code);
+      for (const en of Object.keys(FUNCTION_NAMES[code]!)) {
+        const f = `${en}(A1,2.5)`;
+        expect(formulaFromLocal(formulaToLocal(f))).toBe(f);
+      }
+    }
+  });
+
   it("translates names and separators", () => {
     setRegionalLocale("de");
     expect(formulaToLocal("IF(SUM(A1:A2)>1.5,TRUE,FALSE)")).toBe("WENN(SUMME(A1:A2)>1,5;WAHR;FALSCH)");
@@ -104,12 +114,22 @@ describe("function name tables", () => {
     // Names French Excel keeps as in English; every other implemented function needs a French name.
     const same = new Set(`ABS ACOS ACOSH ACOT ACOTH ASC ASIN ASINH ATAN ATAN2 ATANH AVERAGEA BAHTTEXT BASE
       BESSELI BESSELJ BESSELK BESSELY CHISQ.TEST CODE COMBIN COMBINA CONCAT COS COSH COT COTH CSC CSCH DATE
-      DATEDIF DB DBCS DDB DECIMAL DELTA DOLLAR ERF ERFC EXACT EXP F.TEST FACT FACTDOUBLE FISHER GAMMA GAUSS
+      DATEDIF DB DBCS DDB DECIMAL DELTA ERF ERFC EXACT EXP F.TEST FACT FACTDOUBLE FISHER GAMMA GAUSS
       INDEX INDIRECT ISO.CEILING LENB LN LOG LOG10 MAX MAXA MIN MINA MINUTE MIRR MOD MODE N NA PEARSON
       PERMUTATIONA PHI PI QUARTILE QUOTIENT RADIANS REPT SEC SECH SEQUENCE SIN SINH STDEVA STDEVPA SYD T
       T.TEST TAN TANH TRANSPOSE TYPE UNICODE UNIQUE VAR VAR.S VARA VARPA Z.TEST`.split(/\s+/));
     const missing = [...implemented].filter((n) => !FUNCTION_NAMES.fr![n] && !same.has(n));
     expect(missing).toEqual([]);
+  });
+
+  it("match Microsoft's names for the tricky ones", () => {
+    const pick = (code: string, names: string[]) => names.map((n) => FUNCTION_NAMES[code]![n]);
+    expect(pick("fr", ["MIRR", "TRIM", "NORM.DIST", "MAXIFS", "DOLLAR", "FINDB"])).toEqual(
+      ["TRIM", "SUPPRESPACE", "LOI.NORMALE.N", "MAX.SI.ENS", "DEVISE", "TROUVERB"]);
+    expect(pick("de", ["ACOS", "SWITCH", "COUNTBLANK", "T.DIST.2T", "LENB", "Z.TEST"])).toEqual(
+      ["ARCCOS", "ERSTERWERT", "ANZAHLLEEREZELLEN", "T.VERT.2S", "LÄNGEB", "G.TEST"]);
+    expect(pick("es", ["AND", "FIXED", "TIME", "NORM.S.DIST", "T.TEST", "BITOR"])).toEqual(
+      ["Y", "DECIMAL", "NSHORA", "DISTR.NORM.ESTAND.N", "PRUEBA.T.N", "BIT.O"]);
   });
 
   it("never give two functions the same local name", () => {
