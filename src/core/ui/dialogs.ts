@@ -1,6 +1,7 @@
 import { colToLetters, getCell, parseA1Ref, type CfRule, type ShapeGeom, type Sheet, type Workbook } from "../model";
 import { isDateFmt } from "../dates";
 import { formulaFromLocal, listFromLocal, listToLocal, operandFromLocal, operandToLocal, type OperandKind } from "../formula-locale";
+import { regional } from "../regional";
 import { t } from "../i18n";
 import { newDrawingId } from "../sheet-ops";
 import { formDialog, type FormField } from "./form-dialog";
@@ -98,7 +99,7 @@ export function setupDialogs(ctx: DialogCtx): {
     const opOpts = [["between", t("dvOpBetween")], ["notBetween", t("dvOpNotBetween")], ["greaterThanOrEqual", "≥"], ["lessThanOrEqual", "≤"], ["greaterThan", ">"], ["lessThan", "<"], ["equal", "="], ["notEqual", "≠"]];
     dialog(t("dvEdit"), [
       { key: "type", label: t("dvType"), type: "select", value: curType, options: typeOpts },
-      { key: "values", label: t("dvList"), type: "text", value: cur?.values ? listToLocal(cur.values) : "", showFor: { key: "type", values: ["list"] } },
+      { key: "values", label: t(regional().argSep === ";" ? "dvListSemi" : "dvList"), type: "text", value: cur?.values ? listToLocal(cur.values) : "", showFor: { key: "type", values: ["list"] } },
       { key: "range", label: t("dvRange"), type: "text", value: cur?.rangeRef ?? "", showFor: { key: "type", values: ["list"] } },
       { key: "op", label: t("dvOp"), type: "select", value: cur?.operator ?? "between", options: opOpts.map(([v2, l]) => ({ value: v2!, label: l! })), showFor: { key: "type", values: compared } },
       { key: "v1", label: t("dvValue1"), type: "text", value: compared.includes(curType) ? operandToLocal(cur?.formula1, kindOf(curType)) : "", showFor: { key: "type", values: compared } },

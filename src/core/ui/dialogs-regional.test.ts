@@ -107,6 +107,15 @@ describe("the data validation dialog in French", () => {
     expect(sheetXml(wb)).toContain('<formula1>"oui,non,1.5"</formula1>');
     h.dialogs.openDvDialog();
     expect(h.field("values").value).toBe("oui;non;1,5");
+    // The list's label names the separator it is read with: ";" here, "," with English conventions.
+    const label = () => h.field("values").closest("label, .sheetedit-dialog-row, div")?.textContent ?? "";
+    expect(label()).toContain("points-virgules");
+    h.cancel();
+    setRegionalLocale("en");
+    h.dialogs.openDvDialog();
+    expect(label()).toContain("virgules");
+    expect(label()).not.toContain("points-virgules");
+    expect(h.field("values").value).toBe("oui,non,1.5");
     h.cancel();
   });
 });
