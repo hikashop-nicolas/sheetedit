@@ -16,13 +16,16 @@ interface Tables {
 
 const cache = new Map<string, { to: Tables; from: Tables }>();
 
+// Case-insensitive name key; Turkish İ folds to I, so "tarihsayısı" finds TARİHSAYISI.
+const nameKey = (s: string): string => s.toUpperCase().replace(/\u0130/g, "I");
+
 function tables(r: Regional): { to: Tables; from: Tables } {
   let t = cache.get(r.code);
   if (t) return t;
   const to = new Map<string, string>(), from = new Map<string, string>();
   for (const [en, local] of Object.entries(r.fn)) {
     to.set(en, local);
-    from.set(local.toUpperCase(), en);
+    from.set(nameKey(local), en);
   }
   const errTo = INV_ERRORS.map((e) => [e, r.errors[e] ?? e] as [string, string]);
   const errFrom = errTo.map(([a, b]) => [b, a] as [string, string]).sort((a, b) => b[0].length - a[0].length);
@@ -104,7 +107,7 @@ function translate(f: string, r: Regional, toLocal: boolean): string {
       const name = f.slice(i, j);
       if (f[j] === "(") {
         const m = /^((?:_xl[a-z]+\.)*)(.+)$/i.exec(name)!;
-        const mapped = tb.fn.get(m[2]!.toUpperCase());
+        const mapped = tb.fn.get(nameKey(m[2]!));
         out += mapped != null ? m[1]! + mapped : name;
       } else if (boolSrc && boolDst && f[j] !== "!" && prev !== "!" && boolSrc.includes(name.toUpperCase())) {
         out += boolDst[boolSrc.indexOf(name.toUpperCase())];

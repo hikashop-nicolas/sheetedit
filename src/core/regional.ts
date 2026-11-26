@@ -79,6 +79,48 @@ const REGIONS: Record<string, Regional> = {
       ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"],
     ],
   },
+  it: {
+    ...commaBase, code: "it", group: ".", dateSep: "/", shortDate: "dd/mm/yyyy",
+    fn: FUNCTION_NAMES.it!, bool: ["VERO", "FALSO"],
+    errors: { "#NULL!": "#NULLO!", "#VALUE!": "#VALORE!", "#REF!": "#RIF!", "#NAME?": "#NOME?", "#N/A": "#N/D" },
+    months: [
+      ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"],
+      ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"],
+    ],
+    days: [
+      ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"],
+      ["dom", "lun", "mar", "mer", "gio", "ven", "sab"],
+    ],
+  },
+  pl: {
+    ...commaBase, code: "pl", group: " ", dateSep: ".", shortDate: "dd.mm.yyyy",
+    fn: FUNCTION_NAMES.pl!, bool: ["PRAWDA", "FAŁSZ"],
+    errors: { "#NULL!": "#ZERO!", "#DIV/0!": "#DZIEL/0!", "#VALUE!": "#ARG!", "#REF!": "#ADR!", "#NAME?": "#NAZWA?", "#NUM!": "#LICZBA!", "#N/A": "#N/D!" },
+    months: [
+      ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzień"],
+      ["sty", "lut", "mar", "kwi", "maj", "cze", "lip", "sie", "wrz", "paź", "lis", "gru"],
+    ],
+    days: [
+      ["niedziela", "poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota"],
+      ["niedz.", "pon.", "wt.", "śr.", "czw.", "pt.", "sob."],
+    ],
+  },
+  tr: {
+    ...commaBase, code: "tr", group: ".", dateSep: ".", shortDate: "dd.mm.yyyy",
+    fn: FUNCTION_NAMES.tr!, bool: ["DOĞRU", "YANLIŞ"],
+    errors: { "#NULL!": "#BOŞ!", "#DIV/0!": "#SAYI/0!", "#VALUE!": "#DEĞER!", "#REF!": "#BAŞV!", "#NAME?": "#AD?", "#NUM!": "#SAYI!", "#N/A": "#YOK" },
+    months: [
+      ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"],
+      ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"],
+    ],
+    days: [
+      ["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"],
+      ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"],
+    ],
+  },
+  // Korean Excel keeps English function names, separators, TRUE/FALSE and mmm/ddd names
+  // (as Japanese does); only the built-in short date follows the region.
+  ko: { ...INVARIANT, code: "ko", shortDate: "yyyy-mm-dd" },
   pt: { ...commaBase, code: "pt", group: ".", dateSep: "/", shortDate: "dd/mm/yyyy", fn: {}, errors: {} },
   ru: { ...commaBase, code: "ru", group: " ", dateSep: ".", shortDate: "dd.mm.yyyy", fn: {}, errors: {} },
 };
@@ -160,8 +202,10 @@ export function localizeDateNames(s: string, r: Regional = regional()): string {
 /** The format a cell shows with locally: the built-in short date follows the region. */
 export function localFormat(fmt: string | number, r: Regional = regional()): string | number {
   if (!r.shortDate) return fmt;
-  if (fmt === 14) return r.shortDate;
-  if (fmt === 22) return `${r.shortDate} hh:mm`;
+  // SSF reads "dd.mm" as a decimal point: the dots must be literal.
+  const d = r.shortDate.replace(/\./g, "\\.");
+  if (fmt === 14) return d;
+  if (fmt === 22) return `${d} hh:mm`;
   return fmt;
 }
 

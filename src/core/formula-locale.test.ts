@@ -122,6 +122,35 @@ describe("function name tables", () => {
     expect(missing).toEqual([]);
   });
 
+  it("cover the functions the engine implements, in Italian, Polish and Turkish", () => {
+    const p = new FormulaParser({}) as unknown as { functions: Record<string, unknown> };
+    const implemented = new Set([
+      ...Object.keys(p.functions),
+      ...Object.keys(extraFunctions()),
+      ...Object.keys(financialFunctions()),
+      ...Object.keys(referenceFunctions()),
+    ]);
+    // Names each Excel keeps as in English (Microsoft's articles); every other one needs a local name.
+    const same: Record<string, string> = {
+    it: `ASC BASE BITAND BITOR BITXOR CONCAT COS COSH COT COTH CSC CSCH DBCS DELTA EXP FISHER GAMMA GAUSS
+      INT LN LOG LOG10 MAX MIN PEARSON PERCENTILE PHI QUARTILE SEC SECH SWITCH T TAN TANH UNICODE VAR
+      VAR.P XOR`,
+    pl: `ACOS ACOSH ACOT ACOTH ASC ASIN ASINH ATAN ATAN2 ATANH BITAND BITOR BITXOR COS COSH COT COTH CSC
+      CSCH DB DBCS DDB ENCODEURL EXP F.TEST FILTERXML FV GAMMA GAUSS INFO IPMT IRR LN LOG LOG10 MAX
+      MIN MIRR MOD N NPER NPV PEARSON PHI PHONETIC PI PMT PPMT PV RATE SEC SECH SIN SINH SLN SYD T
+      T.TEST TAN TANH UNICODE WEBSERVICE XIRR XNPV XOR Z.TEST`,
+    tr: `ACOS ACOSH ACOT ACOTH ASC ATAN ATAN2 ATANH BESSELI BESSELJ BESSELK BESSELY BIN2DEC BIN2HEX
+      BIN2OCT COS COSH COT COTH CSC CSCH DBCS DEC2BIN DEC2HEX DEC2OCT DELTA F.TEST FISHER GAUSS
+      HEX2BIN HEX2DEC HEX2OCT LN LOG LOG10 MOD OCT2BIN OCT2DEC OCT2HEX PEARSON PHI RANK SEC SECH
+      T.TEST TAN TANH UNICODE VAR VAR.P VAR.S VARA Z.TEST`,
+    };
+    for (const [code, list] of Object.entries(same)) {
+      const keep = new Set(list.split(/\s+/));
+      const missing = [...implemented].filter((n) => !FUNCTION_NAMES[code]![n] && !keep.has(n));
+      expect(missing, code).toEqual([]);
+    }
+  });
+
   it("match Microsoft's names for the tricky ones", () => {
     const pick = (code: string, names: string[]) => names.map((n) => FUNCTION_NAMES[code]![n]);
     expect(pick("fr", ["MIRR", "TRIM", "NORM.DIST", "MAXIFS", "DOLLAR", "FINDB"])).toEqual(
@@ -130,6 +159,12 @@ describe("function name tables", () => {
       ["ARCCOS", "ERSTERWERT", "ANZAHLLEEREZELLEN", "T.VERT.2S", "LÄNGEB", "G.TEST"]);
     expect(pick("es", ["AND", "FIXED", "TIME", "NORM.S.DIST", "T.TEST", "BITOR"])).toEqual(
       ["Y", "DECIMAL", "NSHORA", "DISTR.NORM.ESTAND.N", "PRUEBA.T.N", "BIT.O"]);
+    expect(pick("it", ["IFNA", "SUMPRODUCT", "COLUMN", "REPLACE", "PV", "LENB"])).toEqual(
+      ["SE.NON.DISP.", "MATR.SOMMA.PRODOTTO", "RIF.COLONNA", "RIMPIAZZA", "VA", "LUNGB"]);
+    expect(pick("pl", ["ABS", "AND", "COUNTIF", "GROWTH", "ROWS", "ISNA"])).toEqual(
+      ["MODUŁ.LICZBY", "ORAZ", "LICZ.JEŻELI", "REGEXPW", "ILE.WIERSZY", "CZY.BRAK"]);
+    expect(pick("tr", ["OR", "SWITCH", "TIMEVALUE", "MID", "MIDB", "XLOOKUP"])).toEqual(
+      ["YADA", "İLKEŞLEŞEN", "ZAMANSAYISI", "PARÇAAL", "ORTAB", "ÇAPRAZARA"]);
   });
 
   it("never give two functions the same local name", () => {

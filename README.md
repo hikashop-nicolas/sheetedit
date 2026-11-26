@@ -39,9 +39,9 @@ extracted from this project), all MIT. The Power Query engine
 assistant ([`localml`](https://github.com/hikashop-nicolas/localml)) are lazy-loaded
 only when their features are used, so they stay out of the base bundle.
 
-The UI is **multilingual**: English, French, Japanese, Spanish, German, Portuguese, Russian and Simplified Chinese,
-auto-detected from the browser with an English fallback. `setLocale()` forces one, and a host
-can override individual strings.
+The UI is **multilingual**: English, French, Japanese, Spanish, German, Portuguese, Russian,
+Simplified Chinese, Italian, Polish, Korean and Turkish, auto-detected from the browser with an
+English fallback. `setLocale()` forces one, and a host can override individual strings.
 
 ## Regional conventions
 
@@ -50,18 +50,22 @@ cell shows `1 234,5` and `25/11/2026`, takes `1 234,5` or `3,25` as numbers, and
 type as `=SOMME(A1:A3;0,5)` or `=SI(NB.SI(A:A;"x")>0;VRAI;FAUX)`. The workbook keeps the invariant
 form (`SUM(A1:A3,0.5)`, `.` decimals), exactly as Excel stores it, so files stay portable.
 
-- Function names: French covers every function sheetedit implements; German and Spanish cover
-  the everyday ones (others stay in English). English names typed anywhere still work, unless the
-  language uses that word for another function (French `TRIM` is `MIRR`, as in French Excel).
-- Separators: `;` between arguments and a decimal comma for French, German, Spanish,
-  Portuguese and Russian; array constants use `.` between columns and `;` between rows.
+- Function names: French, Italian, Polish and Turkish cover every function sheetedit implements
+  (`=SOMMA(A1;0,5)`, `=SUMA(A1;0,5)`, `=TOPLA(A1;0,5)`); German and Spanish cover the everyday
+  ones (others stay in English). Korean keeps the English names, as Korean Excel does. English
+  names typed anywhere still work, unless the language uses that word for another function
+  (French `TRIM` is `MIRR`, as in French Excel).
+- Separators: `;` between arguments and a decimal comma for French, German, Spanish, Italian,
+  Polish, Turkish, Portuguese and Russian; array constants use `.` between columns and `;`
+  between rows.
 - Rule dialogs: data validation and conditional formatting take and show bounds, values and
   formulas the same way (`3,5`, `25/11/2026`, `=ET(A1>0;A1<10)`, a list typed `oui;non`), store
   them as Excel does (`3.5`, the date serial, `AND(A1>0,A1<10)`, `"oui,non"`), and reopen on the
   rule that holds the selection to edit it. Find and replace, and chart labels, follow suit.
-- Display: decimal and thousands separators, the built-in short date, month and day names,
-  `VRAI`/`FAUX` and error codes such as `#VALEUR!`. An `.ods` cell keeps the text its producer
-  wrote unless it is plain English formatting. CSV files are shown and edited as written.
+- Display: decimal and thousands separators, the built-in short date (`25/11/2026` in Italian,
+  `25.11.2026` in Polish and Turkish, `2026-11-25` in Korean), month and day names, `VRAI`/`FAUX`
+  (`VERO`, `PRAWDA`, `DOĞRU`) and error codes such as `#VALEUR!`. An `.ods` cell keeps the text
+  its producer wrote unless it is plain English formatting. CSV files are shown and edited as written.
 
 The conventions follow the UI locale (`setLocale()`); `setRegionalLocale("en")` keeps English
 formulas and numbers under a translated UI, and `setRegionalLocale(null)` follows the UI again.
