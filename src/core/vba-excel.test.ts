@@ -154,6 +154,41 @@ describe("Range navigation", () => {
   });
 });
 
+describe("Range.End", () => {
+  // A1:A3 filled, A4:A5 empty, A6 filled; B1 alone on row 1, D1 after a gap.
+  const wb = (): Workbook => bareWorkbook([[1, 2, "", 4], [1], [1], [""], [""], [1]]);
+  const end = (from: string, dir: string, w = wb()) => evalIn(`Range("${from}").End(${dir}).Address(False, False)`, w);
+
+  it("runs to the edge of a filled block", () => {
+    expect(end("A1", "xlDown")).toBe("A3");
+    expect(end("A3", "xlUp")).toBe("A1");
+    expect(end("A1", "xlToRight")).toBe("B1");
+  });
+
+  it("jumps over empty cells to the next filled one", () => {
+    expect(end("A3", "xlDown")).toBe("A6");
+    expect(end("A6", "xlUp")).toBe("A3");
+    expect(end("B1", "xlToRight")).toBe("D1");
+    expect(end("A4", "xlDown")).toBe("A6");
+  });
+
+  it("stops at the sheet edge when nothing is filled that way", () => {
+    expect(end("A6", "xlDown")).toBe("A1048576");
+    expect(end("D1", "xlToRight")).toBe("XFD1");
+    expect(end("A1", "xlUp")).toBe("A1");
+    expect(end("A1", "xlToLeft")).toBe("A1");
+    expect(end("C10", "xlUp")).toBe("C1");
+  });
+
+  it("finds the last used row, the classic idiom", () => {
+    expect(evalIn('Cells(Rows.Count, 1).End(xlUp).Row', wb())).toBe(6);
+  });
+
+  it("refuses a direction that is not one of the four", () => {
+    expect(() => end("A1", "3")).toThrow();
+  });
+});
+
 describe("Worksheets", () => {
   const two = (): Workbook => {
     const wb = bareWorkbook([[1]]);

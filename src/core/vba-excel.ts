@@ -320,6 +320,38 @@ export class RangeObject implements VbaObject {
         return new RangeObject(this.host, this.sheetIndex,
           this.areas.map((a) => ({ r1: a.r1 + dr, c1: a.c1 + dc, r2: a.r2 + dr, c2: a.c2 + dc })));
       }
+      case "end": {
+        // Ctrl+arrow: to the far edge of a filled block, else to the next filled cell or the sheet edge.
+        const dir = args[0] !== undefined ? toNumber(args[0]) : NaN;
+        const step = dir === -4162 ? [-1, 0] : dir === -4121 ? [1, 0] : dir === -4159 ? [0, -1] : dir === -4161 ? [0, 1] : null;
+        if (!step) throw new VbaError("Range.End needs xlUp, xlDown, xlToLeft or xlToRight", 5);
+        const [dr, dc] = step as [number, number];
+        const sheet = this.sheet;
+        const lastRow = this.host.wb.xls ? 65536 : MAX_ROW;
+        const lastCol = this.host.wb.xls ? 256 : MAX_COL;
+        const filled = (r: number, c: number): boolean => {
+          const cell = getCell(sheet, r, c);
+          return !!cell && (!!cell.formula || (cell.value != null && cell.value !== ""));
+        };
+        const inside = (r: number, c: number): boolean => r >= 1 && c >= 1 && r <= lastRow && c <= lastCol;
+        const usedRow = Math.max(1, sheet.maxRow), usedCol = Math.max(1, sheet.maxCol);
+        let { r1: r, c1: c } = this.first;
+        if (filled(r, c) && inside(r + dr, c + dc) && filled(r + dr, c + dc)) {
+          while (inside(r + dr, c + dc) && filled(r + dr, c + dc)) { r += dr; c += dc; }
+        } else {
+          // Coming back from beyond the used area, skip the empty stretch.
+          if (dr < 0 && r > usedRow + 1) r = usedRow + 1;
+          if (dc < 0 && c > usedCol + 1) c = usedCol + 1;
+          for (;;) {
+            if (!inside(r + dr, c + dc)) break;
+            r += dr; c += dc;
+            if (filled(r, c)) break;
+            // Past the used area nothing is filled: jump straight to the edge.
+            if ((dr > 0 && r > usedRow) || (dc > 0 && c > usedCol)) { r = dr > 0 ? lastRow : r; c = dc > 0 ? lastCol : c; break; }
+          }
+        }
+        return new RangeObject(this.host, this.sheetIndex, [{ r1: r, c1: c, r2: r, c2: c }]);
+      }
       case "resize": {
         const a = this.first;
         const rows = args[0] !== undefined ? toNumber(args[0]) : a.r2 - a.r1 + 1;
@@ -1346,7 +1378,9 @@ export function excelGlobals(host: ExcelHost, fileName = "workbook"): Map<string
   // these are thin objects that resolve it at the moment of the call.
   const bare = (member: string): VbaObject => ({
     typeName: "Range",
-    get: (_n, args) => activeSheetObj().get(member, args),
+    // `Rows(3)` calls the member; `Rows.Count` asks the active sheet's Rows for its Count.
+    get: (n, args) => n === "" ? activeSheetObj().get(member, args)
+      : (activeSheetObj().get(member, []) as VbaObject).get(n, args),
   });
 
   map.set("APPLICATION", new ApplicationObject(host, self));
