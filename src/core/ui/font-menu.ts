@@ -2,7 +2,7 @@
 // Detection, the catalog, consent and its dialogs live in fontshelf.
 import {
   BASE_FONTS, addDocumentFonts, buildFontGroups, canDraw, cssFamily, fontT, getFontState, isAdded,
-  onFontsChange, requestRemoteFont, restoreFonts, setRemoteEnabled, showFontToast, showInstalledFonts,
+  onFontsChange, requestFontFile, requestRemoteFont, restoreFonts, setRemoteEnabled, showFontToast, showInstalledFonts,
 } from "fontshelf";
 import type { FontOptions } from "../fonts";
 
@@ -40,6 +40,7 @@ export function createFontMenu(deps: FontMenuDeps): FontMenu {
   const { wrap, button } = deps;
   const remote = !!deps.fontOptions?.remote && deps.fontOptions.remote.provider === "google";
   const localOn = deps.fontOptions?.local !== false;
+  const fileOn = deps.fontOptions?.file !== false;
   if (remote) setRemoteEnabled(true);
   let docFonts = [...deps.docFonts];
   let unregister = addDocumentFonts(docFonts);
@@ -104,6 +105,7 @@ export function createFontMenu(deps: FontMenuDeps): FontMenu {
     }
     const actions: HTMLElement[] = [];
     if (localOn && !st.installedFull) actions.push(item(fontT("fontsShowMine"), "menuitem", () => { done(); void showMine(); }));
+    if (fileOn) actions.push(item(fontT("fontsLoadFile"), "menuitem", () => { done(); void loadFile(); }));
     if (remote) actions.push(item(fontT("fontsGetMore"), "menuitem", () => { done(); void getMore(); }));
     if (actions.length) parts.push(heading(fontT("fontsMore")), ...actions);
     const keepScroll = menu.scrollTop;
@@ -123,13 +125,20 @@ export function createFontMenu(deps: FontMenuDeps): FontMenu {
     const n = all.length - before;
     notify(n > 0 ? fontT("fontsFound", { n }) : fontT("fontsNoneFound"));
   };
-  const getMore = async (): Promise<void> => {
-    deps.captureSel?.();
-    const family = await requestRemoteFont({ container: wrap });
+  const picked = (family: string | null): void => {
     if (!family || disposed) return;
     render();
     deps.restoreSel?.();
     deps.apply(family);
+  };
+  const getMore = async (): Promise<void> => {
+    deps.captureSel?.();
+    picked(await requestRemoteFont({ container: wrap }));
+  };
+  // The file input opens in this click, so the browser allows it.
+  const loadFile = async (): Promise<void> => {
+    deps.captureSel?.();
+    picked(await requestFontFile({ container: wrap, notify }));
   };
 
   // Keyboard: arrows, Home/End move between items, Escape closes back to the button.

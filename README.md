@@ -431,12 +431,14 @@ shared with the other editors on the page. It lists the workbook's own fonts fir
 font, the theme's heading and body fonts, cell styles and rich-text runs), marking the ones this
 device cannot draw "(not installed)", then the common fonts the browser can actually draw.
 "Show my fonts" lists the fonts installed on the device (the Local Font Access API behind its own
-permission prompt, else canvas probing; nothing leaves the device). "Get more fonts" downloads
+permission prompt, else canvas probing; nothing leaves the device). "Load a font file" takes a
+.ttf, .otf, .ttc, .woff or .woff2 from the device, kept for later sessions. "Get more fonts" downloads
 families from Google Fonts after an in-app consent; it is **off by default**:
 
 ```ts
 createSheetEditor(container, bytes, { fonts: { remote: { provider: "google" } } });
-// fonts: { local?: boolean (default true); remote?: false | { provider: "google" } (default false) }
+// fonts: { local?: boolean (default true); file?: boolean (default true);
+//          remote?: false | { provider: "google" } (default false) }
 ```
 
 Added families are remembered on the origin and loaded again on the next mount, as are catalog

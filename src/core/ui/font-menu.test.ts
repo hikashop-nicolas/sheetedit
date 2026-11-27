@@ -8,6 +8,7 @@ import { getFontLocale } from "fontshelf";
 describe("the font menu", () => {
   beforeEach(() => {
     (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("fontshelf.state.v1")] = undefined;
+    (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("fontshelf.loaded.v1")] = undefined;
     const mem = new Map<string, string>();
     vi.stubGlobal("localStorage", { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) });
   });
@@ -79,6 +80,24 @@ describe("the font menu", () => {
     button.click();
     await Promise.resolve();
     expect(button.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("loads a font file from the menu and applies its family", async () => {
+    vi.stubGlobal("indexedDB", undefined);
+    const { items, apply, wrap } = mount();
+    expect(mount({ file: false }).labels()).not.toContain("Load a font file…");
+    let input: HTMLInputElement | null = null;
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) { input = this; });
+    items().find((b) => b.textContent === "Load a font file…")!.click();
+    expect(input!.type).toBe("file");
+    expect(wrap.contains(input)).toBe(true);
+    // An sfnt with no tables: the family comes from the file name.
+    const bytes = new Uint8Array(12);
+    new DataView(bytes.buffer).setUint32(0, 0x00010000);
+    Object.defineProperty(input!, "files", { value: [new File([bytes], "Sheet Face.ttf")] });
+    input!.dispatchEvent(new Event("change"));
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith("Sheet Face"));
+    click.mockRestore();
   });
 
   it("follows the workbook's fonts as sheets load", () => {

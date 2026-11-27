@@ -5,6 +5,8 @@ import type { CellStyle, Workbook } from "./model";
 export interface FontOptions {
   /** Offer "Show my fonts" (installed fonts, found on the device; nothing is sent). Default true. */
   local?: boolean;
+  /** Offer "Load a font file" (.ttf, .otf, .ttc, .woff, .woff2, kept for later sessions). Default true. */
+  file?: boolean;
   /** Offer "Get more fonts" from Google Fonts after an in-app consent. Default off. */
   remote?: false | { provider: "google" };
 }
