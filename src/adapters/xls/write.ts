@@ -500,7 +500,19 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
         else a.u16(2).u8(0x1c).u8(0x2a);
         rs.rec(0x0221, a);
       }
-      if (str != null) rs.rec(0x0207, body().str16(str));
+      if (str != null) {
+        // A long result continues in CONTINUE records, each restarting with its own flag byte.
+        const wide = /[^\u0000-ÿ]/.test(str);
+        const per = wide ? Math.floor((MAX_REC - 4) / 2) : MAX_REC - 4;
+        rs.rec(0x0207, body().u16(str.length).chars(str.slice(0, per)));
+        const more = wide ? Math.floor((MAX_REC - 1) / 2) : MAX_REC - 1;
+        for (let o = per; o < str.length; o += more) {
+          const part = str.slice(o, o + more);
+          const b = body().u8(wide ? 1 : 0);
+          for (let i = 0; i < part.length; i++) { const code = part.charCodeAt(i); if (wide) b.u16(code); else b.u8(code); }
+          rs.rec(0x003c, b);
+        }
+      }
       return;
     }
     switch (cell.kind) {

@@ -100,4 +100,12 @@ describe("xls write", () => {
     for (let r = 30; r < 2030; r += 97) expect(getCell(back, r, 1)?.value).toBe(`row ${r} ` + "é".repeat(r % 40) + "x".repeat(r % 13));
     expect(getCell(back, 2040, 1)?.value).toBe("z".repeat(20000));
   });
+
+  it("keeps a long formula text result across CONTINUE records", () => {
+    const wb = readWorkbook(fixture());
+    const s = wb.sheets[0]!;
+    setCellInput(s, 30, 1, '=REPT("aé",6000)');
+    const back = readWorkbook(writeWorkbook(wb)).sheets[0]!;
+    expect(getCell(back, 30, 1)?.value).toBe("aé".repeat(6000));
+  });
 });
