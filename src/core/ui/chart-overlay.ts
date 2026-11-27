@@ -242,9 +242,16 @@ function toConfig(model: ChartModel, wb: Workbook): unknown {
     : undefined;
   if (scales && hasSecondary) scales.y1 = { position: "right", grid: { drawOnChartArea: false } };
   if (isSurface && scales) scales.y = { display: false }; // the heatmap draws its own rows
+  // A chart with no category range numbers its points 1, 2, 3, as Excel does; without labels a
+  // category chart plots nothing.
+  function pointLabels(): string[] | undefined {
+    if (model.kind === "scatter" || model.kind === "bubble") return undefined;
+    const n = Math.max(0, ...model.series.map((s) => numbers(wb, s.values).length));
+    return n ? Array.from({ length: n }, (_, i) => String(i + 1)) : undefined;
+  }
   return {
     type,
-    data: { labels: isOfPie ? ofPieLabels : (cats.length && !xDate ? cats : undefined), datasets },
+    data: { labels: isOfPie ? ofPieLabels : (cats.length && !xDate ? cats : xDate ? undefined : pointLabels()), datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
