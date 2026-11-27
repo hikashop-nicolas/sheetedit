@@ -9,9 +9,9 @@ import { allowRawRefs, fixBlankCompare, fixBlankResults, fixIndexSheet, referenc
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
-import { expandValueNames, findName } from "./names";
+import { expandValueNames, findName, forgetValueNames } from "./names";
 import { SPAN_FUNCTIONS, expandSheetSpans, type SheetExtent } from "./sheet-span";
-import { hasAnchoredLine, unanchorLines } from "./whole-lines";
+import { cutWholeColumnArgs, hasAnchoredLine, unanchorLines } from "./whole-lines";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
@@ -99,6 +99,16 @@ function capRange(from: Pos, to: Pos, sheetName: string | undefined, extentOf: S
   if ((to.row - from.row + 1) * (to.col - from.col + 1) <= HUGE_RANGE || sheetName == null) return to;
   const ext = extentOf(sheetName) ?? { rows: from.row, cols: from.col };
   return { row: Math.max(from.row, Math.min(to.row, ext.rows)), col: Math.max(from.col, Math.min(to.col, ext.cols)) };
+}
+
+// Parsed dependencies per (cell, prepared formula), kept across passes: an edit re-parses only
+// what changed. Names resolve at parse time, so a change to them starts a fresh cache.
+const depCaches = new WeakMap<Workbook, { sig: string; map: Map<string, Array<Record<string, unknown>>> }>();
+function depCacheOf(wb: Workbook): Map<string, Array<Record<string, unknown>>> {
+  const sig = JSON.stringify([[...(wb.definedNames ?? [])], wb.localNames ?? [], wb.tables?.length ?? 0]);
+  let c = depCaches.get(wb);
+  if (!c || c.sig !== sig) depCaches.set(wb, (c = { sig, map: new Map() }));
+  return c.map;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +346,7 @@ export interface RecalcOptions {
 
 /** Recompute every formula cell's cached value, in dependency order. */
 export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
+  forgetValueNames(wb.definedNames); // a name may point elsewhere since the last pass
   const FP = FormulaParser as unknown as {
     new (config: unknown): { parse(f: string, pos: unknown, allowReturnArray?: boolean): unknown };
     DepParser: new (config: unknown) => { parse(f: string, pos: unknown): Array<Record<string, unknown>> };
@@ -393,20 +404,39 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
 
   /** What the parser actually sees: LET expanded, and structured table references turned into the
       plain ranges they name. Both are textual rewrites the engine has no notion of. */
+  // The dependency pass and the evaluation pass prepare the same text: do it once.
+  const prepared = new Map<string, string>();
   const prepare = (formula: string, row: number): string => {
+    const key = `${usedRows()}|${hasTableRef(formula) ? row : ""}|${formula}`;
+    const hit = prepared.get(key);
+    if (hit !== undefined) return hit;
+    const out = prepareOnce(formula, row);
+    prepared.set(key, out);
+    return out;
+  };
+  const prepareOnce = (formula: string, row: number): string => {
     let f = formula;
     if (hasTableRef(f)) f = expandTableRefs(f, wb, row);
     if (hasLet(f)) f = expandLet(f);
     f = expandSheetSpans(expandValueNames(f, wb.definedNames), sheetNames, extentOf);
-    return hasAnchoredLine(f) ? unanchorLines(f) : f;
+    if (hasAnchoredLine(f)) f = unanchorLines(f);
+    return cutWholeColumnArgs(f, usedRows());
   };
 
   const depParser = new FP.DepParser({ onVariable: (name: string, sheet?: string) => nameToRef(name, sheet) });
+  const depCache = depCacheOf(wb);
   for (const node of nodes) {
     let refs: Array<Record<string, unknown>> = [];
     try {
       const depSrc = prepare(node.cell.formula!, node.cell.row);
-      refs = depParser.parse(depSrc, { row: node.cell.row, col: node.cell.col, sheet: node.sheet.name });
+      const key = `${node.sheet.name}\u0001${node.cell.row}:${node.cell.col}\u0001${depSrc}`;
+      const hit = depCache.get(key);
+      if (hit) refs = hit;
+      else {
+        refs = depParser.parse(depSrc, { row: node.cell.row, col: node.cell.col, sheet: node.sheet.name });
+        if (depCache.size > 200000) depCache.clear();
+        depCache.set(key, refs);
+      }
     } catch {
       refs = [];
     }
@@ -660,6 +690,7 @@ export interface FormulaEvaluator {
 }
 
 export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
+  forgetValueNames(wb.definedNames);
   const FP = FormulaParser as unknown as {
     new (config: unknown): { parse(f: string, pos: unknown, allowReturnArray?: boolean): unknown };
   };
@@ -711,6 +742,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
       if (hasLet(f)) f = expandLet(f);
       f = expandSheetSpans(expandValueNames(f, wb.definedNames), wb.sheets.map((s) => s.name), extentOf);
       if (hasAnchoredLine(f)) f = unanchorLines(f);
+      f = cutWholeColumnArgs(f, usedRows());
       try {
         cutWhole = wholeColumnsCuttable(f);
         return parser.parse(f, { row: r, col: c, sheet: sheetName }, false);

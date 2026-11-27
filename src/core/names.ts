@@ -147,6 +147,11 @@ export function renameInFormula(formula: string, from: string, to: string): stri
 export const isRangeName = (ref: string): boolean => parseRangeRef(ref) != null;
 
 const valueCache = new WeakMap<Map<string, string>, { size: number; values: Map<string, string> | null }>();
+
+/** Drop the cached value names, which a name pointed elsewhere (same count) would keep stale. */
+export const forgetValueNames = (names: Map<string, string> | undefined): void => {
+  if (names) valueCache.delete(names);
+};
 function valueNames(names: Map<string, string>): Map<string, string> | null {
   const hit = valueCache.get(names);
   if (hit && hit.size === names.size) return hit.values;
