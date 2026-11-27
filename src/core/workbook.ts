@@ -12,7 +12,7 @@ import { writeOdsSparklines } from "../adapters/ods/sparkline-write";
 import { writeOdsShapes } from "../adapters/ods/shape-write";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
-import { looksLikeXls, readXls } from "../adapters/xls";
+import { looksLikeXls, readXls, writeXls } from "../adapters/xls";
 // ---------------------------------------------------------------------------
 // Public read / write
 // ---------------------------------------------------------------------------
@@ -129,6 +129,7 @@ type Packable = { bytes: Uint8Array } | { files: Zippable };
 function assembleWorkbook(wb: Workbook): Packable {
   recalc(wb);
   if (wb.kind === "csv") return { bytes: strToU8(writeCsv(wb)) };
+  if (wb.xls) return { bytes: writeXls(wb) };
   if (wb.kind === "xlsx") {
     writeXlsx(wb);
     dropStaleCalcChain(wb);

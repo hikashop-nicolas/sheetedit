@@ -308,7 +308,7 @@ function addDxf(wb: Workbook, fillHex: string): number {
 }
 
 /** The equivalent formula Excel stores alongside a timePeriod cfRule (a is the range's top-left cell). */
-function timePeriodFormula(period: string, a: string): string {
+export function timePeriodFormula(period: string, a: string): string {
   switch (period) {
     case "today": return `FLOOR(${a},1)=TODAY()`;
     case "yesterday": return `FLOOR(${a},1)=TODAY()-1`;

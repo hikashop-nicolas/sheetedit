@@ -7,6 +7,7 @@ import { isRawBiff, readXlsBook, type XlsReadOptions } from "./read";
 import { xlsBookToXlsx } from "./to-xlsx";
 
 export { XlsPasswordError, type XlsReadOptions } from "./read";
+export { writeXls } from "./write";
 
 /** What a workbook read from .xls carries beyond its xlsx parts, for the BIFF8 writer and the UI. */
 export interface XlsSource {
