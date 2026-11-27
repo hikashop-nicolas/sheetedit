@@ -10,6 +10,7 @@ export * from "./core/dates";
 export * from "./core/structure";
 export * from "./adapters/xlsx";
 export * from "./adapters/ods";
+export * from "./adapters/xls";
 export * from "./core/recalc";
 export * from "./core/workbook";
 export * from "./core/editor";

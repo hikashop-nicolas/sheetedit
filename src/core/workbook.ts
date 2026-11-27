@@ -12,6 +12,7 @@ import { writeOdsSparklines } from "../adapters/ods/sparkline-write";
 import { writeOdsShapes } from "../adapters/ods/shape-write";
 import { recalc } from "./recalc";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
+import { looksLikeXls, readXls } from "../adapters/xls";
 // ---------------------------------------------------------------------------
 // Public read / write
 // ---------------------------------------------------------------------------
@@ -21,6 +22,9 @@ export interface ReadOptions {
   formatHint?: "csv" | "tsv";
   /** xlsx: parse each worksheet only when first used, so opening costs the sheet on screen. */
   lazySheets?: boolean;
+  /** The password of an encrypted .xls. Without it (or with a wrong one) reading throws an
+      XlsPasswordError whose code is "password-required" or "password-wrong". */
+  password?: string;
 }
 
 const readCsvBytes = (bytes: Uint8Array, hint?: "csv" | "tsv"): Workbook => {
@@ -45,9 +49,8 @@ const looksTextual = (bytes: Uint8Array): boolean => {
 
 export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}, preunzipped?: Record<string, Uint8Array>): Workbook {
   if (opts.formatHint === "csv" || opts.formatHint === "tsv") return readCsvBytes(bytes, opts.formatHint);
-  // Encrypted .xlsx and legacy binary .xls are CFB containers, not zips.
-  if (bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0)
-    throw new Error("password-protected or legacy binary workbook");
+  // Legacy binary .xls (and encrypted .xlsx) are CFB containers, not zips; BIFF2-4 are raw streams.
+  if (looksLikeXls(bytes)) return readXls(bytes, { password: opts.password, lazySheets: opts.lazySheets });
   let files: Record<string, Uint8Array>;
   try {
     files = preunzipped ?? unzipSync(bytes);

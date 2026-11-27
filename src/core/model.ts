@@ -468,6 +468,8 @@ export interface Workbook {
   protection?: import("./protection").WorkbookProtection;
   /** The workbook protection changed in the UI -> it is rewritten on save. */
   protectionDirty?: boolean;
+  /** The workbook came from a legacy .xls: it is edited as xlsx parts and saved back as BIFF8. */
+  xls?: import("../adapters/xls").XlsSource;
 }
 
 /** A style change to apply to a cell (only the set fields change). */

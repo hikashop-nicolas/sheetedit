@@ -1072,10 +1072,10 @@ describe("ods preservation", () => {
 // ---------------------------------------------------------------------------
 
 describe("error surface", () => {
-  it("rejects CFB containers (encrypted xlsx / legacy xls) with a clear message", () => {
+  it("rejects a damaged CFB container (legacy xls) with a clear message", () => {
     const cfb = new Uint8Array(16);
-    cfb.set([0xd0, 0xcf, 0x11, 0xe0]);
-    expect(() => readWorkbook(cfb)).toThrow(/password-protected or legacy/);
+    cfb.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    expect(() => readWorkbook(cfb)).toThrow(/damaged|not an Excel workbook/);
   });
 
   it("rejects a non-archive with a clear message", () => {
