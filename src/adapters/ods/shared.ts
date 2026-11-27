@@ -1,6 +1,8 @@
 // Shared ODS (ODF spreadsheet) namespaces, formula syntax conversion and
 // length/colour parsing, used by the read, write and style modules.
 import type { Cell, Phonetic } from "../../core/model";
+import { quoteSheetName } from "../../core/names";
+import { scanSheetPrefixes, spanPrefix, type SheetPrefix } from "../../core/sheet-span";
 
 export const ODS = {
   office: "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
@@ -57,38 +59,79 @@ export function replaceOutsideStrings(s: string, fn: (chunk: string) => string):
   return out;
 }
 
+/** Split on ":" outside single-quoted sheet names. */
+function splitRangeParts(inner: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (const ch of inner) {
+    if (ch === "'") quoted = !quoted;
+    if (ch === ":" && !quoted) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  parts.push(cur);
+  return parts;
+}
+
+/** One ODF reference body ($Sheet1.A1:$Sheet3.B2) in A1 form; two sheets make a 3D span. */
+function odfRefToA1(inner: string): string {
+  if (!inner || inner.includes("#")) return inner.replace(/\./g, ""); // #REF! etc.
+  const parts = splitRangeParts(inner).map((part) => {
+    const dot = part.lastIndexOf(".");
+    const raw = dot >= 0 ? part.slice(0, dot).replace(/^\$/, "") : "";
+    const sheet = raw.startsWith("'") ? raw.slice(1, -1).replace(/''/g, "'") : raw;
+    return { sheet, ref: dot >= 0 ? part.slice(dot + 1) : part };
+  });
+  const a = parts[0]!;
+  const b = parts[1];
+  if (!b) return (a.sheet ? quoteSheetName(a.sheet) + "!" : "") + a.ref;
+  if (a.sheet && b.sheet && a.sheet.toLowerCase() !== b.sheet.toLowerCase()) {
+    const cell = a.ref === b.ref && /^\$?[A-Za-z]+\$?\d+$/.test(a.ref); // A:A must stay a column
+    return `${spanPrefix(a.sheet, b.sheet)}!${cell ? a.ref : `${a.ref}:${b.ref}`}`;
+  }
+  return (a.sheet ? quoteSheetName(a.sheet) + "!" : "") + `${a.ref}:${b.ref}`;
+}
+
 /** ODF formula (`of:=[.A1]+[.B1]`) -> A1 (`A1+B1`). */
 export function odfToA1(odf: string): string {
   let core = odf.replace(/^of:=/, "").replace(/^=/, "");
-  core = core.replace(/\[([^\]]*)\]/g, (_, inner: string) => {
-    if (!inner || inner.includes("#")) return inner.replace(/\./g, ""); // #REF! etc.
-    const parts = inner.split(":");
-    const mapped = parts.map((part) => {
-      const dot = part.lastIndexOf(".");
-      const sheet = dot >= 0 ? part.slice(0, dot) : "";
-      const ref = dot >= 0 ? part.slice(dot + 1) : part;
-      return { sheet, ref };
-    });
-    const sheet = mapped[0]!.sheet;
-    const cells = mapped.map((m) => m.ref).join(":");
-    return (sheet ? sheet + "!" : "") + cells;
-  });
+  core = core.replace(/\[([^\]]*)\]/g, (_, inner: string) => odfRefToA1(inner));
   return replaceOutsideStrings(core, (chunk) => chunk.replace(/;/g, ","));
+}
+
+const odfSheet = (name: string): string => "$" + quoteSheetName(name);
+
+/** A sheet-prefixed A1 reference (plain or a 3D span) as an ODF bracket reference. */
+function prefixedToOdf(p: SheetPrefix): string {
+  const [r1, r2] = p.ref.replace(/\s+/g, "").split(":") as [string, string | undefined];
+  const first = odfSheet(p.first);
+  if (p.last != null) return `[${first}.${r1}:${odfSheet(p.last)}.${r2 ?? r1}]`;
+  return r2 ? `[${first}.${r1}:.${r2}]` : `[${first}.${r1}]`;
 }
 
 /** A1 (`A1+B1`) -> ODF formula (`of:=[.A1]+[.B1]`). Used only for user-typed formulas. */
 export function a1ToOdf(a1: string): string {
-  const refRe =
-    /(?<![A-Za-z0-9_.$])(?:('[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?(\$?[A-Z]{1,3}\$?[0-9]+)(?::(\$?[A-Z]{1,3}\$?[0-9]+))?(?![A-Za-z0-9_(])/g;
-  const converted = replaceOutsideStrings(a1, (chunk) => {
-    const semi = chunk.replace(/,/g, ";");
-    return semi.replace(refRe, (_m, sheet: string | undefined, c1: string, c2?: string) => {
-      const sh = sheet ?? "";
-      const range = c2 ? `${c1}:.${c2}` : c1;
-      return `[${sh}.${range}]`;
-    });
-  });
-  return "of:=" + converted;
+  const refRe = /(?<![A-Za-z0-9_.$:])(\$?[A-Z]{1,3}\$?[0-9]+)(?::(\$?[A-Z]{1,3}\$?[0-9]+))?(?![A-Za-z0-9_(!])/g;
+  const colRe = /(?<![A-Za-z0-9_.$:])(\$?[A-Z]{1,3}):(\$?[A-Z]{1,3})(?![A-Za-z0-9_(:!])/g;
+  const rowRe = /(?<![A-Za-z0-9_.$:])(\$?[0-9]{1,7}):(\$?[0-9]{1,7})(?![A-Za-z0-9_.(:!])/g;
+  const plain = (text: string): string =>
+    replaceOutsideStrings(text, (chunk) =>
+      chunk
+        .replace(/,/g, ";")
+        .replace(refRe, (_m, c1: string, c2?: string) => `[.${c2 ? `${c1}:.${c2}` : c1}]`)
+        .replace(colRe, (_m, c1: string, c2: string) => `[.${c1}:.${c2}]`)
+        .replace(rowRe, (_m, r1: string, r2: string) => `[.${r1}:.${r2}]`),
+    );
+  let out = "";
+  let at = 0;
+  for (const p of scanSheetPrefixes(a1)) {
+    if (!p.ref || p.ref === "#REF!") continue; // a sheet-scoped name or an error stays as text
+    out += plain(a1.slice(at, p.start)) + prefixedToOdf(p);
+    at = p.end;
+  }
+  return "of:=" + out + plain(a1.slice(at));
 }
 
 export function odsCellText(cell: Element): string {

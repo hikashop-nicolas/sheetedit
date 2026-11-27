@@ -98,6 +98,21 @@ describe("ODF <-> A1 formula refs", () => {
     expect(a1ToOdf('IF(A1>0,"yes","no")')).toBe('of:=IF([.A1]>0;"yes";"no")');
     expect(a1ToOdf("LOG10(A1)")).toBe("of:=LOG10([.A1])");
   });
+  it("reads sheet references and 3D spans", () => {
+    expect(odfToA1("of:=[$Sheet2.B2]+[$'My Sheet'.$A$1:.B3]")).toBe("Sheet2!B2+'My Sheet'!$A$1:B3");
+    expect(odfToA1("of:=SUM([$Sheet1.A1:$Sheet3.A1])")).toBe("SUM(Sheet1:Sheet3!A1)");
+    expect(odfToA1("of:=SUM([$'Jan 2026'.A1:$'Mar 2026'.C2];1)")).toBe("SUM('Jan 2026:Mar 2026'!A1:C2,1)");
+    expect(odfToA1("of:=SUM([$Jan.A:$Mar.A]);SUM([$Jan.1:$Mar.2]);SUM([.A:.B])")).toBe("SUM(Jan:Mar!A:A),SUM(Jan:Mar!1:2),SUM(A:B)");
+  });
+  it("writes sheet references and 3D spans", () => {
+    expect(a1ToOdf("Sheet2!B2+'My Sheet'!$A$1:B3")).toBe("of:=[$Sheet2.B2]+[$'My Sheet'.$A$1:.B3]");
+    expect(a1ToOdf("SUM(Sheet1:Sheet3!A1)")).toBe("of:=SUM([$Sheet1.A1:$Sheet3.A1])");
+    expect(a1ToOdf("SUM('Jan 2026:Mar 2026'!A1:C2,1)")).toBe("of:=SUM([$'Jan 2026'.A1:$'Mar 2026'.C2];1)");
+    expect(a1ToOdf("SUM(Jan:Mar!A:A)+SUM(A:B)+SUM(2:3)")).toBe("of:=SUM([$Jan.A:$Mar.A])+SUM([.A:.B])+SUM([.2:.3])");
+    expect(a1ToOdf('"Jan:Mar!A1"&A1')).toBe('of:="Jan:Mar!A1"&[.A1]');
+    for (const f of ["SUM(Sheet1:Sheet3!A1)", "SUM('Jan 2026:Mar 2026'!A1:C2,1)", "SUM(Jan:Mar!A:A)+Sheet2!B2"])
+      expect(odfToA1(a1ToOdf(f))).toBe(f);
+  });
 });
 
 // ---------------------------------------------------------------------------
