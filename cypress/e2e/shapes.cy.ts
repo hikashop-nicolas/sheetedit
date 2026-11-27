@@ -136,3 +136,16 @@ describe("the end of the grid", () => {
     cy.get(".sheetedit-toolbar").should("not.contain.text", "+ Col");
   });
 });
+
+describe("shapes in a .xls", () => {
+  it("shows the file's text box and offers only the shapes OfficeArt has", () => {
+    open("cypress/fixtures/chart.xls");
+    cy.get(".sheetedit-shapebox", { timeout: TIMEOUT }).should("have.length", 1).and("contain.text", "Quarterly note");
+    cy.get('.sheetedit-toolbar [aria-label="Insert shape"]').click();
+    cy.get(".sheetedit-shapegallery").should("be.visible");
+    cy.get('.sheetedit-shapegallery [aria-label="Rectangle"]').should("exist");
+    cy.get('.sheetedit-shapegallery [aria-label="Heptagon"]').should("not.exist");
+    cy.get('.sheetedit-shapegallery [aria-label="Rectangle"]').first().click();
+    cy.get(".sheetedit-shapebox").should("have.length", 2);
+  });
+});

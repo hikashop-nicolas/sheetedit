@@ -27,4 +27,15 @@ describe("charts", () => {
     cy.get(".sheetedit-chart-modal").should("not.exist");
     cy.get(".sheetedit-chartbox", { timeout: TIMEOUT }).should("have.length", 2);
   });
+
+  it("renders the charts of a .xls, its chart sheet included, and offers new ones", () => {
+    open("cypress/fixtures/chart.xls");
+    cy.get(".sheetedit-chartbox", { timeout: TIMEOUT }).should("have.length", 1);
+    cy.get(".sheetedit-chartbox canvas").should("exist");
+    cy.get('[title="Insert chart"]').should("exist");
+    cy.get('[title="Macros"]').should("exist");
+    cy.contains(".sheetedit-tab", "Chart1").click();
+    cy.get(".sheetedit-chartbox", { timeout: TIMEOUT }).should("have.length", 1);
+    cy.get(".sheetedit-chartbox canvas").should("exist");
+  });
 });
