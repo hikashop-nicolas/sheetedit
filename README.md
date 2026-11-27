@@ -552,18 +552,40 @@ and the writer rebuilds a BIFF8 compound file from the model on save.
   hash, page setup with print area and titles, the autofilter range, pictures (PNG, JPEG, BMP, EMF,
   WMF), external link caches and the summary streams. The 1904 date system is read and saved as
   1900, with date cells shifted to keep their dates.
+- **Charts**, embedded and as chart sheets: column, bar, line, area, pie, doughnut, pie / bar of
+  pie, scatter, bubble, radar, surface and stock (line with high-low lines), stacked and 100%, 3-D,
+  with the series formulas and their cached values, titles, axis titles, bounds and number formats,
+  legend position, series and point colours, markers, smoothing, exploded slices, data labels,
+  combined kinds, a secondary axis, trendlines and error bars. A chart edited or created in the
+  editor is rebuilt as a BIFF8 chart substream on save.
+- **Shapes and text boxes** (OfficeArt): the preset shapes, lines and arrows with their line ends,
+  groups, solid and two-colour gradient fills, transparency, line colour, width and dash, rotation,
+  flips, and text with its alignment and formatting runs. A shape left untouched is written back
+  exactly as it was read; an edited or new one is built from the shape model. The shape gallery
+  offers only the shapes OfficeArt has.
+- **Macros**: the VBA project in the `_VBA_PROJECT_CUR` storage is read like an `.xlsm`'s
+  `vbaProject.bin`, so its modules are listed, shown, run and edited the same way, and it is
+  written back under `_VBA_PROJECT_CUR` with the OBPROJ and CODENAME records. An unedited project
+  keeps its digital signature; a signed project cannot be edited, as for `.xlsm`.
 - **Encrypted files** (RC4, RC4 CryptoAPI and XOR obfuscation) open with their password:
   `readWorkbook(bytes, { password })`, or `createSheetEditorAsync` asks through the
   `requestPassword` option or a prompt of its own. Files protected with Excel's default
   `VelvetSweatshop` open without asking. Saving writes an unencrypted file.
 - **Not stored by BIFF8, so not offered while a `.xls` is open**: tables, slicers, sparklines,
-  pivots authoring, drawing shapes, form controls, workbook themes, Power Query, colour scales, data
-  bars, icon sets and the top / average / duplicate rule kinds. The grid stops at 65,536 rows and
-  256 columns, and colours are mapped onto the palette (free entries are reassigned before falling
-  back to the nearest colour). `capabilitiesOf(wb)` reports this per workbook.
-- **Not kept on save**: embedded charts, chart sheets, drawing shapes and text boxes, macro modules
-  and the VBA project. The editor shows which of these the open file has, in a bar above the grid,
-  and `editor.saveWarnings()` returns the same sentences for a host to confirm before saving.
+  pivots authoring, form controls, workbook themes, Power Query, colour scales, data bars, icon
+  sets, the top / average / duplicate rule kinds, and the shapes OfficeArt has no preset for
+  (heptagon, gear, cloud and the like). The grid stops at 65,536 rows and 256 columns, and colours
+  are mapped onto the palette (free entries are reassigned before falling back to the nearest
+  colour). `capabilitiesOf(wb)` reports this per workbook.
+- **Saved as the closest BIFF8 form**: a shape read from another format with no OfficeArt preset
+  is saved as a rectangle, a chart mixing kinds a `.xls` chart cannot combine (a pie with a column,
+  a scatter with a line) saves those series as the chart's main kind, gradients keep their first and
+  last colours, and data label positions and text styles are kept where BIFF8 has them.
+- **Not kept on save**: form controls (buttons, check boxes, lists, spinners), custom error bar
+  values, the Excel 5 module and dialog sheets, and charts nested inside a drawing group. The editor
+  shows which of these the open file has, in a bar above the grid, and `editor.saveWarnings()`
+  returns the same sentences, plus the closest-form notes above for what was edited, for a host to
+  confirm before saving.
 
 ## How preservation works
 
