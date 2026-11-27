@@ -113,6 +113,8 @@ const refersToTarget = (prefix: string | undefined, formulaSheet: string, target
 /** True when the match starts inside a longer identifier (LOG10, tax2026, Table1[...]). */
 const insideName = (chunk: string, off: number, prefix: string | undefined): boolean => {
   const startCh = off > 0 ? chunk[off - 1]! : "";
+  // The end of a 3D span (Sheet1:Sheet3!A1): a line op on one sheet leaves it alone, as in Excel.
+  if (prefix && startCh === ":") return true;
   if (prefix && prefix.startsWith("'")) return false; // quoted prefixes are unambiguous
   return NAME_CHAR.test(startCh);
 };

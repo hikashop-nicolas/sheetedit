@@ -6246,6 +6246,7 @@ export function createSheetEditor(
     deleteSheet(wb, i);
     if (active === i) active = Math.min(i, wb.sheets.length - 1);
     else if (active > i) active -= 1;
+    recalc(wb); // a 3D span may have lost a sheet
     mark();
     renderTabs();
     renderGrid();
@@ -6256,8 +6257,10 @@ export function createSheetEditor(
     const cur = wb.sheets[active];
     moveSheet(wb, from, to);
     active = wb.sheets.indexOf(cur);
+    recalc(wb); // a 3D span covers whatever sits between its ends
     mark();
     renderTabs();
+    renderGrid();
   };
   function beginRenameTab(tab: HTMLElement, i: number): void {
     const input = document.createElement("input");
@@ -6272,7 +6275,12 @@ export function createSheetEditor(
       if (done) return;
       done = true;
       const v = input.value.trim();
-      if (commit && v && v !== wb.sheets[i]?.name && allowSheetOps()) { renameSheet(wb, i, v); mark(); }
+      if (commit && v && v !== wb.sheets[i]?.name && allowSheetOps()) {
+        renameSheet(wb, i, v); // rewrites the formulas naming it
+        recalc(wb);
+        mark();
+        renderGrid();
+      }
       renderTabs();
     };
     input.addEventListener("keydown", (e) => {
@@ -6878,6 +6886,7 @@ export function createSheetEditor(
         });
 
         dirty = true;
+        recalc(wb);
         // Through the same path a local change takes, so the baseline advances by the same
         // rule. The applyingRemoteSheets flag is the single thing that stops a peer's
         // change being announced straight back to them.

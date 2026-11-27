@@ -11,6 +11,7 @@ import { writeOdsImages } from "../adapters/ods/image-write";
 import { writeOdsSparklines } from "../adapters/ods/sparkline-write";
 import { writeOdsShapes } from "../adapters/ods/shape-write";
 import { recalc } from "./recalc";
+import { normalizeSheetSpans } from "./sheet-span";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
 import { looksLikeXls, readXls, writeXls } from "../adapters/xls";
 // ---------------------------------------------------------------------------
@@ -167,7 +168,7 @@ export function setCellInput(sheet: Sheet, row: number, col: number, raw: string
   const existing = getCell(sheet, row, col);
   if (raw.startsWith("=")) {
     const cell = ensureCell(sheet, row, col);
-    const nf = raw.slice(1).trim();
+    const nf = normalizeSheetSpans(raw.slice(1).trim());
     if (cell.formula !== nf) cell.fDirty = true;
     cell.formula = nf;
     cell.odfFormula = undefined;

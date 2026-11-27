@@ -1,7 +1,8 @@
 import { parseXmlOpt, serializeXml, type Cell, type Sheet, type Workbook } from "./model";
 import { createWorksheet, uniqueSheetName } from "../adapters/xlsx/sheet-create";
 import { setOdsSheetHidden } from "../adapters/ods/styles";
-import { isSheetLoaded, onSheetLoaded } from "./lazy-sheet";
+import { isSheetLoaded, loadAllSheets, onSheetLoaded } from "./lazy-sheet";
+import { deleteSheetInFormula, renameSheetInFormula } from "./sheet-span";
 
 // Add / rename / delete / reorder sheets, for both .xlsx and .ods. Each op mutates the model
 // (wb.sheets) and the file immediately (xlsx: xl/workbook.xml + rels + content-types; ods: the
@@ -182,11 +183,41 @@ export function copySheet(wb: Workbook, index: number): number {
   return at;
 }
 
-/** Rename the sheet at `index`; returns the applied (deduped) name. */
+/** Apply `rewrite` to every formula and defined-name target, marking what changed for the save. */
+function rewriteFormulas(wb: Workbook, rewrite: (f: string) => string): void {
+  loadAllSheets(wb);
+  for (const sheet of wb.sheets)
+    for (const cell of sheet.cells.values()) {
+      if (cell.formula == null) continue;
+      const next = rewrite(cell.formula);
+      if (next === cell.formula) continue;
+      cell.formula = next;
+      cell.odfFormula = undefined;
+      cell.fDirty = true;
+      cell.edited = true;
+      if (wb.kind === "ods") sheet.odsDirty = true;
+    }
+  if (wb.definedNames)
+    for (const [k, ref] of wb.definedNames) {
+      const next = rewrite(ref);
+      if (next !== ref) { wb.definedNames.set(k, next); wb.namesDirty = true; }
+    }
+  for (const n of wb.localNames ?? []) {
+    const next = rewrite(n.ref);
+    if (next !== n.ref) { n.ref = next; wb.namesDirty = true; }
+  }
+}
+
+/** Rename the sheet at `index`; returns the applied (deduped) name. Formulas follow the rename. */
 export function renameSheet(wb: Workbook, index: number, name: string): string {
   const clean = freeName(wb, name.trim() || "Sheet", index);
   const sheet = wb.sheets[index];
   if (!sheet) throw new Error("no such sheet");
+  const old = sheet.name;
+  if (clean !== old) {
+    rewriteFormulas(wb, (f) => renameSheetInFormula(f, old, clean));
+    for (const n of wb.localNames ?? []) if (n.sheet === old) n.sheet = clean;
+  }
   sheet.name = clean;
   if (wb.kind === "xlsx") {
     const doc = parseXmlOpt(wb.files["xl/workbook.xml"]);
@@ -234,6 +265,9 @@ export function deleteSheet(wb: Workbook, index: number): void {
   if (wb.sheets.length <= 1) throw new Error("a workbook must keep at least one sheet");
   const sheet = wb.sheets[index];
   if (!sheet) throw new Error("no such sheet");
+  // A 3D span ending on this sheet moves its end inward, as Excel does.
+  const names = wb.sheets.map((s) => s.name);
+  rewriteFormulas(wb, (f) => deleteSheetInFormula(f, names, index));
   if (wb.kind === "xlsx") {
     const wbDoc = parseXmlOpt(wb.files["xl/workbook.xml"]);
     const el = wbDoc && sheetEls(wbDoc)[index];

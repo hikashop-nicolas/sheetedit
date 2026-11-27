@@ -10,6 +10,7 @@ import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
 import { expandValueNames, findName } from "./names";
+import { expandSheetSpans, type SheetExtent } from "./sheet-span";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
@@ -45,6 +46,35 @@ function parseNameRef(ref: string, defaultSheet: string): CellRef | RangeRef | n
     to: { row: Math.max(a.row, b.row), col: Math.max(a.col, b.col) },
   };
 }
+/** Each sheet's used extent for 3D ranges: scanned once, then widened by later writes (spills). */
+function sheetExtents(wb: Workbook): SheetExtent {
+  const scanned = new Map<Sheet, { rows: number; cols: number }>();
+  return (name) => {
+    const sheet = wb.sheets.find((s) => s.name === name);
+    if (!sheet) return undefined;
+    let e = scanned.get(sheet);
+    if (!e) {
+      e = { rows: 0, cols: 0 };
+      for (const c of sheet.cells.values()) {
+        if (c.row > e.rows) e.rows = c.row;
+        if (c.col > e.cols) e.cols = c.col;
+      }
+      scanned.set(sheet, e);
+    }
+    return { rows: Math.max(e.rows, sheet.maxRow), cols: Math.max(e.cols, sheet.maxCol) };
+  };
+}
+
+// Past this many cells a range is cut to the sheet's used extent: materializing a whole sheet
+// (A1:XFD1048576, or what a malformed range operator yields) would exhaust memory.
+const HUGE_RANGE = 1 << 22;
+type Pos = { row: number; col: number };
+function capRange(from: Pos, to: Pos, sheetName: string | undefined, extentOf: SheetExtent): Pos {
+  if ((to.row - from.row + 1) * (to.col - from.col + 1) <= HUGE_RANGE || sheetName == null) return to;
+  const ext = extentOf(sheetName) ?? { rows: from.row, cols: from.col };
+  return { row: Math.max(from.row, Math.min(to.row, ext.rows)), col: Math.max(from.col, Math.min(to.col, ext.cols)) };
+}
+
 // ---------------------------------------------------------------------------
 // Recalc engine (shared)
 // ---------------------------------------------------------------------------
@@ -287,6 +317,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
   const FE = (FormulaParser as unknown as { FormulaError: { REF: unknown } }).FormulaError;
   const byName = new Map<string, Sheet>();
   for (const s of wb.sheets) byName.set(s.name, s);
+  const sheetNames = wb.sheets.map((s) => s.name);
+  const extentOf = sheetExtents(wb);
   const defaultSheet = wb.sheets[0]?.name;
   /** Unknown sheet names are a reference error, not a silent read of sheet 1. */
   const sheetOf = (sheetName: string | undefined): Sheet | null | undefined => {
@@ -337,7 +369,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     let f = formula;
     if (hasTableRef(f)) f = expandTableRefs(f, wb, row);
     if (hasLet(f)) f = expandLet(f);
-    return expandValueNames(f, wb.definedNames);
+    return expandSheetSpans(expandValueNames(f, wb.definedNames), sheetNames, extentOf);
   };
 
   const depParser = new FP.DepParser({ onVariable: (name: string, sheet?: string) => nameToRef(name, sheet) });
@@ -438,9 +470,10 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     onRange: (ref: { sheet?: string; from: { row: number; col: number }; to: { row: number; col: number } }) => {
       if (sheetOf(ref.sheet) === null) return [[FE.REF]];
       const out: unknown[][] = [];
-      for (let r = ref.from.row; r <= ref.to.row; r++) {
+      const to = capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
+      for (let r = ref.from.row; r <= to.row; r++) {
         const rowArr: unknown[] = [];
-        for (let c = ref.from.col; c <= ref.to.col; c++) {
+        for (let c = ref.from.col; c <= to.col; c++) {
           const cl = lookup(ref.sheet, r, c);
           noteFmt(cl);
           rowArr.push(typedValue(cl));
@@ -607,6 +640,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     const sheet = sheetOf(name);
     return sheet ? getCell(sheet, r, c) : undefined;
   };
+  const extentOf = sheetExtents(wb);
   const nameToRef = (name: string, sheet?: string): CellRef | RangeRef | null => {
     const ref = nameTarget(wb, name, sheet) ?? tableBodyRef(wb, name);
     return ref ? parseNameRef(ref, defaultSheet ?? "") : null;
@@ -620,9 +654,10 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     onRange: (ref: { sheet?: string; from: { row: number; col: number }; to: { row: number; col: number } }) => {
       if (sheetOf(ref.sheet) === null) return [[FE.REF]];
       const out: unknown[][] = [];
-      for (let r = ref.from.row; r <= ref.to.row; r++) {
+      const to = capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
+      for (let r = ref.from.row; r <= to.row; r++) {
         const rowArr: unknown[] = [];
-        for (let c = ref.from.col; c <= ref.to.col; c++) rowArr.push(typedValue(lookup(ref.sheet, r, c)));
+        for (let c = ref.from.col; c <= to.col; c++) rowArr.push(typedValue(lookup(ref.sheet, r, c)));
         out.push(rowArr);
       }
       return out;
@@ -637,7 +672,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
       let f = shiftFormula(formula.replace(/^=/, ""), r - r0, c - c0);
       if (hasTableRef(f)) f = expandTableRefs(f, wb, r);
       if (hasLet(f)) f = expandLet(f);
-      f = expandValueNames(f, wb.definedNames);
+      f = expandSheetSpans(expandValueNames(f, wb.definedNames), wb.sheets.map((s) => s.name), extentOf);
       try {
         return parser.parse(f, { row: r, col: c, sheet: sheetName }, false);
       } catch {
