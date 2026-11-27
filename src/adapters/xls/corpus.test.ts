@@ -6,12 +6,15 @@ import { writeXls } from "./write";
 import { isDateFmt } from "../../core/dates";
 import { readXlsBook } from "./read";
 import { xlsBookToXlsx } from "./to-xlsx";
+import type { XlsChart } from "./chart-read";
+import type { DrawNode } from "./escher";
 import type { XlsBook } from "./types";
 
 // A local corpus run, off unless XLS_CORPUS names a folder of .xls files. XLS_LO names a folder of
 // LibreOffice per-sheet CSV exports ("<base>-<sheet>.csv") to compare every sheet's values against;
 // XLS_WRITE round-trips each file through the editor model and the BIFF8 writer (XLS_OUT keeps the
-// written files); XLS_REPORT writes the per-file results as JSON. The corpus is never committed.
+// written files), comparing cells, names, charts, shapes and the macro storage; XLS_REPORT writes
+// the per-file results as JSON. The corpus is never committed.
 const dir = process.env.XLS_CORPUS ?? "";
 const loDir = process.env.XLS_LO ?? "";
 const files = dir && existsSync(dir) ? readdirSync(dir).filter((f) => /\.xls$/i.test(f)).sort() : [];
@@ -108,7 +111,27 @@ function sig(book: XlsBook): string {
       const val = v.k === "n" ? String(parseFloat(n.toPrecision(15))) : v.k === "blank" ? "" : String(v.v);
       return `${c.r},${c.c}=${v.k === "blank" ? "s" : v.k}:${val}${c.formula ? "|" + c.formula : ""}`;
     })
-    .sort().join(";")).join("\n") + "\nnames:" + book.names.filter((n) => n.formula && !n.func && !n.name.startsWith("_xlfn.")).map((n) => `${n.name}@${n.itab}=${n.formula}`).sort().join(";");
+    .sort().join(";")).join("\n") + "\nnames:" + book.names.filter((n) => n.formula && !n.func && !n.name.startsWith("_xlfn.")).map((n) => `${n.name}@${n.itab}=${n.formula}`).sort().join(";") +
+    "\n" + drawingSig(book);
+}
+
+/** Charts (kind, series formulas, title), shapes (type, text) and the macro storage, per sheet. */
+function drawingSig(book: XlsBook): string {
+  const chart = (c: XlsChart): string => [c.model.kind, c.model.title ?? "", c.model.series.length, ...c.model.series.map((s) => `${s.values.ref ?? s.values.cache?.length}|${s.xValues?.ref ?? ""}`), c.model.categories?.ref ?? ""].join(",");
+  const shapes = (nodes: DrawNode[], txt: string[]): string[] => nodes.flatMap((n) => (n.kids ? ["group", ...shapes(n.kids, txt)] : [String(n.spt) + (n.txo != null && txt[n.txo] ? ":" + txt[n.txo] : "")]));
+  const lines = book.sheets.map((s) => `${s.name}:${s.chartSheet ? "sheet[" + chart(s.chartSheet) + "]" : ""}${s.chartObjs.map((c) => "[" + chart(c.chart) + "]").join("")}/${shapes(s.drawing?.nodes ?? [], (s.drawing?.txos ?? []).map((t) => t.text)).join(",")}`);
+  const vba = (book.vba ?? []).map((e) => `${e.name}:${e.data.length}`).sort().join(";");
+  return lines.join("\n") + "\nvba:" + vba;
+}
+
+/** How many charts, shapes and macro streams a book holds, for the report. */
+function drawingCounts(book: XlsBook): { charts: number; shapes: number; vba: number } {
+  const count = (nodes: DrawNode[]): number => nodes.reduce((n, x) => n + (x.kids ? count(x.kids) : 1), 0);
+  return {
+    charts: book.sheets.reduce((n, s) => n + s.chartObjs.length + (s.chartSheet ? 1 : 0), 0),
+    shapes: book.sheets.reduce((n, s) => n + count(s.drawing?.nodes ?? []), 0),
+    vba: book.vba?.length ?? 0,
+  };
 }
 
 describe.skipIf(!process.env.XLS_DUMP)("xls dump", () => {
@@ -135,6 +158,7 @@ describe.skipIf(!files.length)("xls corpus", () => {
         entry.ms = Math.round(performance.now() - t0);
         entry.biff = book.biff;
         entry.sheetCount = book.sheets.length;
+        Object.assign(entry, drawingCounts(book));
         if (loDir) Object.assign(entry, compareSheets(book, f.replace(/\.xls$/i, "")));
         if (process.env.XLS_WRITE) {
           const xml = Object.values(xlsBookToXlsx(book)).reduce((n, b) => n + b.length, 0);
