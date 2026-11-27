@@ -25,6 +25,7 @@ export interface XlsSource {
   /** Chart sheets / VB modules that were not loaded, and embedded charts and drawing shapes. */
   skippedSheets: string[];
   charts: number;
+  chartDrawings: number;
   shapes: number;
   /** User-defined (macro) function names, which formulas call by name rather than as _xlfn. */
   udfs: string[];
@@ -71,6 +72,7 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
     skippedSheets: book.skippedSheets,
     charts: book.sheets.reduce((n, s) => n + s.charts, 0),
     shapes: book.sheets.reduce((n, s) => n + s.shapes, 0),
+    chartDrawings: book.sheets.reduce((n, s) => n + s.chartDrawings, 0),
     udfs: book.names.filter((n) => (n.func || !n.formula) && n.builtin == null && !n.name.startsWith("_xlfn.")).map((n) => n.name),
     encrypted: book.encrypted,
     codeName: book.codeName,
@@ -96,6 +98,7 @@ export function xlsSaveWarnings(wb: Workbook): { key: string; n?: number; names?
   const out: { key: string; n?: number; names?: string }[] = [];
   if (x.charts) out.push({ key: "xlsDropsCharts", n: x.charts });
   if (x.shapes) out.push({ key: "xlsDropsControls", n: x.shapes });
+  if (x.chartDrawings) out.push({ key: "xlsDropsChartDrawings", n: x.chartDrawings });
   if (x.skippedSheets.length) out.push({ key: "xlsDropsSheets", names: x.skippedSheets.join(", ") });
   let standIn = 0, errBars = false, combo = false;
   const xy = (k: string | undefined): boolean => k === "scatter" || k === "bubble";

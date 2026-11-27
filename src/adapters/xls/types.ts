@@ -145,6 +145,8 @@ export interface XlsSheet {
   summaryBelow?: boolean;
   summaryRight?: boolean;
   charts: number;
+  /** Drawing objects placed on this sheet's charts, which are not kept. */
+  chartDrawings: number;
   shapes: number;
   /** Position in the BOUNDSHEET list (chart sheets included), which names and 3D refs index. */
   boundIndex?: number;

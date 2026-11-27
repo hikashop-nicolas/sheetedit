@@ -58,7 +58,7 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
 }
 
 function newSheet(name: string, state: number): XlsSheet {
-  return { name, state, cells: new Map(), rows: new Map(), cols: [], merges: [], links: [], notes: [], dvs: [], condFmts: [], images: [], print: {}, charts: 0, shapes: 0, chartObjs: [] };
+  return { name, state, cells: new Map(), rows: new Map(), cols: [], merges: [], links: [], notes: [], dvs: [], condFmts: [], images: [], print: {}, charts: 0, shapes: 0, chartDrawings: 0, chartObjs: [] };
 }
 
 /** Records whose payload stays clear in an encrypted stream. */
@@ -287,6 +287,7 @@ function parseWorkbookStream(input: Uint8Array, opts: XlsReadOptions): XlsBook {
           const sh = newSheet(b.name, b.state);
           sh.boundIndex = bi;
           sh.chartSheet = chart;
+          sh.chartDrawings = recs.filter((r) => r.type === 0x005d).length;
           const cn = recs.find((r) => r.type === 0x01ba);
           if (cn) try { sh.codeName = readString(new Cursor(cn, book.codepage), 8, 2); } catch { /* no code name */ }
           book.sheets.push(sh);
@@ -604,7 +605,7 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
       depth--;
       continue;
     }
-    if (depth > 0) continue; // embedded chart substream
+    if (depth > 0) { if (r.type === 0x005d) sh.chartDrawings++; continue; } // embedded chart substream
     const c = new Cursor(r, book.codepage);
     try {
       switch (r.type) {

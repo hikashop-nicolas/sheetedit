@@ -319,11 +319,13 @@ export function readChart(recs: BiffRecord[], env: ChartEnv): XlsChart | null {
     categories,
     legend,
   };
-  const title = titleNode ? labelText(titleNode) : undefined;
+  const titleFlags = titleNode ? u16(titleNode.data, 24) : 0;
+  const title = titleNode && !(titleFlags & 0x40) ? labelText(titleNode) : undefined;
   if (title) model.title = title;
+  if (title && titleFlags & 0x10 && series.length === 1) model.autoTitle = title;
   // An automatic title shows the one series' name.
   let autoTitle: string | undefined;
-  if (titleNode && !title && series.length === 1 && !(u16(titleNode.data, 24) & 0x40)) {
+  if (titleNode && !title && series.length === 1 && !(titleFlags & 0x40)) {
     const nm = series[0]!.name;
     if (typeof nm === "string" && nm) model.title = model.autoTitle = nm;
     else if (typeof nm === "object" && nm.ref) autoTitle = nm.ref;

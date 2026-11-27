@@ -170,14 +170,16 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
   axisParent(false);
   if (anySecondary) axisParent(true);
   // Title, then the series' data label positions.
+  // An automatic title keeps its flag; a one-series chart with no title says it has none, or
+  // readers show the series name as one.
   const auto = !!m.title && m.title === m.autoTitle && series.length === 1;
-  if (m.title) {
-    text(auto ? 0x00b1 : 0x0081, 0x2b20, true);
+  if (m.title || series.length === 1) {
+    text(!m.title ? 0x00f1 : auto ? 0x0091 : 0x0081, 0x2b20, true);
     begin();
     pos(2, 2);
     fontx(titleFont);
     rec(0x1051, body().u8(0).u8(1).u16(0).u16(0).u16(0));
-    if (!auto) seriesText(m.title);
+    if (m.title) seriesText(m.title);
     rec(0x1027, body().u16(1).u16(0).u16(0));
     end();
   }
@@ -383,7 +385,7 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
     rec(0x1022, body().zeros(8).u16(0x000f));
     if (m.threeD || g.kind === "surface") {
       const pieLike = pie;
-      rec(0x103a, body().u16(pieLike ? 0 : 20).u16(pieLike ? 30 : 15).u16(30).u16(100).u16(100).u16(150).u16(pieLike ? 0 : 0x14));
+      rec(0x103a, body().u16(pieLike ? 0 : 20).u16(pieLike ? 30 : 15).u16(30).u16(100).u16(100).u16(150).u16(pieLike ? 0 : 0x12));
     }
     if (withLegend && m.legend?.show !== false && m.legend) {
       const p = m.legend.pos;

@@ -117,7 +117,7 @@ function sig(book: XlsBook): string {
 
 /** Charts (kind, series formulas, title), shapes (type, text) and the macro storage, per sheet. */
 function drawingSig(book: XlsBook): string {
-  const chart = (c: XlsChart): string => [c.model.kind, c.model.title ?? "", c.model.series.length, ...c.model.series.map((s) => `${s.values.ref ?? s.values.cache?.length}|${s.xValues?.ref ?? ""}`), c.model.categories?.ref ?? ""].join(",");
+  const chart = (c: XlsChart): string => [c.model.kind, c.autoTitle || c.model.autoTitle ? "auto" : c.model.title ?? "", c.model.series.length, ...c.model.series.map((s) => `${s.values.ref ?? s.values.cache?.length}|${s.xValues?.ref ?? ""}`), c.model.categories?.ref ?? ""].join(",");
   const shapes = (nodes: DrawNode[], txt: string[]): string[] => nodes.flatMap((n) => (n.kids ? ["group", ...shapes(n.kids, txt)] : [String(n.spt) + (n.txo != null && txt[n.txo] ? ":" + txt[n.txo] : "")]));
   const lines = book.sheets.map((s) => `${s.name}:${s.chartSheet ? "sheet[" + chart(s.chartSheet) + "]" : ""}${s.chartObjs.map((c) => "[" + chart(c.chart) + "]").join("")}/${shapes(s.drawing?.nodes ?? [], (s.drawing?.txos ?? []).map((t) => t.text)).join(",")}`);
   const vba = (book.vba ?? []).map((e) => `${e.name}:${e.data.length}`).sort().join(";");
