@@ -472,6 +472,9 @@ export interface Workbook {
   protectionDirty?: boolean;
   /** The workbook came from a legacy .xls: it is edited as xlsx parts and saved back as BIFF8. */
   xls?: import("../adapters/xls").XlsSource;
+  /** Read from an HTML table or Excel 2003 XML export: that source is never written back, saving
+      writes xlsx, or BIFF8 .xls once setSaveFormat(wb, "xls") is called. */
+  importedFrom?: "html" | "spreadsheetml";
 }
 
 /** A style change to apply to a cell (only the set fields change). */

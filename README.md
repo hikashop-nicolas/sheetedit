@@ -587,6 +587,47 @@ and the writer rebuilds a BIFF8 compound file from the model on save.
   `editor.saveWarnings()` returns the same sentences, plus the closest-form notes above for what
   was edited, for a host to confirm before saving.
 
+## HTML and Excel 2003 XML exports
+
+Many sites, banks and accounting tools export an HTML table or an Excel 2003 XML Spreadsheet
+(SpreadsheetML) under an `.xls` name (sometimes `.htm`, `.html` or `.xml`). `readWorkbook`
+recognizes both by content, whatever the name, and opens them as xlsx-backed workbooks in the full
+editor.
+
+- **HTML**: Excel's "Save as Web Page" files (the `x:num` / `x:str` / `x:bool` / `x:err` / `x:fmla`
+  attributes, class styles and `mso-number-format`, `<col>` widths, colspan / rowspan merges and
+  `mso-ignore:colspan` overflow, the sheet names, panes, tab colours and names of its XML island),
+  the single-file MHTML variant with several sheets, and any page with tables, each table a sheet,
+  its caption naming the sheet and the page text around it kept above and below. Numbers, percents,
+  currency and dates are typed, European numbers when the table writes them that way, while ids with
+  leading zeros and long digit strings stay text. Inline and `<style>` CSS and the old presentational
+  attributes give fonts, colours, fills, borders and alignment. The charset comes from the BOM, the
+  `<meta>` declaration, then UTF-8 or Windows-1252. DOMParser parses when there is one; a small
+  tokenizer does otherwise.
+- **SpreadsheetML**: worksheets, columns, rows and cells with `ss:Index`, merges, styles with their
+  parents (font, interior, borders, alignment, number format, protection), every data type, R1C1
+  formulas and array ranges converted to A1, hyperlinks, comments, workbook and sheet names, panes,
+  hidden sheets, tab colours, page setup, data validation, conditional formats and the autofilter.
+  Formulas are recalculated on open.
+
+The source format is never written back: `wb.importedFrom` is `"html"` or `"spreadsheetml"`, and
+`writeWorkbook` writes `.xlsx` unless `setSaveFormat(wb, "xls")` asks for a BIFF8 `.xls`. In the
+editor the `fileName` option chooses (an `.xls` name saves as `.xls`, any other as `.xlsx`), or
+`saveAs` / `editor.setSaveFormat()`; `getBytes()` always writes, even unedited.
+
+Recommended host behaviour: route a file with `sniffSheetText(bytes, ext)` (it returns `"html"`,
+`"spreadsheetml"` or null; under `.xls` any HTML with a table counts, under `.htm`, `.html`, `.xml`
+or no extension only clear spreadsheet exports do, so ordinary pages and XML files stay with their
+own viewers), open it in the sheet editor, save an `.xls` as a real `.xls` under the same name, and
+show `editor.importNotice()` once, the first time the user saves.
+
+```js
+import { blankWorkbookBytes, createWorkbook, readHtmlWorkbook, readSpreadsheetMl, sniffSheetText, setSaveFormat } from "sheetedit";
+
+sniffSheetText(bytes, ".xls"); // "html" | "spreadsheetml" | null
+const fresh = blankWorkbookBytes("xlsx"); // a new workbook: "xlsx", "xls" or "ods", one sheet named per locale
+```
+
 ## How preservation works
 
 - **`.xlsx`**: only the `<c>` cell elements you changed are rewritten in the

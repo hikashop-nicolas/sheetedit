@@ -11,6 +11,8 @@ export * from "./core/structure";
 export * from "./adapters/xlsx";
 export * from "./adapters/ods";
 export * from "./adapters/xls";
+export { readHtmlWorkbook, readSpreadsheetMl, readSheetText, sniffSheetText, setSaveFormat, saveFormat, importedSaveNotice, type SheetTextKind, type SaveFormat, type SheetTextReadOptions } from "./adapters/tabular";
+export { createWorkbook, blankWorkbookBytes, type BlankFormat, type BlankOptions } from "./core/blank";
 export * from "./core/recalc";
 export * from "./core/workbook";
 export * from "./core/editor";

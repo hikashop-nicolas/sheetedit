@@ -14,6 +14,7 @@ import { recalc } from "./recalc";
 import { normalizeSheetSpans } from "./sheet-span";
 import { readXlsx, writeXlsx } from "../adapters/xlsx";
 import { looksLikeXls, readXls, writeXls } from "../adapters/xls";
+import { readSheetText, sniffSheetText } from "../adapters/tabular";
 // ---------------------------------------------------------------------------
 // Public read / write
 // ---------------------------------------------------------------------------
@@ -52,6 +53,11 @@ export function readWorkbook(bytes: Uint8Array, opts: ReadOptions = {}, preunzip
   if (opts.formatHint === "csv" || opts.formatHint === "tsv") return readCsvBytes(bytes, opts.formatHint);
   // Legacy binary .xls (and encrypted .xlsx) are CFB containers, not zips; BIFF2-4 are raw streams.
   if (looksLikeXls(bytes)) return readXls(bytes, { password: opts.password, lazySheets: opts.lazySheets });
+  // HTML tables and Excel 2003 XML, which many sites and tools export under an .xls name.
+  if (!preunzipped && bytes[0] !== 0x50) {
+    const kind = sniffSheetText(bytes, "xls");
+    if (kind) return readSheetText(bytes, kind)!;
+  }
   let files: Record<string, Uint8Array>;
   try {
     files = preunzipped ?? unzipSync(bytes);

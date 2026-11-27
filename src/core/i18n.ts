@@ -563,6 +563,9 @@ const en: Dict = {
   nameBoxBad: "Not a cell, a range or a valid name: {text}",
   nameNotRange: "{name} is not a range, so there is nothing to select",
   nameDefined: "Name defined: {name}",
+  sheetDefaultName: "Sheet{n}",
+  importedHtmlNotice: "This file is a web page export, not a real Excel workbook. Saving writes it as {format}.",
+  importedXmlNotice: "This file is an Excel 2003 XML spreadsheet. Saving writes it as {format}.",
 };
 
 const fr: Dict = {
@@ -1121,6 +1124,9 @@ const fr: Dict = {
   nameBoxBad: "Ni une cellule, ni une plage, ni un nom valide : {text}",
   nameNotRange: "{name} n'est pas une plage : rien à sélectionner",
   nameDefined: "Nom défini : {name}",
+  sheetDefaultName: "Feuille{n}",
+  importedHtmlNotice: "Ce fichier est un export de page web, pas un vrai classeur Excel. L'enregistrement le convertit en {format}.",
+  importedXmlNotice: "Ce fichier est une feuille de calcul XML Excel 2003. L'enregistrement le convertit en {format}.",
 };
 
 const ja: Dict = {
@@ -1679,6 +1685,9 @@ const ja: Dict = {
   nameBoxBad: "セル、範囲、有効な名前のいずれでもありません: {text}",
   nameNotRange: "{name} は範囲ではないため選択できません",
   nameDefined: "名前を定義しました: {name}",
+  sheetDefaultName: "Sheet{n}",
+  importedHtmlNotice: "このファイルはWebページ形式のエクスポートで、本来のExcelブックではありません。保存すると{format}として書き出されます。",
+  importedXmlNotice: "このファイルはExcel 2003 XMLスプレッドシートです。保存すると{format}として書き出されます。",
 };
 
 const es: Dict = {
@@ -2237,6 +2246,9 @@ const es: Dict = {
   nameBoxBad: "No es una celda, un rango ni un nombre válido: {text}",
   nameNotRange: "{name} no es un rango, no hay nada que seleccionar",
   nameDefined: "Nombre definido: {name}",
+  sheetDefaultName: "Hoja{n}",
+  importedHtmlNotice: "Este archivo es una exportación de página web, no un libro de Excel real. Al guardarlo se escribe como {format}.",
+  importedXmlNotice: "Este archivo es una hoja de cálculo XML de Excel 2003. Al guardarlo se escribe como {format}.",
 };
 
 const de: Dict = {
@@ -2795,6 +2807,9 @@ const de: Dict = {
   nameBoxBad: "Weder Zelle noch Bereich noch gültiger Name: {text}",
   nameNotRange: "{name} ist kein Bereich, es gibt nichts zu markieren",
   nameDefined: "Name definiert: {name}",
+  sheetDefaultName: "Tabelle{n}",
+  importedHtmlNotice: "Diese Datei ist ein Webseiten-Export, keine echte Excel-Arbeitsmappe. Beim Speichern wird sie als {format} geschrieben.",
+  importedXmlNotice: "Diese Datei ist eine Excel-2003-XML-Tabelle. Beim Speichern wird sie als {format} geschrieben.",
 };
 
 const pt: Dict = {
@@ -3353,6 +3368,9 @@ const pt: Dict = {
   nameBoxBad: "Não é uma célula, um intervalo nem um nome válido: {text}",
   nameNotRange: "{name} não é um intervalo, não há nada a selecionar",
   nameDefined: "Nome definido: {name}",
+  sheetDefaultName: "Planilha{n}",
+  importedHtmlNotice: "Este arquivo é uma exportação de página web, não uma pasta de trabalho do Excel real. Ao salvar, ele é gravado como {format}.",
+  importedXmlNotice: "Este arquivo é uma planilha XML do Excel 2003. Ao salvar, ele é gravado como {format}.",
 };
 
 const ru: Dict = {
@@ -3911,6 +3929,9 @@ const ru: Dict = {
   nameBoxBad: "Это не ячейка, не диапазон и не допустимое имя: {text}",
   nameNotRange: "{name} не является диапазоном, выделять нечего",
   nameDefined: "Имя задано: {name}",
+  sheetDefaultName: "Лист{n}",
+  importedHtmlNotice: "Этот файл является экспортом веб-страницы, а не настоящей книгой Excel. При сохранении он будет записан как {format}.",
+  importedXmlNotice: "Этот файл является таблицей Excel 2003 XML. При сохранении он будет записан как {format}.",
 };
 
 const zh: Dict = {
@@ -4469,6 +4490,9 @@ const zh: Dict = {
   nameBoxBad: "不是单元格、区域或有效名称：{text}",
   nameNotRange: "{name} 不是区域，无可选择",
   nameDefined: "已定义名称：{name}",
+  sheetDefaultName: "Sheet{n}",
+  importedHtmlNotice: "此文件是网页导出文件，并非真正的 Excel 工作簿。保存时将写为 {format}。",
+  importedXmlNotice: "此文件是 Excel 2003 XML 电子表格。保存时将写为 {format}。",
 };
 
 const it: Dict = {
@@ -5027,6 +5051,9 @@ const it: Dict = {
   nameBoxBad: "Non è una cella, un intervallo o un nome valido: {text}",
   nameNotRange: "{name} non è un intervallo, quindi non c'è nulla da selezionare",
   nameDefined: "Nome definito: {name}",
+  sheetDefaultName: "Foglio{n}",
+  importedHtmlNotice: "Questo file è un'esportazione di pagina web, non una vera cartella di lavoro Excel. Al salvataggio viene scritto come {format}.",
+  importedXmlNotice: "Questo file è un foglio di calcolo XML di Excel 2003. Al salvataggio viene scritto come {format}.",
 };
 
 const pl: Dict = {
@@ -5585,6 +5612,9 @@ const pl: Dict = {
   nameBoxBad: "To nie jest komórka, zakres ani prawidłowa nazwa: {text}",
   nameNotRange: "{name} nie jest zakresem, więc nie ma czego zaznaczyć",
   nameDefined: "Zdefiniowano nazwę: {name}",
+  sheetDefaultName: "Arkusz{n}",
+  importedHtmlNotice: "Ten plik jest eksportem strony internetowej, a nie prawdziwym skoroszytem Excela. Przy zapisie zostanie zapisany jako {format}.",
+  importedXmlNotice: "Ten plik jest arkuszem XML programu Excel 2003. Przy zapisie zostanie zapisany jako {format}.",
 };
 
 const ko: Dict = {
@@ -6143,6 +6173,9 @@ const ko: Dict = {
   nameBoxBad: "셀, 범위 또는 올바른 이름이 아닙니다: {text}",
   nameNotRange: "{name}은(는) 범위가 아니므로 선택할 항목이 없습니다",
   nameDefined: "이름을 정의했습니다: {name}",
+  sheetDefaultName: "Sheet{n}",
+  importedHtmlNotice: "이 파일은 웹 페이지 내보내기 파일이며 실제 Excel 통합 문서가 아닙니다. 저장하면 {format} 형식으로 기록됩니다.",
+  importedXmlNotice: "이 파일은 Excel 2003 XML 스프레드시트입니다. 저장하면 {format} 형식으로 기록됩니다.",
 };
 
 const tr: Dict = {
@@ -6701,6 +6734,9 @@ const tr: Dict = {
   nameBoxBad: "Hücre, aralık veya geçerli bir ad değil: {text}",
   nameNotRange: "{name} bir aralık değil, bu nedenle seçilecek bir şey yok",
   nameDefined: "Ad tanımlandı: {name}",
+  sheetDefaultName: "Sayfa{n}",
+  importedHtmlNotice: "Bu dosya gerçek bir Excel çalışma kitabı değil, bir web sayfası dışa aktarımıdır. Kaydedildiğinde {format} olarak yazılır.",
+  importedXmlNotice: "Bu dosya bir Excel 2003 XML elektronik tablosudur. Kaydedildiğinde {format} olarak yazılır.",
 };
 
 const LOCALES: Record<string, Dict> = { en, fr, ja, es, de, pt, ru, zh, it, pl, ko, tr };

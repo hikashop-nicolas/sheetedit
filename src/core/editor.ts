@@ -64,6 +64,7 @@ import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
 import { unzipAsync } from "./zip";
 import { looksLikeXls, XlsPasswordError, xlsCanWrite, xlsPasswordState, xlsSaveWarnings } from "../adapters/xls";
+import { importedSaveNotice, setSaveFormat as setWorkbookSaveFormat } from "../adapters/tabular";
 import { deleteXlsxShape, flagXlsxPivotRefresh, reorderXlsxShape, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
@@ -217,8 +218,11 @@ export interface SheetEditorOptions {
   onCellsChanged?: (changes: CellInput[]) => void;
   /** Route plain-text input explicitly (the host knows the .csv/.tsv extension). */
   formatHint?: "csv" | "tsv";
-  /** The document's file name; used to name a converted workbook. */
+  /** The document's file name; used to name a converted workbook. An HTML or Excel 2003 XML
+      export named .xls is saved as a real .xls, any other name as .xlsx (see saveAs). */
   fileName?: string;
+  /** What an HTML or Excel 2003 XML export is saved as; defaults from fileName. */
+  saveAs?: "xls" | "xlsx";
   /** csv mode: receives the "Convert to XLSX" result. Without it, a download starts. */
   onConvert?: (bytes: Uint8Array, name: string) => void;
   /** The font picker: "Show my fonts" (default on) and "Get more fonts" from Google Fonts
@@ -235,6 +239,13 @@ export interface SheetEditor {
   /** What saving in the open format will not keep (for a legacy .xls: its charts, drawing shapes
       and chart sheets), as sentences to show before a save. Empty when nothing is lost. */
   saveWarnings(): string[];
+  /** "html" or "spreadsheetml" when the file was an HTML table or Excel 2003 XML export, which is
+      never written back: getBytes() then writes the save format (see setSaveFormat). */
+  importedFrom(): "html" | "spreadsheetml" | null;
+  /** Choose what an imported or new xlsx-backed workbook saves as: BIFF8 .xls or .xlsx. */
+  setSaveFormat(format: "xls" | "xlsx"): void;
+  /** For an imported workbook, a sentence saying what it is and what saving writes; else null. */
+  importNotice(): string | null;
   /** The serialized text for text-backed workbooks (csv/tsv); null otherwise. */
   getText(): string | null;
   isDirty(): boolean;
@@ -417,6 +428,7 @@ export function createSheetEditor(
   try {
     // Only the sheet on screen is parsed now; the others parse on first use or in idle time.
     wb = readWorkbook(bytes, { formatHint: options.formatHint, lazySheets: true, password: options.password }, preunzipped);
+    if (wb.importedFrom) setWorkbookSaveFormat(wb, options.saveAs ?? (/\.xls$/i.test(options.fileName ?? "") ? "xls" : "xlsx"));
     // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
     assignSheetIds(wb);
     assignImageIds(wb);
@@ -445,6 +457,9 @@ export function createSheetEditor(
     return {
       getBytes: () => Promise.resolve(original.slice()),
       saveWarnings: () => [],
+      importedFrom: () => null,
+      setSaveFormat: () => undefined,
+      importNotice: () => null,
       getText: () => null,
       setPrintHandler: () => undefined,
       printPages: () => null, // nothing opened, so nothing to print
@@ -6975,9 +6990,13 @@ export function createSheetEditor(
       return wb.kind === "csv" ? writeCsv(wb) : null;
     },
     async getBytes() {
-      return dirty ? writeWorkbookAsync(wb) : original.slice();
+      // An imported export is never handed back as it came: it is saved in its save format.
+      return dirty || wb.importedFrom ? writeWorkbookAsync(wb) : original.slice();
     },
     saveWarnings,
+    importedFrom: () => wb.importedFrom ?? null,
+    setSaveFormat: (format) => setWorkbookSaveFormat(wb, format),
+    importNotice: () => importedSaveNotice(wb),
     destroy() {
       idleStopped = true;
       gridObserver?.disconnect();
