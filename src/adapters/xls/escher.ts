@@ -151,6 +151,72 @@ export function readSheetShapes(dg: Uint8Array): DrawShape[] {
   return out;
 }
 
+/** One shape of a sheet drawing with everything its container says, groups holding their members. */
+export interface DrawNode {
+  spid: number;
+  spt: number;
+  /** FSP flags: 0x1 group, 0x2 child, 0x40 flipH, 0x80 flipV. */
+  flags: number;
+  props: Map<number, { value: number; complex?: Uint8Array }>;
+  anchor?: Anchor;
+  /** A group member's box in its group's coordinates. */
+  child?: { l: number; t: number; r: number; b: number };
+  /** A group's own coordinate space. */
+  space?: { l: number; t: number; r: number; b: number };
+  obj?: number;
+  txo?: number;
+  kids?: DrawNode[];
+  /** The shape container's own bytes, header included, for an exact write-back. */
+  raw: Uint8Array;
+}
+
+/** The sheet drawing as a tree: top-level shapes, with groups holding their members. */
+export function readDrawingTree(dg: Uint8Array): DrawNode[] {
+  let objN = 0, txoN = 0;
+  const shape = (r: EscherRec): DrawNode => {
+    const n: DrawNode = { spid: 0, spt: 0, flags: 0, props: new Map(), raw: dg.subarray(r.start - 8, r.start + r.len) };
+    for (const k of escherChildren(dg, r.start, r.start + r.len)) {
+      const dv = new DataView(k.data.buffer, k.data.byteOffset, k.data.byteLength);
+      if (k.type === 0xf00a && k.len >= 8) { n.spid = dv.getUint32(0, true); n.spt = k.inst; n.flags = dv.getUint32(4, true); }
+      else if ((k.type === 0xf00b || k.type === 0xf122) && k.len >= 6) {
+        let complex = 6 * k.inst;
+        for (let i = 0; i < k.inst && i * 6 + 6 <= k.len; i++) {
+          const opid = dv.getUint16(i * 6, true), value = dv.getUint32(i * 6 + 2, true);
+          const p: { value: number; complex?: Uint8Array } = { value };
+          if (opid & 0x8000) { p.complex = k.data.subarray(complex, Math.min(k.len, complex + value)); complex += value; }
+          if (!n.props.has(opid & 0x3fff)) n.props.set(opid & 0x3fff, p);
+        }
+      } else if (k.type === 0xf010 && k.len >= 18) {
+        n.anchor = { col1: dv.getUint16(2, true), dx1: dv.getUint16(4, true), row1: dv.getUint16(6, true), dy1: dv.getUint16(8, true), col2: dv.getUint16(10, true), dx2: dv.getUint16(12, true), row2: dv.getUint16(14, true), dy2: dv.getUint16(16, true) };
+      } else if (k.type === 0xf00f && k.len >= 16) n.child = { l: dv.getInt32(0, true), t: dv.getInt32(4, true), r: dv.getInt32(8, true), b: dv.getInt32(12, true) };
+      else if (k.type === 0xf009 && k.len >= 16) n.space = { l: dv.getInt32(0, true), t: dv.getInt32(4, true), r: dv.getInt32(8, true), b: dv.getInt32(12, true) };
+      else if (k.type === 0xf011) n.obj = objN++;
+      else if (k.type === 0xf00d) n.txo = txoN++;
+    }
+    return n;
+  };
+  const group = (from: number, to: number, top: boolean): DrawNode[] => {
+    const out: DrawNode[] = [];
+    let head: DrawNode | undefined;
+    for (const r of escherChildren(dg, from, to)) {
+      if (r.type === 0xf004) {
+        const n = shape(r);
+        if (!head) { head = n; if (top || n.flags & 0x4) continue; n.kids = []; out.push(n); continue; }
+        (out[0]?.kids && !top ? out[0].kids : out).push(n);
+      } else if (r.type === 0xf003) {
+        const g = group(r.start, r.start + r.len, false);
+        (out[0]?.kids && !top ? out[0].kids : out).push(...g);
+      }
+    }
+    return out;
+  };
+  for (const top of escherChildren(dg)) {
+    if (top.type !== 0xf002) continue;
+    for (const r of escherChildren(dg, top.start, top.start + top.len)) if (r.type === 0xf003) return group(r.start, r.start + r.len, true);
+  }
+  return [];
+}
+
 const utf16z = (b: Uint8Array): string => {
   let s = "";
   for (let i = 0; i + 1 < b.length; i += 2) {

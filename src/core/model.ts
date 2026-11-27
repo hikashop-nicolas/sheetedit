@@ -311,6 +311,8 @@ export interface Sheet {
   hideGridLines?: boolean;
   /** The sheet tab's colour (xlsx `<sheetPr><tabColor>`), as CSS. */
   tabColor?: string;
+  /** A chart sheet (xls): no cells of its own, its one chart (charts[0]) is the sheet. */
+  chartSheet?: boolean;
   cells: Map<string, Cell>;
   maxRow: number; // 1-based extent of used cells (0 = empty)
   maxCol: number;
@@ -775,6 +777,8 @@ export interface SheetShape {
   odsAnchorCol?: number;
   odsAnchorRow?: number;
   odsFrame?: { x: number; y: number; w: number; h: number };
+  /** xls: the shape's OfficeArt record and rich text as read, written back as they were while untouched. */
+  xls?: import("../adapters/xls/drawing").XlsShapeExtra;
   /** Created / moved / resized / restyled in the UI -> written back; otherwise preserved. */
   dirty?: boolean;
   /** A brand-new shape (authored in-app), so the writer emits it from scratch. */

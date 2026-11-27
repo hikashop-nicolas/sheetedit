@@ -5,10 +5,12 @@ import { colToLetters } from "../../core/model";
 import { type BiffRecord, Cursor, readRichString, readString, readStringNoCch, records, utf16le, type XlsString } from "./biff";
 import { isCfb, readCfbStorage, readCfbStreams } from "./cfb";
 import { type BlockCipher, rc4CryptoApi, rc4Standard, Rc4, xorKeyAndArray } from "./crypto";
-import { type Blip, readBlipStore, readSheetShapes } from "./escher";
+import { type Blip, type DrawNode, readBlipStore, readDrawingTree, readSheetShapes } from "./escher";
+import { type ChartEnv, chartRecords, readChart } from "./chart-read";
+import { icvCss } from "./palette";
 import { decodeFormula, ERRORS, type FormulaContext } from "./formula-read";
 import { DEFAULT_PALETTE } from "./palette";
-import type { XlsBook, XlsCell, XlsCf, XlsFont, XlsName, XlsRange, XlsSheet, XlsSupbook, XlsXf } from "./types";
+import type { XlsBook, XlsCell, XlsCf, XlsFont, XlsName, XlsRange, XlsSheet, XlsSupbook, XlsTxo, XlsXf } from "./types";
 
 export interface XlsReadOptions {
   /** The password for an encrypted workbook. */
@@ -56,7 +58,7 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
 }
 
 function newSheet(name: string, state: number): XlsSheet {
-  return { name, state, cells: new Map(), rows: new Map(), cols: [], merges: [], links: [], notes: [], dvs: [], condFmts: [], images: [], print: {}, charts: 0, shapes: 0 };
+  return { name, state, cells: new Map(), rows: new Map(), cols: [], merges: [], links: [], notes: [], dvs: [], condFmts: [], images: [], print: {}, charts: 0, shapes: 0, chartObjs: [] };
 }
 
 /** Records whose payload stays clear in an encrypted stream. */
@@ -277,6 +279,20 @@ function parseWorkbookStream(input: Uint8Array, opts: XlsReadOptions): XlsBook {
     book.sheets.push(sh);
   } else {
     for (const [bi, b] of bound.entries()) {
+      if (b.type === 2 && biff >= 8 && b.pos > 0 && b.pos < stream.length) {
+        // A chart sheet: one chart filling the sheet.
+        const recs = chartRecords(stream, b.pos);
+        const chart = readChart(recs, chartEnv(book, ctxBase));
+        if (chart) {
+          const sh = newSheet(b.name, b.state);
+          sh.boundIndex = bi;
+          sh.chartSheet = chart;
+          const cn = recs.find((r) => r.type === 0x01ba);
+          if (cn) try { sh.codeName = readString(new Cursor(cn, book.codepage), 8, 2); } catch { /* no code name */ }
+          book.sheets.push(sh);
+          continue;
+        }
+      }
       if (b.type !== 0 && b.type !== 1) { book.skippedSheets.push(b.name); continue; }
       if (b.pos <= 0 || b.pos >= stream.length) throw new Error(`damaged .xls: sheet "${b.name}" points outside the stream`);
       const sh = newSheet(b.name, b.state);
@@ -298,7 +314,7 @@ function parseWorkbookStream(input: Uint8Array, opts: XlsReadOptions): XlsBook {
     }
   }
   // The active tab counts skipped sheets; map it onto the loaded ones.
-  const loadedBefore = bound.slice(0, book.activeTab + 1).filter((b) => b.type === 0 || b.type === 1).length - 1;
+  const loadedBefore = single ? 0 : book.sheets.filter((s) => (s.boundIndex ?? 0) <= book.activeTab).length - 1;
   book.activeTab = Math.max(0, Math.min(book.sheets.length - 1, loadedBefore));
   return book;
 }
@@ -551,8 +567,9 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
   let started = false;
   const drawing: Uint8Array[] = [];
   const objs: { ot: number; id: number }[] = [];
-  const txos: string[] = [];
+  const txos: XlsTxo[] = [];
   const txoByObj = new Map<number, string>();
+  const chartAt = new Map<number, number>();
   let cf: { ranges: XlsRange[]; rules: XlsCf[] } | null = null;
   let note5: { r: number; c: number; text: string } | null = null;
   const put = (cell: XlsCell): void => {
@@ -572,12 +589,18 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
   for (const r of records(stream, pos)) {
     if (++count > 5_000_000) throw new Error("damaged .xls: too many records");
     if (BOF_TYPES.has(r.type)) {
-      if (started) depth++;
+      if (started) {
+        depth++;
+        // An embedded chart's substream follows its OBJ.
+        if (depth === 1 && b8 && r.data.length >= 4 && (r.data[2]! | (r.data[3]! << 8)) === 0x20) chartAt.set(objs.length - 1, r.pos);
+      }
       started = true;
       continue;
     }
     if (r.type === 0x000a) {
       if (depth === 0) break;
+      // The next shape's drawing data can follow an embedded chart's EOF as CONTINUEs.
+      if (depth === 1 && b8) drawing.push(...r.conts);
       depth--;
       continue;
     }
@@ -747,15 +770,15 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
             c.skip(Math.min(cb, c.left));
           }
           objs.push({ ot, id });
-          if (ot === 5) sh.charts++;
-          else if (ot !== 0x19 && ot !== 8 && ot !== 0x14) sh.shapes++;
+          drawing.push(...r.conts); // the next shapes' drawing data can ride in its CONTINUEs
           break;
         }
         case 0x01b6: { // TXO
-          const text = readTxo(r);
-          txos.push(text);
+          const txo = readTxo(r);
+          if (b8) drawing.push(...r.conts.slice(txoConts(r)));
+          txos.push(txo);
           const o = objs[objs.length - 1];
-          if (o) txoByObj.set(o.id, text);
+          if (o) txoByObj.set(o.id, txo.text);
           break;
         }
         case 0x00ec: drawing.push(r.data, ...r.conts); break;
@@ -874,8 +897,51 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
       // A damaged drawing loses its pictures, not the sheet.
     }
   }
-  void txos;
+  // Shapes, text boxes and embedded charts.
+  const seen = new Set<number>();
+  if (drawing.length && b8) {
+    try {
+      const nodes = readDrawingTree(concatAll(drawing));
+      const keep: DrawNode[] = [];
+      const visit = (n: DrawNode, top: boolean): boolean => {
+        if (n.obj != null) seen.add(n.obj);
+        const ot = n.obj != null ? objs[n.obj]?.ot ?? -1 : -1;
+        if (ot === 5) {
+          const at = n.obj != null ? chartAt.get(n.obj) : undefined;
+          const ch = at != null ? readChart(chartRecords(stream, at), chartEnv(book, base)) : null;
+          if (ch && top) sh.chartObjs.push({ anchor: n.anchor, chart: ch });
+          else sh.charts++;
+          return false;
+        }
+        if (ot === 8 || ot === 0x19 || ot === 0x14) return false; // pictures, notes, filter arrows
+        if (FORM_CONTROLS.has(ot)) { sh.shapes++; return false; }
+        if (n.kids) n.kids = n.kids.filter((k) => visit(k, false));
+        return !n.kids || n.kids.length > 0;
+      };
+      for (const n of nodes) if (visit(n, true)) keep.push(n);
+      if (keep.length) sh.drawing = { nodes: keep, objs, txos };
+    } catch {
+      // A damaged drawing loses its shapes, not the sheet.
+    }
+  }
+  // Objects no drawing describes (old-style OBJ records) cannot be kept either.
+  objs.forEach((o, i) => { if (!seen.has(i) && o.ot !== 0x14 && o.ot !== 0x19 && o.ot !== 8) { if (o.ot === 5) sh.charts++; else sh.shapes++; } });
 }
+
+/** OBJ types that are form controls (buttons, check boxes, lists...), still not kept. */
+const FORM_CONTROLS = new Set([7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 22, 23, 24]);
+
+/** What the chart reader needs from the book. */
+export function chartEnv(book: XlsBook, base: Omit<FormulaContext, "row" | "col">): ChartEnv {
+  return {
+    formula: (rgce) => decodeFormula(rgce, undefined, { ...base, row: 0, col: 0 }) ?? undefined,
+    font: (i) => book.fonts[i < 4 ? i : i - 1],
+    format: (i) => book.formats.get(i) ?? BUILTIN_FMT[i],
+    color: (icv) => icvCss(book.palette, icv),
+  };
+}
+
+const BUILTIN_FMT: Record<number, string> = { 1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%", 11: "0.00E+00", 14: "m/d/yyyy" };
 
 function readHyperlink(c: Cursor): XlsSheet["links"][number] | null {
   const range = range8(c);
@@ -919,15 +985,42 @@ function readHyperlink(c: Cursor): XlsSheet["links"][number] | null {
   return { range, url, location };
 }
 
-function readTxo(r: BiffRecord): string {
+/** How many of a TXO's CONTINUEs hold its text and runs; any after them are drawing data. */
+function txoConts(r: BiffRecord): number {
+  const d = r.data;
+  const cch = d.length >= 14 ? d[10]! | (d[11]! << 8) : 0, cbRuns = d.length >= 14 ? d[12]! | (d[13]! << 8) : 0;
+  let i = 0, left = cch;
+  while (left > 0 && i < r.conts.length) { const c = r.conts[i++]!; left -= Math.floor((c.length - 1) / (c[0]! & 1 ? 2 : 1)); }
+  for (let b = cbRuns; b > 0 && i < r.conts.length;) b -= r.conts[i++]!.length;
+  return i;
+}
+
+function readTxo(r: BiffRecord): XlsTxo {
   const c = new Cursor(r.data);
-  c.u16(); c.u16();
+  const grbit = c.u16(), rot = c.u16();
   c.skip(6);
-  const cch = c.u16();
-  if (!cch || !r.conts.length) return "";
-  const t = new Cursor({ data: r.conts[0]!, conts: r.conts.slice(1) });
+  const cch = c.u16(), cbRuns = c.u16();
+  if (!cch || !r.conts.length) return { text: "", runs: [], grbit, rot };
+  const own = r.conts.slice(0, txoConts(r));
+  const t = new Cursor({ data: own[0]!, conts: own.slice(1) });
   const flags = t.u8();
-  return t.chars8(cch, (flags & 1) === 1).replace(/\r\n?/g, "\n");
+  const raw = t.chars8(cch, (flags & 1) === 1);
+  // The formatting runs fill the last cbRuns bytes: ich, font, 4 reserved; the last marks the end.
+  const all = concatAll(own);
+  const runs: XlsTxo["runs"] = [];
+  for (let o = Math.max(0, all.length - cbRuns); o + 8 <= all.length; o += 8) {
+    const ich = all[o]! | (all[o + 1]! << 8), ifnt = all[o + 2]! | (all[o + 3]! << 8);
+    if (ich < cch) runs.push({ ich, ifnt });
+  }
+  // A CR LF pair is two characters in the runs; keep their indexes in step with the text.
+  let text = "";
+  const map: number[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    map[i] = text.length;
+    if (raw[i] === "\r") { if (raw[i + 1] !== "\n") text += "\n"; continue; }
+    text += raw[i];
+  }
+  return { text, runs: runs.map((x) => ({ ich: map[x.ich] ?? text.length, ifnt: x.ifnt })), grbit, rot };
 }
 
 function readCf(c: Cursor, ctx: FormulaContext): XlsCf | null {

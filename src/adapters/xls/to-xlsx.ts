@@ -130,6 +130,23 @@ const a1 = (r: number, c: number): string => colToLetters(c + 1) + String(r + 1)
 const sqref = (rs: XlsRange[]): string => rs.map(rangeA1).join(" ");
 const twipsPt = (t: number): number => Math.round((t / 20) * 100) / 100;
 
+/** A sheet's column widths and row heights in px (0-based), as the drawing anchors measure them. */
+export function xlsSheetPx(s: XlsSheet): { colPx: (c: number) => number; rowPx: (r: number) => number } {
+  const colPx = (c: number): number => {
+    const ci = s.cols.find((x) => c >= x.first && c <= x.last);
+    if (ci?.hidden) return 0;
+    if (ci) return colWidthToPx(ci.width / 256, 7);
+    const defW = s.stdWidth != null ? s.stdWidth / 256 : (s.defColWidth ?? 8) + 0.71;
+    return colWidthToPx(defW, 7);
+  };
+  const rowPx = (r: number): number => {
+    const info = s.rows.get(r);
+    if (info?.hidden) return 0;
+    return Math.round((info?.height ?? s.defRowHeight ?? 255) / 15);
+  };
+  return { colPx, rowPx };
+}
+
 /** Convert the book into xlsx parts. */
 export function xlsBookToXlsx(book: XlsBook): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {};
@@ -351,18 +368,7 @@ export function xlsBookToXlsx(book: XlsBook): Record<string, Uint8Array> {
   }
 
   function writeDrawing(s: XlsSheet, n: number): void {
-    const colPx = (c: number): number => {
-      const ci = s.cols.find((x) => c >= x.first && c <= x.last);
-      if (ci?.hidden) return 0;
-      if (ci) return colWidthToPx(ci.width / 256, 7);
-      const defW = s.stdWidth != null ? s.stdWidth / 256 : (s.defColWidth ?? 8) + 0.71;
-      return colWidthToPx(defW, 7);
-    };
-    const rowPx = (r: number): number => {
-      const info = s.rows.get(r);
-      if (info?.hidden) return 0;
-      return Math.round((info?.height ?? s.defRowHeight ?? 255) / 15);
-    };
+    const { colPx, rowPx } = xlsSheetPx(s);
     const EMU = 9525;
     const rels: string[] = [];
     const anchors = s.images.map((im, i) => {

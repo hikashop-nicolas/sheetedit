@@ -1,7 +1,10 @@
 // BIFF8 writer: a workbook model (with its xlsx style pool) as an Excel 97-2003 .xls compound file.
 // Styles are rebuilt from the live styles.xml so every edit made through the xlsx paths lands in
 // the XF / FONT / FORMAT tables; formulas are compiled to tokens with their cached results.
-import type { Cell, CfRule, Sheet, TextRun, Workbook } from "../../core/model";
+import type { Cell, CfRule, Sheet, SheetShape, TextRun, Workbook } from "../../core/model";
+import { geomOf } from "../xlsx/shape-read";
+import { type ChartWriteEnv, writeChartStream } from "./chart-write";
+import { sptOf } from "./drawing";
 import { colToLetters, firstByLocal } from "../../core/model";
 import { SHEET_LOCK_DEFAULTS, type SheetLock } from "../../core/protection";
 import { argbToCss, colWidthToPx, maxDigitWidth, readTheme, resolveColor } from "../xlsx/read";
@@ -289,6 +292,13 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
 
   function writeSheet(s: Sheet, si: number): { rs: RecStream; indexAt: number; dbcells: number[]; defColAt: number } {
     const rs = new RecStream();
+    const sheetChart = s.chartSheet ? s.charts?.[0] : undefined;
+    if (sheetChart) {
+      const a = sheetChart.anchor;
+      const w = Math.max(100, a.toColOff - a.fromColOff), h = Math.max(100, a.toRowOff - a.fromRowOff);
+      rs.bytes(writeChartStream(sheetChart, chartEnv(si), { w: w * 0.75, h: h * 0.75 }, { sheet: true, codeName: s.codeName }));
+      return { rs, indexAt: -1, dbcells: [], defColAt: 0 };
+    }
     const env = envFor(si);
     rs.rec(0x0809, body().u16(0x0600).u16(0x0010).u16(0x0dbb).u16(0x07cc).u32(0x000100c1).u32(0x00000006));
     // Cells, grouped by row.
@@ -454,7 +464,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     writeCondFormats(rs, s, env);
     writeLinks(rs, s);
     writeValidations(rs, s, env);
-    if (vbaBin && s.codeName) rs.rec(0x01ba, body().str16(s.codeName.slice(0, 31)));
+    if (s.codeName) rs.rec(0x01ba, body().str16(s.codeName.slice(0, 31)));
     if (s.tabColor) {
       const icv = palette.index(s.tabColor, 0x7f);
       rs.rec(0x0862, body().u16(0x0862).u16(0).zeros(8).u32(0x14).u32(icv & 0x7f));
@@ -555,7 +565,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     return s.slice(0, 32767);
   }
 
-  // ---- drawing objects: comments and pictures ------------------------------------------------
+  // ---- drawing objects: pictures, charts, shapes and comments --------------------------------
   function writeObjects(rs: RecStream, s: Sheet, si: number): void {
     const notes: { r: number; c: number; author: string; text: string }[] = [];
     for (const cell of s.cells.values()) {
@@ -568,14 +578,15 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       if (b == null) { report.droppedImages++; continue; }
       pics.push({ anchor: im.anchor, blip: b });
     }
-    if (!notes.length && !pics.length) return;
+    const charts = s.chartSheet ? [] : s.charts ?? [];
+    const shapes = (s.shapes ?? []).slice(0, 1000);
+    if (!notes.length && !pics.length && !charts.length && !shapes.length) return;
     const dg = drawings.length + 1;
-    const total = notes.length + pics.length;
-    drawings.push({ dg, shapes: total + 1 });
     const spid = (k: number): number => dg * 1024 + k;
-    // Each shape container, and where its client data / textbox ends (record split points).
-    type Part = { bytes: Bytes; obj: Bytes; txo?: { text: string } };
-    const parts: Part[] = [];
+    // A shape container with its OBJ, and its TXO or chart substream; groups hold their members.
+    type Txo = { text: string; runs: [number, number][]; grbit: number; rot: number };
+    type Item = { sp: Uint8Array; obj: Bytes; txo?: Txo; chart?: Uint8Array; kids?: Item[] };
+    const items: Item[] = [];
     const colPx = (c: number): number => (s.hiddenCols?.has(c) ? 0 : s.colWidths?.get(c) ?? s.defaultColWidth ?? 64);
     const rowPx = (r: number): number => (s.hiddenRows?.has(r) ? 0 : s.rowHeights?.get(r) ?? s.defaultRowHeight ?? 17);
     const anchorBytes = (a: { fromCol: number; fromRow: number; fromColOff: number; fromRowOff: number; toCol: number; toRow: number; toColOff: number; toRowOff: number }): Bytes => {
@@ -590,17 +601,95 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       const [c2, x2] = walk(a.toCol, a.toColOff, colPx, MAX_COLS), [r2, y2] = walk(a.toRow, a.toRowOff, rowPx, MAX_ROWS);
       return body().u16(0).u16(c1).u16(Math.round(x1 * 1023)).u16(r1).u16(Math.round(y1 * 255)).u16(c2).u16(Math.round(x2 * 1023)).u16(r2).u16(Math.round(y2 * 255));
     };
+    const cmo = (ot: number, id: number, flags = 0x6011): Bytes => body().u16(0x15).u16(0x12).u16(ot).u16(id).u16(flags).zeros(12);
     let k = 1;
     let objId = 1;
     for (const pic of pics) {
-      const id = objId++;
       const sp = new Bytes();
       escher(sp, 0xf00a, 0x2, 75, body().u32(spid(k++)).u32(0xa00));
       escher(sp, 0xf00b, 0x3, 2, body().u16(0x4104).u32(pic.blip).u16(0x03bf).u32(0x00080000));
       escher(sp, 0xf010, 0, 0, anchorBytes(pic.anchor));
       escher(sp, 0xf011, 0, 0, body());
-      const obj = body().u16(0x15).u16(0x12).u16(8).u16(id).u16(0x6011).zeros(12).u16(0x07).u16(2).u16(0xffff).u16(0x08).u16(2).u16(1).u16(0).u16(0);
-      parts.push({ bytes: container(0xf004, sp), obj });
+      const obj = cmo(8, objId++).u16(0x07).u16(2).u16(0xffff).u16(0x08).u16(2).u16(1);
+      items.push({ sp: container(0xf004, sp).out().slice(), obj });
+    }
+    for (const ch of charts) {
+      const sp = new Bytes();
+      escher(sp, 0xf00a, 0x2, 201, body().u32(spid(k++)).u32(0xa00));
+      const props: [number, number][] = [[0x007f, 0x01040104], [0x00bf, 0x00080008], [0x0181, 0x0800004e], [0x0183, 0x0800004d], [0x01bf, 0x00110010], [0x01c0, 0x0800004d], [0x01ff, 0x00080008], [0x023f, 0x00020000], [0x03bf, 0x00080000]];
+      const o = body();
+      for (const [pid, v] of props) o.u16(pid).u32(v);
+      escher(sp, 0xf00b, 0x3, props.length, o);
+      escher(sp, 0xf010, 0, 0, anchorBytes(ch.anchor));
+      escher(sp, 0xf011, 0, 0, body());
+      const a = ch.anchor;
+      let wPx = a.toColOff - a.fromColOff, hPx = a.toRowOff - a.fromRowOff;
+      for (let c = a.fromCol; c < a.toCol; c++) wPx += colPx(c);
+      for (let r = a.fromRow; r < a.toRow; r++) hPx += rowPx(r);
+      const stream = writeChartStream(ch, chartEnv(si), { w: Math.max(10, wPx * 0.75), h: Math.max(10, hPx * 0.75) });
+      items.push({ sp: container(0xf004, sp).out().slice(), obj: cmo(5, objId++), chart: stream });
+    }
+    // Shapes: untouched ones go back as read, groups with them; the others are built from the model.
+    const groupItems = new Map<number, Item>();
+    for (const sh of shapes) {
+      const x = sh.xls;
+      const txo = shapeTxo(sh);
+      const id = objId++;
+      if (x?.groups?.length) {
+        let parent: Item[] = items;
+        for (const g of x.groups) {
+          let gi = groupItems.get(g.id);
+          if (!gi) {
+            let raw = withSpid(g.raw, spid(k++));
+            if (g === x.groups[0] && sh.dirty && moved(sh)) raw = withAnchor(raw, anchorBytes(sh.anchor).out());
+            gi = { sp: raw, obj: cmo(0, objId++).u16(0x06).u16(2).u16(0), kids: [] };
+            groupItems.set(g.id, gi);
+            parent.push(gi);
+          }
+          parent = gi.kids!;
+        }
+        parent.push({ sp: stripTextbox(withSpid(x.raw, spid(k++))), obj: cmo(x.ot, id), txo: hasTextbox(x.raw) ? txo ?? EMPTY_TXO : undefined });
+        continue;
+      }
+      const usable = x && !sh.created && !sh.styleDirty && !sh.xfrmDirty && geomOf(sh.preset ?? null) === sh.geom && (!sh.text || hasTextbox(x.raw));
+      if (usable) {
+        let raw = withSpid(x.raw, spid(k++));
+        if (sh.dirty && moved(sh)) raw = withAnchor(raw, anchorBytes(sh.anchor).out());
+        items.push({ sp: stripTextbox(raw), obj: cmo(x.ot, id), txo: hasTextbox(x.raw) ? txo ?? EMPTY_TXO : undefined });
+        continue;
+      }
+      const spt = sptOf(sh.preset, sh.geom) ?? 1;
+      const isLine = sh.geom === "line";
+      const sp = new Bytes();
+      escher(sp, 0xf00a, 0x2, spt, body().u32(spid(k++)).u32(0xa00 | (sh.flipH ? 0x40 : 0) | (sh.flipV ? 0x80 : 0)));
+      const props: [number, number][] = [];
+      if (sh.rotation) props.push([0x0004, Math.round(sh.rotation * 65536) | 0]);
+      if (sh.text) props.push([0x0080, id * 0x10000], [0x00bf, 0x00080008]);
+      if (!isLine && sh.fill) {
+        const grad = sh.fillGradient;
+        if (grad && grad.stops.length >= 2) props.push([0x0180, 7]);
+        props.push([0x0181, colorRgb(sh.fill)]);
+        if (sh.fillOpacity != null && sh.fillOpacity < 1) props.push([0x0182, Math.round(sh.fillOpacity * 65536)]);
+        if (grad && grad.stops.length >= 2) props.push([0x0183, colorRgb(grad.stops[grad.stops.length - 1]!.color)], [0x018b, (Math.round(270 - grad.angle) % 360) * 65536]);
+      }
+      props.push([0x01bf, !isLine && sh.fill ? 0x00100010 : 0x00100000]);
+      if (sh.stroke) {
+        props.push([0x01c0, colorRgb(sh.stroke)], [0x01cb, Math.round((sh.strokeWidth ?? 1) * 9525)]);
+        const dash = DASH_CODE[sh.dash ?? ""];
+        if (dash) props.push([0x01ce, dash]);
+        const head = END_CODE[sh.headEnd ?? ""], tail = END_CODE[sh.tailEnd ?? ""];
+        if (head) props.push([0x01d0, head]);
+        if (tail) props.push([0x01d1, tail]);
+      }
+      props.push([0x01ff, sh.stroke ? 0x00080008 : 0x00080000], [0x03bf, 0x00020002]);
+      const o = body();
+      for (const [pid, v] of props.sort((a, b) => a[0] - b[0])) o.u16(pid).u32(v >>> 0);
+      escher(sp, 0xf00b, 0x3, props.length, o);
+      escher(sp, 0xf010, 0, 0, anchorBytes(sh.anchor));
+      escher(sp, 0xf011, 0, 0, body());
+      if (sh.text) escher(sp, 0xf00d, 0, 0, body());
+      const ot = isLine ? 0x1e : spt === 202 ? 6 : 0x1e;
+      items.push({ sp: container(0xf004, sp).out().slice(0, sh.text ? -8 : undefined), obj: cmo(ot, id), txo: sh.text ? txo : undefined });
     }
     const noteIds: number[] = [];
     for (const n of notes) {
@@ -615,41 +704,86 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       const a = { fromCol: n.c + 2, fromRow: Math.max(1, n.r), fromColOff: 15, fromRowOff: 10, toCol: n.c + 4, toRow: n.r + 5, toColOff: 15, toRowOff: 4 };
       escher(sp, 0xf010, 0, 0, anchorBytes(a));
       escher(sp, 0xf011, 0, 0, body());
-      const obj = body().u16(0x15).u16(0x12).u16(0x19).u16(id).u16(0x4011).zeros(12).u16(0x0d).u16(0x16).bytes(md5(new TextEncoder().encode(`${si}:${n.r}:${n.c}`))).u16(0).u32(0).u16(0).u16(0);
-      parts.push({ bytes: container(0xf004, sp), obj, txo: { text: n.text } });
+      escher(sp, 0xf00d, 0, 0, body());
+      const obj = cmo(0x19, id, 0x4011).u16(0x0d).u16(0x16).bytes(md5(new TextEncoder().encode(`${si}:${n.r}:${n.c}`))).u16(0).u32(0);
+      items.push({ sp: container(0xf004, sp).out().slice(0, -8), obj, txo: { text: n.text, runs: [[0, 0]], grbit: 0x0212, rot: 0 } });
     }
+    drawings.push({ dg, shapes: k });
     // Patriarch group, then the shapes; the containers' lengths span every MSODRAWING record.
     const patriarch = new Bytes();
     escher(patriarch, 0xf009, 1, 0, body().zeros(16));
     escher(patriarch, 0xf00a, 2, 0, body().u32(spid(0)).u32(5));
     const patriarchC = container(0xf004, patriarch);
-    const textboxLen = 8;
-    let spgrLen = patriarchC.len;
-    for (const p of parts) spgrLen += p.bytes.len + (p.txo ? textboxLen : 0);
+    const lenOf = (it: Item): number => (it.kids ? 8 + it.sp.length + it.kids.reduce((n, c) => n + lenOf(c), 0) : it.sp.length + (it.txo ? 8 : 0));
+    const spgrLen = patriarchC.len + items.reduce((n, it) => n + lenOf(it), 0);
     const fdg = new Bytes();
-    escher(fdg, 0xf008, 0, dg, body().u32(total + 1).u32(spid(k - 1)));
+    escher(fdg, 0xf008, 0, dg, body().u32(k).u32(spid(k - 1)));
     const dgLen = fdg.len + 8 + spgrLen;
-    const headBytes = new Bytes();
-    headBytes.u16(0xf).u16(0xf002).u32(dgLen).bytes(fdg.out()).u16(0xf).u16(0xf003).u32(spgrLen).bytes(patriarchC.out());
-    parts.forEach((p, i) => {
-      const chunk = i === 0 ? new Bytes().bytes(headBytes.out()).bytes(p.bytes.out()) : p.bytes;
+    let head: Bytes | null = new Bytes().u16(0xf).u16(0xf002).u32(dgLen).bytes(fdg.out()).u16(0xf).u16(0xf003).u32(spgrLen).bytes(patriarchC.out());
+    const emit = (it: Item): void => {
+      const chunk = new Bytes();
+      if (head) { chunk.bytes(head.out()); head = null; }
+      if (it.kids) chunk.u16(0xf).u16(0xf003).u32(lenOf(it) - 8);
+      chunk.bytes(it.sp);
       rs.rec(0x00ec, chunk.out());
-      rs.rec(0x005d, p.obj);
-      if (p.txo) {
-        rs.rec(0x00ec, body().u16(0).u16(0xf00d).u32(0));
-        const t = p.txo.text.replace(/\r?\n/g, "\n").slice(0, 32767);
-        rs.rec(0x01b6, body().u16(0x0212).u16(0).zeros(6).u16(t.length).u16(t.length ? 16 : 0).u16(0).u32(0));
-        if (t.length) {
-          const tb = body().chars(t);
-          // Text CONTINUEs: a long note splits on character boundaries, each with its own flag byte.
-          const wide = tb.out()[0] === 1;
-          const per = wide ? Math.floor((MAX_REC - 1) / 2) : MAX_REC - 1;
-          for (let o = 0; o < t.length; o += per) rs.rec(0x003c, body().chars(wide ? t.slice(o, o + per) : t.slice(o, o + per)));
-          rs.rec(0x003c, body().u16(0).u16(0).u32(0).u16(t.length).u16(0).u32(0));
-        }
-      }
-    });
+      rs.rec(0x005d, it.obj.u16(0).u16(0));
+      if (it.chart) rs.bytes(it.chart);
+      if (it.txo) writeTxo(rs, it.txo);
+      for (const c of it.kids ?? []) emit(c);
+    };
+    items.forEach(emit);
     notes.forEach((n, i) => rs.rec(0x001c, body().u16(n.r).u16(n.c).u16(0).u16(noteIds[i]!).str16(n.author.slice(0, 255) || " ").u8(0)));
+  }
+
+  /** A shape's text as a TXO: its own runs while the text is as read, else one run from the model. */
+  function shapeTxo(sh: SheetShape): { text: string; runs: [number, number][]; grbit: number; rot: number } | undefined {
+    const text = sh.text ?? "";
+    if (!text) return undefined;
+    const h = sh.textAlign === "center" ? 2 : sh.textAlign === "right" ? 3 : 1;
+    const v = sh.textValign === "middle" ? 2 : sh.textValign === "bottom" ? 3 : 1;
+    const grbit = 0x0200 | (h << 1) | (v << 4);
+    const kept = sh.xls?.text;
+    if (kept && kept.text === text && !sh.styleDirty) {
+      const runs = kept.runs.map((r): [number, number] => [r.ich, ifnt({ height: r.font.height, italic: r.font.italic, strike: r.font.strike, weight: r.font.weight, underline: r.font.underline, escapement: r.font.escapement, color: r.font.color ? palette.index(r.font.color, 0x7fff) : 0x7fff, name: r.font.name })]);
+      if (runs.length) return { text, runs, grbit, rot: 0 };
+    }
+    const f: FontKey = { ...baseFont };
+    if (sh.textSize) f.height = Math.round(sh.textSize * 20);
+    if (sh.textColor) f.color = palette.index(sh.textColor, 0x7fff);
+    return { text, runs: [[0, ifnt(f)]], grbit, rot: 0 };
+  }
+
+  function writeTxo(rs: RecStream, txo: { text: string; runs: [number, number][]; grbit: number; rot: number }): void {
+    rs.rec(0x00ec, body().u16(0).u16(0xf00d).u32(0));
+    const t = txo.text.replace(/\r?\n/g, "\n").slice(0, 32767);
+    const runs = txo.runs.filter(([ich]) => ich < t.length);
+    if (t.length && (!runs.length || runs[0]![0] !== 0)) runs.unshift([0, runs[0]?.[1] ?? 0]);
+    rs.rec(0x01b6, body().u16(txo.grbit).u16(txo.rot).zeros(6).u16(t.length).u16(t.length ? (runs.length + 1) * 8 : 0).u16(0).u32(0));
+    if (!t.length) return;
+    // Text CONTINUEs: a long text splits on character boundaries, each with its own flag byte.
+    const wide = /[^\u0000-ÿ]/.test(t);
+    const per = wide ? Math.floor((MAX_REC - 1) / 2) : MAX_REC - 1;
+    for (let o = 0; o < t.length; o += per) rs.rec(0x003c, body().chars(t.slice(o, o + per)));
+    const rb = body();
+    for (const [ich, f] of runs.slice(0, 1000)) rb.u16(ich).u16(f).u32(0);
+    rs.rec(0x003c, rb.u16(t.length).u16(0).u32(0));
+  }
+
+  /** Whether a shape moved since it was read. */
+  function moved(sh: SheetShape): boolean {
+    const a = sh.anchor, b = sh.xls?.anchor;
+    return !b || a.fromCol !== b.fromCol || a.fromRow !== b.fromRow || a.toCol !== b.toCol || a.toRow !== b.toRow || a.fromColOff !== b.fromColOff || a.fromRowOff !== b.fromRowOff || a.toColOff !== b.toColOff || a.toRowOff !== b.toRowOff;
+  }
+
+  /** The chart writer's view of this workbook: references, fonts, colours, formats. */
+  function chartEnv(si: number): ChartWriteEnv {
+    return {
+      ref: (text) => compile(text, envFor(si, true), "R")?.rgce ?? null,
+      font: (st, bold, size) => ifnt({ ...baseFont, height: Math.round((size ?? st?.size ?? 10) * 20), weight: (bold ?? st?.bold) ? 700 : 400, italic: !!st?.italic, color: st?.color ? palette.index(st.color, 0x7fff) : 0x7fff, name: st?.font ?? "Arial" }),
+      icv: (css) => palette.index(css, 8),
+      fmt: (code) => ifmtOf(code),
+      warn: () => undefined,
+    };
   }
 
   function blipOf(uri: string): number | null {
@@ -799,10 +933,8 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   const tabid = body();
   sheets.forEach((_, i) => tabid.u16(i + 1));
   g.rec(0x013d, tabid);
-  if (vbaBin) {
-    g.rec(0x00d3); // OBPROJ: the file carries a VBA project
-    g.rec(0x01ba, body().str16(wb.xls?.codeName || "ThisWorkbook"));
-  }
+  if (vbaBin) g.rec(0x00d3); // OBPROJ: the file carries a VBA project
+  if (vbaBin || wb.xls?.codeName) g.rec(0x01ba, body().str16(wb.xls?.codeName || "ThisWorkbook"));
   g.rec(0x009c, body().u16(14));
   const wp = wb.protection;
   g.rec(0x0019, body().u16(wp?.windows ? 1 : 0));
@@ -845,7 +977,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   sheets.forEach((s) => {
     boundAt.push(g.len + 4);
     const name = s.name.replace(/[\\/?*[\]:]/g, "_").slice(0, 255) || "Sheet";
-    g.rec(0x0085, body().u32(0).u8(s.visibility === "hidden" ? 1 : s.visibility === "veryHidden" ? 2 : 0).u8(0).str8(name));
+    g.rec(0x0085, body().u32(0).u8(s.visibility === "hidden" ? 1 : s.visibility === "veryHidden" ? 2 : 0).u8(s.chartSheet && s.charts?.length ? 2 : 0).str8(name));
   });
   g.rec(0x008c, body().u16(1).u16(1));
   if (names.length || xtis.length) {
@@ -873,7 +1005,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       g.rec(0x0018, body().u16(grbit).u8(0).u8(text.length).u16(rgce.length).u16(0).u16(n.itab).u32(0).chars(text).bytes(rgce).bytes(rgcb));
     }
   }
-  if (blips.length) writeDrawingGroup(g);
+  if (blips.length || drawings.length) writeDrawingGroup(g);
   writeSst(g);
   g.rec(0x000a);
 
@@ -885,8 +1017,10 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   sheetBodies.forEach((sb, i) => {
     gv.setUint32(boundAt[i]!, at, true);
     // INDEX: the DEFCOLWIDTH position, then each DBCELL position, all absolute.
-    sb.rs.set32(sb.indexAt + 12, at + sb.defColAt);
-    sb.dbcells.forEach((d, k) => sb.rs.set32(sb.indexAt + 16 + 4 * k, at + d));
+    if (sb.indexAt >= 0) {
+      sb.rs.set32(sb.indexAt + 12, at + sb.defColAt);
+      sb.dbcells.forEach((d, k) => sb.rs.set32(sb.indexAt + 16 + 4 * k, at + d));
+    }
     parts.push(sb.rs.out());
     at += sb.rs.len;
   });
@@ -925,7 +1059,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     const fdgg = body().u32(spidMax).u32(drawings.length + 1).u32(drawings.reduce((n, d) => n + d.shapes, 0)).u32(drawings.length);
     for (const d of drawings) fdgg.u32(d.dg).u32(d.shapes);
     escher(dgg, 0xf006, 0, 0, fdgg);
-    escher(dgg, 0xf001, 0xf, blips.length, bstore);
+    if (blips.length) escher(dgg, 0xf001, 0xf, blips.length, bstore);
     escher(dgg, 0xf00b, 3, 3, body().u16(0x00bf).u32(0x00080008).u16(0x0181).u32(0x08000041).u16(0x01c0).u32(0x08000040));
     const all = new Bytes();
     escher(all, 0xf000, 0xf, 0, dgg);
@@ -994,6 +1128,43 @@ function toRk(v: number): number | null {
     if (ih != null) return ih;
   }
   return null;
+}
+
+const EMPTY_TXO = { text: "", runs: [] as [number, number][], grbit: 0x0212, rot: 0 };
+const DASH_CODE: Record<string, number> = { sysDash: 1, sysDot: 2, sysDashDot: 3, sysDashDotDot: 4, dot: 5, dash: 6, lgDash: 7, dashDot: 8, lgDashDot: 9, lgDashDotDot: 10 };
+const END_CODE: Record<string, number> = { triangle: 1, stealth: 2, diamond: 3, oval: 4, arrow: 5 };
+const colorRgb = (css: string): number => /^#[0-9a-f]{6}$/i.test(css) ? (parseInt(css.slice(1, 3), 16) | (parseInt(css.slice(3, 5), 16) << 8) | (parseInt(css.slice(5, 7), 16) << 16)) : 0;
+
+/** The direct children of a shape container: [type, data start, data length]. */
+function spChildren(raw: Uint8Array): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (let p = 8; p + 8 <= raw.length;) {
+    const type = raw[p + 2]! | (raw[p + 3]! << 8);
+    const len = (raw[p + 4]! | (raw[p + 5]! << 8) | (raw[p + 6]! << 16) | (raw[p + 7]! << 24)) >>> 0;
+    out.push([type, p + 8, len]);
+    p += 8 + len;
+  }
+  return out;
+}
+const hasTextbox = (raw: Uint8Array): boolean => spChildren(raw).some(([t]) => t === 0xf00d);
+/** A copy of a shape container with a new shape id. */
+function withSpid(raw: Uint8Array, id: number): Uint8Array {
+  const out = raw.slice();
+  const sp = spChildren(out).find(([t]) => t === 0xf00a);
+  if (sp) new DataView(out.buffer).setUint32(sp[1], id, true);
+  return out;
+}
+/** A shape container with its cell anchor replaced. */
+function withAnchor(raw: Uint8Array, anchor: Uint8Array): Uint8Array {
+  const a = spChildren(raw).find(([t, , l]) => t === 0xf010 && l === anchor.length);
+  if (a) raw.set(anchor, a[1]);
+  return raw;
+}
+/** The container without its trailing ClientTextbox, which goes in a record of its own. */
+function stripTextbox(raw: Uint8Array): Uint8Array {
+  const kids = spChildren(raw);
+  const last = kids[kids.length - 1];
+  return last && last[0] === 0xf00d && last[1] + last[2] === raw.length ? raw.subarray(0, last[1] - 8) : raw;
 }
 
 function escher(out: Bytes, type: number, ver: number, inst: number, data: Bytes): void {

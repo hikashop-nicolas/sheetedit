@@ -1,6 +1,7 @@
 // The intermediate shape the BIFF reader produces, before it becomes xlsx parts for the editor.
 import type { XlsString } from "./biff";
-import type { Anchor, Blip } from "./escher";
+import type { XlsChart } from "./chart-read";
+import type { Anchor, Blip, DrawNode } from "./escher";
 
 export interface XlsFont {
   height: number; // twips
@@ -78,6 +79,16 @@ export interface XlsCondFmt { ranges: XlsRange[]; rules: XlsCf[] }
 
 export interface XlsImage { anchor: Anchor; blip: Blip; name?: string }
 
+/** A TXO: the text of a shape or note, its formatting runs (font indexes) and alignment. */
+export interface XlsTxo { text: string; runs: { ich: number; ifnt: number }[]; grbit: number; rot: number }
+
+/** A sheet's drawing layer beyond pictures and notes: the shape tree with its OBJ / TXO records. */
+export interface XlsDrawing {
+  nodes: DrawNode[];
+  objs: { ot: number; id: number }[];
+  txos: XlsTxo[];
+}
+
 export interface XlsPrint {
   paperSize?: number;
   scale?: number;
@@ -141,6 +152,11 @@ export interface XlsSheet {
   autoFilter?: XlsRange;
   /** The sheet's VBA code name (CODENAME). */
   codeName?: string;
+  /** Drawing shapes and text boxes, and the embedded charts with their anchors. */
+  drawing?: XlsDrawing;
+  chartObjs: { anchor?: Anchor; chart: XlsChart }[];
+  /** A chart sheet: its one chart fills the sheet. */
+  chartSheet?: XlsChart;
 }
 
 export interface XlsName {

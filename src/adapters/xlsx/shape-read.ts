@@ -96,7 +96,7 @@ const PRESET_GEOM: Record<string, ShapeGeom> = {
 };
 
 /** Map an OOXML preset geometry to one we render; unknowns fall back to a rectangle. */
-function geomOf(prst: string | null): ShapeGeom {
+export function geomOf(prst: string | null): ShapeGeom {
   return (prst && PRESET_GEOM[prst]) || "rect";
 }
 
