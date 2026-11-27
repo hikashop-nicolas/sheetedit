@@ -5238,6 +5238,10 @@ export function createSheetEditor(
         beginEditing(r, c);
       };
       input.addEventListener("compositionstart", replaceIfSelected);
+      // Phone keyboards often send text without a usable keydown (key "Unidentified").
+      input.addEventListener("beforeinput", (e) => {
+        if (e.inputType.startsWith("insert") && e.inputType !== "insertCompositionText") replaceIfSelected();
+      });
       input.addEventListener("keydown", (e) => {
         if ((e.key.length === 1 || e.key === "Dead") && !e.metaKey && (!e.ctrlKey || e.altKey)) replaceIfSelected();
         const moveTo = (rr: number, cc: number) => {

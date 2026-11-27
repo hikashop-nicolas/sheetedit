@@ -240,4 +240,14 @@ describe("sheetedit", () => {
     realKey("Enter", "\r", 13);
     cy.get('input[aria-label="B2"]').should("have.value", "1005");
   });
+
+  // Phone keyboards insert text without a usable keydown: CDP insertText fires only beforeinput.
+  it("replaces on text inserted without key presses", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="B2"]').click().then(($i) => ($i[0] as HTMLInputElement).setSelectionRange(0, 0));
+    cy.wrap(null).then(() => Cypress.automation("remote:debugger:protocol", { command: "Input.insertText", params: { text: "100" } }));
+    realKey("Enter", "\r", 13);
+    cy.get('input[aria-label="B2"]').should("have.value", "100");
+    cy.get('input[aria-label="C2"]').should("have.value", "200");
+  });
 });
