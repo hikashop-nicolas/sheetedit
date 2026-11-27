@@ -2,7 +2,7 @@
 // so every xlsx editing path applies, and written back as a BIFF8 compound file on save.
 import type { Workbook } from "../../core/model";
 import { readXlsx } from "../xlsx/read";
-import { isCfb } from "./cfb";
+import { isCfb, writeCfbStreams } from "./cfb";
 import { isRawBiff, readXlsBook, type XlsReadOptions } from "./read";
 import { xlsBookToXlsx } from "./to-xlsx";
 
@@ -26,6 +26,8 @@ export interface XlsSource {
   /** User-defined (macro) function names, which formulas call by name rather than as _xlfn. */
   udfs: string[];
   encrypted?: "xor" | "rc4" | "cryptoapi";
+  /** The workbook's VBA code name ("ThisWorkbook"), written back as CODENAME. */
+  codeName?: string;
 }
 
 /** Whether these bytes look like a legacy .xls (compound file or raw BIFF stream). */
@@ -35,6 +37,9 @@ export const looksLikeXls = (bytes: Uint8Array): boolean => isCfb(bytes) || isRa
 export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?: boolean } = {}): Workbook {
   const book = readXlsBook(bytes, opts);
   const files = xlsBookToXlsx(book);
+  // The VBA storage holds what an .xlsm's vbaProject.bin does, so it is read and edited as one.
+  const vbaBin = book.vba ? writeCfbStreams(book.vba) : undefined;
+  if (vbaBin) files["xl/vbaProject.bin"] = vbaBin;
   const wb = readXlsx(files, { lazySheets: opts.lazySheets });
   wb.xls = {
     biff: book.biff,
@@ -46,6 +51,7 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
     shapes: book.sheets.reduce((n, s) => n + s.shapes, 0),
     udfs: book.names.filter((n) => (n.func || !n.formula) && n.builtin == null && !n.name.startsWith("_xlfn.")).map((n) => n.name),
     encrypted: book.encrypted,
+    codeName: book.codeName,
   };
   return wb;
 }

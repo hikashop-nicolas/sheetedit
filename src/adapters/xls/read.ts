@@ -3,7 +3,7 @@
 // fails with a clear error rather than looping.
 import { colToLetters } from "../../core/model";
 import { type BiffRecord, Cursor, readRichString, readString, readStringNoCch, records, utf16le, type XlsString } from "./biff";
-import { isCfb, readCfbStreams } from "./cfb";
+import { isCfb, readCfbStorage, readCfbStreams } from "./cfb";
 import { type BlockCipher, rc4CryptoApi, rc4Standard, Rc4, xorKeyAndArray } from "./crypto";
 import { type Blip, readBlipStore, readSheetShapes } from "./escher";
 import { decodeFormula, ERRORS, type FormulaContext } from "./formula-read";
@@ -33,6 +33,7 @@ export const isRawBiff = (b: Uint8Array): boolean => b.length >= 8 && BOF_TYPES.
 export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBook {
   let stream: Uint8Array | undefined;
   let summary: Map<string, Uint8Array> | undefined;
+  let vba: { name: string; data: Uint8Array }[] | undefined;
   if (isCfb(bytes)) {
     const { streams } = readCfbStreams(bytes);
     stream = streams.get("Workbook") ?? streams.get("Book") ?? [...streams.entries()].find(([k]) => /^(workbook|book)$/i.test(k))?.[1];
@@ -41,11 +42,16 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
       throw new Error("not an Excel workbook: no Workbook stream in the compound file");
     }
     summary = new Map();
-    for (const [k, v] of streams) if (/SummaryInformation$/.test(k)) summary.set(k, v);
+    for (const [k, v] of streams) if (/SummaryInformation$|^\u0001CompObj$/.test(k)) summary.set(k, v);
+    vba = readCfbStorage(bytes, "_VBA_PROJECT_CUR");
+    // The project's signature sits at the root; it travels with the project as _VBA_SIGNATURE.
+    const sig = streams.get("\u0005DigitalSignature");
+    if (vba.length && sig) vba.push({ name: "_VBA_SIGNATURE", data: sig });
   } else if (isRawBiff(bytes)) stream = bytes;
   else throw new Error("not an .xls workbook");
   const book = parseWorkbookStream(stream, opts);
   if (summary?.size) book.summary = summary;
+  if (vba?.length) book.vba = vba;
   return book;
 }
 
@@ -240,6 +246,7 @@ function parseWorkbookStream(input: Uint8Array, opts: XlsReadOptions): XlsBook {
         case 0x0013: book.password = c.u16(); break;
         case 0x0019: book.windowProtect = c.u16() === 1; break;
         case 0x00eb: dggParts.push(r.data, ...r.conts); break;
+        case 0x01ba: if (biff >= 8) book.codeName = readString(c, 8, 2); break; // CODENAME
       }
     } catch (e) {
       if (e instanceof XlsPasswordError) throw e;
@@ -819,6 +826,7 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
           break;
         }
         case 0x009d: sh.hasAutoFilter = true; break;
+        case 0x01ba: if (b8) sh.codeName = readString(c, 8, 2); break; // CODENAME
         case 0x01be: { // DV
           const dv = readDv(c, ctx);
           if (dv) sh.dvs.push(dv);

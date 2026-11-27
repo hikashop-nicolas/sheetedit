@@ -216,7 +216,8 @@ export function xlsBookToXlsx(book: XlsBook): Record<string, Uint8Array> {
       const view = `<sheetViews><sheetView${w2 & 0x2 ? "" : ' showGridLines="0"'}${w2 & 0x10 ? "" : ' showZeros="0"'}${w2 & 0x40 ? ' rightToLeft="1"' : ""}${index === book.activeTab ? ' tabSelected="1"' : ""} workbookViewId="0">${pane}</sheetView></sheetViews>`;
       const defW = s.stdWidth != null ? s.stdWidth / 256 : s.defColWidth != null ? s.defColWidth + 0.71 : undefined;
       let out = HEAD + `<worksheet xmlns="${SS}" xmlns:r="${R}">`;
-      if (sheetPr.length) out += `<sheetPr>${sheetPr.join("")}</sheetPr>`;
+      const cn = s.codeName ? ` codeName="${esc(s.codeName)}"` : "";
+      if (sheetPr.length || cn) out += `<sheetPr${cn}>${sheetPr.join("")}</sheetPr>`;
       out += `<dimension ref="${maxR || maxC ? "A1:" + a1(maxR, maxC) : "A1"}"/>` + view;
       out += `<sheetFormatPr${defW != null ? ` defaultColWidth="${num(Math.round(defW * 100) / 100)}"` : ""} defaultRowHeight="${twipsPt(defH)}"/>`;
       if (cols) out += `<cols>${cols}</cols>`;

@@ -7,7 +7,8 @@ import { SHEET_LOCK_DEFAULTS, type SheetLock } from "../../core/protection";
 import { argbToCss, colWidthToPx, maxDigitWidth, readTheme, resolveColor } from "../xlsx/read";
 import { colWidthChars, timePeriodFormula } from "../xlsx/write";
 import { body, Bytes, MAX_REC, RecStream } from "./bytes";
-import { writeCfbStreams } from "./cfb";
+import { readCfbAll, writeCfbStreams } from "./cfb";
+import { vbaPartOf } from "../../core/vba";
 import { md5 } from "./crypto";
 import { CompileError, compileFormula, type CompileEnv, type Ctx } from "./formula-write";
 import { DEFAULT_PALETTE, icvCss, PaletteBuilder } from "./palette";
@@ -29,6 +30,7 @@ const MAX_ROWS = 65536, MAX_COLS = 256;
 /** Write the workbook as BIFF8. `report` (optional) collects what had to be dropped. */
 export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormulas: 0, droppedImages: 0, droppedRules: 0, truncatedCells: 0 }): Uint8Array {
   const doc = wb.stylesDoc;
+  const vbaBin = vbaPartOf(wb.files);
   const theme = readTheme(wb.files["xl/theme/theme1.xml"]);
   const srcPalette = wb.xls?.palette ?? DEFAULT_PALETTE;
   const palette = new PaletteBuilder(srcPalette);
@@ -452,6 +454,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     writeCondFormats(rs, s, env);
     writeLinks(rs, s);
     writeValidations(rs, s, env);
+    if (vbaBin && s.codeName) rs.rec(0x01ba, body().str16(s.codeName.slice(0, 31)));
     if (s.tabColor) {
       const icv = palette.index(s.tabColor, 0x7f);
       rs.rec(0x0862, body().u16(0x0862).u16(0).zeros(8).u32(0x14).u32(icv & 0x7f));
@@ -796,6 +799,10 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   const tabid = body();
   sheets.forEach((_, i) => tabid.u16(i + 1));
   g.rec(0x013d, tabid);
+  if (vbaBin) {
+    g.rec(0x00d3); // OBPROJ: the file carries a VBA project
+    g.rec(0x01ba, body().str16(wb.xls?.codeName || "ThisWorkbook"));
+  }
   g.rec(0x009c, body().u16(14));
   const wp = wb.protection;
   g.rec(0x0019, body().u16(wp?.windows ? 1 : 0));
@@ -889,6 +896,14 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   const summary = wb.xls?.summary;
   if (summary?.size) for (const [k, v] of summary) entries.push({ name: k, data: v });
   else entries.push({ name: "\u0005SummaryInformation", data: propertySet(SUMMARY_FMTID) }, { name: "\u0005DocumentSummaryInformation", data: propertySet(DOC_SUMMARY_FMTID) });
+  // The macro project goes back verbatim (or as edited) under _VBA_PROJECT_CUR, its signature at the root.
+  if (vbaBin) {
+    try {
+      for (const e of readCfbAll(vbaBin)) entries.push({ name: e.name === "_VBA_SIGNATURE" ? "\u0005DigitalSignature" : "_VBA_PROJECT_CUR/" + e.name, data: e.data });
+    } catch {
+      // A project that is not a compound file is left out rather than written damaged.
+    }
+  }
   return writeCfbStreams(entries);
 
   function writeDrawingGroup(gs: RecStream): void {

@@ -139,6 +139,8 @@ export interface XlsSheet {
   boundIndex?: number;
   hasAutoFilter?: boolean;
   autoFilter?: XlsRange;
+  /** The sheet's VBA code name (CODENAME). */
+  codeName?: string;
 }
 
 export interface XlsName {
@@ -184,4 +186,8 @@ export interface XlsBook {
   skippedSheets: string[];
   encrypted?: "xor" | "rc4" | "cryptoapi";
   summary?: Map<string, Uint8Array>;
+  /** The _VBA_PROJECT_CUR storage's streams, by path within it ("VBA/dir"). */
+  vba?: { name: string; data: Uint8Array }[];
+  /** The workbook's VBA code name (CODENAME in the globals). */
+  codeName?: string;
 }
