@@ -63,7 +63,7 @@ import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sh
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
 import { unzipAsync } from "./zip";
-import { looksLikeXls, XlsPasswordError, xlsLosses, xlsPasswordState } from "../adapters/xls";
+import { looksLikeXls, XlsPasswordError, xlsCanWrite, xlsPasswordState, xlsSaveWarnings } from "../adapters/xls";
 import { deleteXlsxShape, flagXlsxPivotRefresh, reorderXlsxShape, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
@@ -636,15 +636,7 @@ export function createSheetEditor(
   if (wb.kind === "csv") wrap.append(toolbar, fxbar.el, gridScroll);
   else wrap.append(toolbar, fxbar.el, gridScroll, tabs);
   // A .xls whose charts or drawings the BIFF8 writer cannot keep says so up front, not on save.
-  const saveWarnings = (): string[] => {
-    const loss = xlsLosses(wb);
-    if (!loss) return [];
-    const out: string[] = [];
-    if (loss.charts) out.push(t("xlsDropsCharts", { n: loss.charts }));
-    if (loss.shapes) out.push(t("xlsDropsShapes", { n: loss.shapes }));
-    if (loss.sheets.length) out.push(t("xlsDropsSheets", { names: loss.sheets.join(", ") }));
-    return out;
-  };
+  const saveWarnings = (): string[] => xlsSaveWarnings(wb).map((w) => t(w.key, { n: w.n ?? 0, names: w.names ?? "" }));
   if (saveWarnings().length) {
     const bar = document.createElement("div");
     bar.className = "sheetedit-infobar";
@@ -3078,12 +3070,13 @@ export function createSheetEditor(
   const openShapeGallery = (anchor: HTMLElement, onPick?: (geom: ShapeGeom) => void): void => {
     if (shapeGallery) { closeShapeGallery(); return; }
     const odf = wb.kind === "ods";
+    const biff = !!wb.xls;
     const pop = document.createElement("div");
     pop.className = "sheetedit-pop sheetedit-shapegallery";
     pop.setAttribute("role", "menu");
     pop.setAttribute("aria-label", t("shapeInsert"));
     for (const cat of SHAPE_GALLERY) {
-      const geoms = cat.geoms.filter((g) => !odf || odfCanWrite(g));
+      const geoms = cat.geoms.filter((g) => (!odf || odfCanWrite(g)) && (!biff || xlsCanWrite(g)));
       if (!geoms.length) continue;
       const head = document.createElement("div");
       head.className = "sheetedit-gallery-head";

@@ -139,14 +139,12 @@ const ODS: WorkbookCapabilities = {
 };
 
 // A legacy .xls is edited through the xlsx paths but saved as BIFF8, which has no tables, slicers,
-// sparklines, themes, pivot caches the editor can author, drawing shapes or charts the writer
-// emits, only value / formula conditional formats, and a 65,536 x 256 grid.
+// sparklines, themes or pivot caches the editor can author, only value / formula conditional
+// formats, and a 65,536 x 256 grid. Charts and OfficeArt shapes are written back.
 const XLS: WorkbookCapabilities = {
   ...XLSX,
-  charts: false,
   sparklines: false,
   pivots: false,
-  shapes: false,
   themes: false,
   formControls: false,
   tables: false,
