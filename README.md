@@ -582,10 +582,10 @@ and the writer rebuilds a BIFF8 compound file from the model on save.
   a scatter with a line) saves those series as the chart's main kind, gradients keep their first and
   last colours, and data label positions and text styles are kept where BIFF8 has them.
 - **Not kept on save**: form controls (buttons, check boxes, lists, spinners), custom error bar
-  values, the Excel 5 module and dialog sheets, and charts nested inside a drawing group. The editor
-  shows which of these the open file has, in a bar above the grid, and `editor.saveWarnings()`
-  returns the same sentences, plus the closest-form notes above for what was edited, for a host to
-  confirm before saving.
+  values, drawings placed on a chart, the Excel 5 module and dialog sheets, and charts nested inside
+  a drawing group. The editor shows which of these the open file has, in a bar above the grid, and
+  `editor.saveWarnings()` returns the same sentences, plus the closest-form notes above for what
+  was edited, for a host to confirm before saving.
 
 ## How preservation works
 
