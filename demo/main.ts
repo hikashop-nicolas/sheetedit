@@ -1,4 +1,4 @@
-import { createSheetEditor, createSheetEditorAsync, setLocale, type SheetEditor } from "../src/index";
+import { blankWorkbookBytes, createSheetEditor, createSheetEditorAsync, setLocale, type SheetEditor } from "../src/index";
 
 // ?lang=fr opens the demo in another language, with its numbers and formula names.
 const lang = new URLSearchParams(location.search).get("lang");
@@ -6,6 +6,7 @@ if (lang) setLocale(lang);
 
 const fileInput = document.getElementById("file") as HTMLInputElement;
 const openBtn = document.getElementById("open") as HTMLButtonElement;
+const newBtn = document.getElementById("new") as HTMLButtonElement;
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const editorEl = document.getElementById("editor") as HTMLElement;
@@ -14,9 +15,13 @@ openBtn.addEventListener("click", () => fileInput.click());
 
 let editor: SheetEditor | null = null;
 let filename = "edited.xlsx";
+let noticeShown = false;
+
+newBtn.addEventListener("click", () => loadBytes(blankWorkbookBytes("xlsx"), "new.xlsx"));
 
 async function loadBytes(bytes: Uint8Array, name: string): Promise<void> {
   filename = name;
+  noticeShown = false;
   editor?.destroy();
   editorEl.innerHTML = "";
   try {
@@ -26,6 +31,7 @@ async function loadBytes(bytes: Uint8Array, name: string): Promise<void> {
     win.seStructural = [];
     // The async variant asks for the password of an encrypted .xls with its own prompt.
     editor = await createSheetEditorAsync(editorEl, bytes, {
+      fileName: name, // an HTML or XML export named .xls saves as a real .xls
       fonts: { remote: { provider: "google" } }, // the demo offers "Get more fonts"
       onChange: () => {
         win.seChangeCount = (win.seChangeCount as number) + 1;
@@ -74,6 +80,13 @@ saveBtn.addEventListener("click", async () => {
   // A legacy .xls may hold things BIFF8 saving cannot keep; say so before writing it.
   const warnings = editor.saveWarnings();
   if (warnings.length && !confirm(warnings.join("\n\n"))) return;
+  // An HTML or XML export is saved as a real workbook; say so once, and fix the extension.
+  const notice = editor.importNotice();
+  if (notice && !noticeShown) {
+    noticeShown = true;
+    if (!confirm(notice)) return;
+  }
+  if (editor.importedFrom() && !/\.xlsx?$/i.test(filename)) filename = filename.replace(/\.[^.]*$/, "") + ".xlsx";
   const out = await editor.getBytes();
   const lower = filename.toLowerCase();
   const ext = lower.endsWith(".ods")

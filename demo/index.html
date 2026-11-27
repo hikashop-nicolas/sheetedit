@@ -115,6 +115,10 @@
       </span>
       <span class="sep"></span>
       <div class="group">
+        <button id="new" class="btn" type="button" title="New" aria-label="New">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 12v6M9 15h6"/></svg>
+          <span>New</span>
+        </button>
         <button id="open" class="btn" type="button" title="Open" aria-label="Open">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           <span>Open</span>
@@ -126,7 +130,7 @@
       </div>
       <span class="spacer"></span>
       <span id="status">Open a .xlsx, .xls or .ods file</span>
-      <input id="file" type="file" accept=".xlsx,.xls,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.oasis.opendocument.spreadsheet" hidden />
+      <input id="file" type="file" accept=".xlsx,.xls,.ods,.htm,.html,.xml,.mht,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.oasis.opendocument.spreadsheet" hidden />
     </header>
     <div id="editor"></div>
     <script type="module" src="./main.ts"></script>
