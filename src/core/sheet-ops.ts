@@ -3,6 +3,7 @@ import { createWorksheet, uniqueSheetName } from "../adapters/xlsx/sheet-create"
 import { setOdsSheetHidden } from "../adapters/ods/styles";
 import { isSheetLoaded, loadAllSheets, onSheetLoaded } from "./lazy-sheet";
 import { deleteSheetInFormula, renameSheetInFormula } from "./sheet-span";
+import { renameSheetInParts } from "./sheet-rename";
 
 // Add / rename / delete / reorder sheets, for both .xlsx and .ods. Each op mutates the model
 // (wb.sheets) and the file immediately (xlsx: xl/workbook.xml + rels + content-types; ods: the
@@ -216,6 +217,7 @@ export function renameSheet(wb: Workbook, index: number, name: string): string {
   const old = sheet.name;
   if (clean !== old) {
     rewriteFormulas(wb, (f) => renameSheetInFormula(f, old, clean));
+    renameSheetInParts(wb, old, clean);
     for (const n of wb.localNames ?? []) if (n.sheet === old) n.sheet = clean;
   }
   sheet.name = clean;
