@@ -1,6 +1,6 @@
 import FormulaParser from "fast-formula-parser";
 import type { Cell, CellKind, Sheet, Workbook } from "./model";
-import { commaDecimalText, ensureCell, formatNumber, getCell, numToStr, parseA1Ref, shiftFormula, typedValue } from "./model";
+import { MAX_ROW, commaDecimalText, ensureCell, formatNumber, getCell, numToStr, parseA1Ref, shiftFormula, typedValue } from "./model";
 import { isDateFmt } from "./dates";
 import { dynamicArrayFunctions } from "./dynamic-arrays";
 import { extraFunctions } from "./functions";
@@ -10,7 +10,7 @@ import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
 import { expandValueNames, findName } from "./names";
-import { expandSheetSpans, type SheetExtent } from "./sheet-span";
+import { SPAN_FUNCTIONS, expandSheetSpans, type SheetExtent } from "./sheet-span";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
@@ -63,6 +63,31 @@ function sheetExtents(wb: Workbook): SheetExtent {
     }
     return { rows: Math.max(e.rows, sheet.maxRow), cols: Math.max(e.cols, sheet.maxCol) };
   };
+}
+
+// Functions whose result cannot change when a whole column loses the blank rows past the data:
+// blanks add nothing to them, and the lookups never land past the last value.
+const WHOLE_COLUMN_SAFE = new Set([
+  ...SPAN_FUNCTIONS, "SUMIF", "SUMIFS", "AVERAGEIF", "AVERAGEIFS", "MAXIFS", "MINIFS", "SUMPRODUCT",
+  "VLOOKUP", "HLOOKUP", "MATCH", "XMATCH", "XLOOKUP", "INDEX",
+  "IFERROR", "IFNA", "ROUND", "ROUNDUP", "ROUNDDOWN", "ABS", "INT",
+]);
+
+/** Whether a formula may read A:A as only the used rows: safe functions, no comparison (blank<5
+    is TRUE) and not an array result. COUNTBLANK, COUNTIF(A:A,"") and ROWS keep the full column. */
+function wholeColumnsCuttable(f: string): boolean {
+  if (!/[A-Za-z]\s*:\s*\$?[A-Za-z]/.test(f)) return false;
+  const bare = f.replace(/"(?:[^"]|"")*"/g, '""').replace(/'(?:[^']|'')*'/g, "''");
+  if (/[<>=]/.test(bare)) return false;
+  for (const m of bare.matchAll(/([A-Za-z_][A-Za-z0-9_.]*)\s*\(/g))
+    if (!WHOLE_COLUMN_SAFE.has(m[1]!.toUpperCase().replace(/^_XLFN\./, "").replace(/^_XLWS\./, ""))) return false;
+  return true;
+}
+
+/** The row every cuttable whole column stops at: the deepest used row of any sheet, so ranges
+    from different sheets keep equal heights (SUMIF, SUMPRODUCT pair them up). */
+function usedRowsOf(wb: Workbook, extentOf: SheetExtent): () => number {
+  return () => wb.sheets.reduce((m, s) => Math.max(m, extentOf(s.name)?.rows ?? 0), 1);
 }
 
 // Past this many cells a range is cut to the sheet's used extent: materializing a whole sheet
@@ -319,6 +344,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
   for (const s of wb.sheets) byName.set(s.name, s);
   const sheetNames = wb.sheets.map((s) => s.name);
   const extentOf = sheetExtents(wb);
+  const usedRows = usedRowsOf(wb, extentOf);
+  let cutWhole = false; // set per formula: whole columns may stop at the used rows
   const defaultSheet = wb.sheets[0]?.name;
   /** Unknown sheet names are a reference error, not a silent read of sheet 1. */
   const sheetOf = (sheetName: string | undefined): Sheet | null | undefined => {
@@ -470,7 +497,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     onRange: (ref: { sheet?: string; from: { row: number; col: number }; to: { row: number; col: number } }) => {
       if (sheetOf(ref.sheet) === null) return [[FE.REF]];
       const out: unknown[][] = [];
-      const to = capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
+      const whole = cutWhole && ref.from.row === 1 && ref.to.row === MAX_ROW;
+      const to = whole ? { row: usedRows(), col: ref.to.col } : capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
       for (let r = ref.from.row; r <= to.row; r++) {
         const rowArr: unknown[] = [];
         for (let c = ref.from.col; c <= to.col; c++) {
@@ -546,6 +574,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
       // LET has no runtime scope in the parser, so it is expanded away textually before parsing.
       const f = prepare(node.cell.formula!, node.cell.row);
       const wantArray = node.cell.arrayRef != null || SPILL_FN_RE.test(f) || BARE_RANGE_RE.test(f);
+      cutWhole = !wantArray && wholeColumnsCuttable(f);
       res = parser.parse(f, { row: node.cell.row, col: node.cell.col, sheet: node.sheet.name }, wantArray);
     } catch (err) {
       // Unsupported function / parse error: keep the file's cached value, but
@@ -641,6 +670,8 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     return sheet ? getCell(sheet, r, c) : undefined;
   };
   const extentOf = sheetExtents(wb);
+  const usedRows = usedRowsOf(wb, extentOf);
+  let cutWhole = false; // set per formula: whole columns may stop at the used rows
   const nameToRef = (name: string, sheet?: string): CellRef | RangeRef | null => {
     const ref = nameTarget(wb, name, sheet) ?? tableBodyRef(wb, name);
     return ref ? parseNameRef(ref, defaultSheet ?? "") : null;
@@ -654,7 +685,8 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
     onRange: (ref: { sheet?: string; from: { row: number; col: number }; to: { row: number; col: number } }) => {
       if (sheetOf(ref.sheet) === null) return [[FE.REF]];
       const out: unknown[][] = [];
-      const to = capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
+      const whole = cutWhole && ref.from.row === 1 && ref.to.row === MAX_ROW;
+      const to = whole ? { row: usedRows(), col: ref.to.col } : capRange(ref.from, ref.to, ref.sheet ?? defaultSheet, extentOf);
       for (let r = ref.from.row; r <= to.row; r++) {
         const rowArr: unknown[] = [];
         for (let c = ref.from.col; c <= to.col; c++) rowArr.push(typedValue(lookup(ref.sheet, r, c)));
@@ -674,6 +706,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
       if (hasLet(f)) f = expandLet(f);
       f = expandSheetSpans(expandValueNames(f, wb.definedNames), wb.sheets.map((s) => s.name), extentOf);
       try {
+        cutWhole = wholeColumnsCuttable(f);
         return parser.parse(f, { row: r, col: c, sheet: sheetName }, false);
       } catch {
         return FE.REF;
