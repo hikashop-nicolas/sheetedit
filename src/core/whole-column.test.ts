@@ -58,7 +58,7 @@ describe("whole-column references", () => {
   });
 
   it("keep the full column where blanks or rows count", () => {
-    expect(ev(["COUNTBLANK(Data!B:B)", "ROWS(Data!B:B)", "INDEX(Data!B:B,100)"])).toEqual([String(1048576 - 5), "1048576", ""]);
+    expect(ev(["COUNTBLANK(Data!B:B)", "ROWS(Data!B:B)", "INDEX(Data!B:B,100)"])).toEqual([String(1048576 - 5), "1048576", "0"]);
   });
 
   it("are cheap enough to fill a lookup down a sheet", () => {

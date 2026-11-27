@@ -169,3 +169,33 @@ export function fixBlankCompare(parser: unknown): void {
   fixed.blankFixed = true;
   utils!["_applyInfix"] = fixed;
 }
+
+/**
+ * A function that lands on an empty cell (VLOOKUP, CHOOSE, XLOOKUP...) returns a blank, which
+ * fast-formula-parser turned into #NULL!. It now stays a blank: 0 as a result, "" when joined.
+ */
+export function fixBlankResults(parser: unknown): void {
+  type Call = (name: string, args: unknown[]) => unknown;
+  type Check = (res: unknown, allowArray?: boolean) => unknown;
+  type Extract = (obj: unknown) => { val: unknown; isArray: boolean };
+  const p = parser as {
+    callFunction?: Call; _callFunction?: Call; checkFormulaResult?: Check; async?: boolean; blankResults?: boolean;
+    utils?: { extractRefValue?: Extract };
+  };
+  const orig = p.callFunction;
+  const inner = p._callFunction;
+  const check = p.checkFormulaResult;
+  const extract = p.utils?.extractRefValue;
+  if (typeof orig !== "function" || typeof inner !== "function" || typeof check !== "function" || typeof extract !== "function" || p.blankResults) return;
+  const FE = (FormulaParser as unknown as { FormulaError: { VALUE: unknown; NUM: unknown } }).FormulaError;
+  p.blankResults = true;
+  // The parser reads .ref off every value; a blank has none.
+  p.checkFormulaResult = function (res, allowArray) { return res == null ? null : check.call(p, res, allowArray); };
+  p.utils!.extractRefValue = function (obj) { return obj == null ? { val: null, isArray: false } : extract.call(p.utils, obj); };
+  p.callFunction = function (name: string, args: unknown[]): unknown {
+    if (p.async) return orig.call(p, name, args);
+    const res = inner.call(p, name, args);
+    if (typeof res === "number") return Number.isNaN(res) ? FE.VALUE : Number.isFinite(res) ? res : FE.NUM;
+    return res ?? null;
+  };
+}

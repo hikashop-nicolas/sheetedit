@@ -5,7 +5,7 @@ import { isDateFmt } from "./dates";
 import { dynamicArrayFunctions } from "./dynamic-arrays";
 import { extraFunctions } from "./functions";
 import { financialFunctions } from "./financial";
-import { allowRawRefs, fixBlankCompare, fixIndexSheet, referenceFunctions } from "./reference-fns";
+import { allowRawRefs, fixBlankCompare, fixBlankResults, fixIndexSheet, referenceFunctions } from "./reference-fns";
 import { expandLet, hasLet } from "./let-expand";
 import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
@@ -517,6 +517,7 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
   allowRawRefs(parser);
   fixIndexSheet(parser);
   fixBlankCompare(parser);
+  fixBlankResults(parser);
 
   // Dynamic-array spill: a plain formula (no legacy arrayRef) whose result is a 2-D array with
   // more than one cell spills into the anchor + the range below/right of it. A non-empty obstacle
@@ -616,7 +617,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     }
     // A formula that previously spilled now returns a single value: clear its stale spill.
     if (!node.cell.arrayRef && node.cell.dynSpill) clearPrevSpill(node.cell, node.sheet);
-    applyResult(node.cell, res);
+    // A result that is an empty cell (=A9, INDEX, VLOOKUP onto a blank) shows 0, as in Excel.
+    applyResult(node.cell, res ?? 0);
     // Legacy array formula: spill the 2D result across its ref range so the other cells stay
     // fresh (they are cached literals in the file and would otherwise go stale on recompute).
     if (node.cell.arrayRef && Array.isArray(res)) {
@@ -701,6 +703,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
   allowRawRefs(parser);
   fixIndexSheet(parser);
   fixBlankCompare(parser);
+  fixBlankResults(parser);
   return {
     at(formula, r0, c0, r, c, sheetName) {
       let f = shiftFormula(formula.replace(/^=/, ""), r - r0, c - c0);

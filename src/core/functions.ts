@@ -134,7 +134,7 @@ function XLOOKUP(lookup: unknown, lookupArr: unknown, returnArr: unknown, ifNotF
   // A single-column return array yields one value; a multi-column one yields that whole row.
   if (m.length > 1 && m[0]!.length > 1) return [m[pos - 1] ?? []];
   const flatR = m.flat();
-  return flatR[pos - 1] ?? NA;
+  return pos <= flatR.length ? flatR[pos - 1] ?? null : NA; // an empty cell is a blank, not #N/A
 }
 
 /** CHOOSE(index, v1, v2, ...). */
