@@ -58,7 +58,7 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
     }
     for (const c of s.chartObjs) { const m = xlsChartModel(c, s, `chart-${charts.length + 1}`); if (m) charts.push(m); }
     const autos = [s.chartSheet, ...s.chartObjs.filter((c) => c.anchor).map((c) => c.chart)].filter((c) => !!c);
-    autos.forEach((c, k) => { const t = c.autoTitle && cellText(book, c.autoTitle); if (t && charts[k]) charts[k]!.title = t; });
+    autos.forEach((c, k) => { const t = c.autoTitle && cellText(book, c.autoTitle); if (t && charts[k]) charts[k]!.title = charts[k]!.autoTitle = t; });
     if (charts.length) sheet.charts = charts;
     const shapes = readXlsShapes(s, book);
     if (shapes.length) sheet.shapes = shapes;
@@ -109,7 +109,7 @@ export function xlsSaveWarnings(wb: Workbook): { key: string; n?: number; names?
       for (const ser of c.series) {
         if (ser.errorBars?.valueType === "cust") errBars = true;
         const k = ser.type ?? c.kind;
-        if (k !== c.kind && (round(c.kind) || round(k) || xy(k) !== xy(c.kind))) combo = true;
+        if (k !== c.kind && (round(c.kind) || round(k) || (xy(k) !== xy(c.kind) && !ser.secondaryAxis))) combo = true;
       }
     }
   }

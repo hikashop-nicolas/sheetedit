@@ -137,6 +137,9 @@ export interface ChartModel {
   /** Pie/doughnut first-slice angle (degrees clockwise from top), from c:firstSliceAng. */
   rotation?: number;
   title?: string;
+  /** The title as the file's automatic one showed it (the single series' name). While the title
+      still reads this, a writer that can keeps it automatic rather than fixing the text. */
+  autoTitle?: string;
   /** Font/colour of the chart title (c:title txPr / rich run). */
   titleStyle?: ChartTextStyle;
   legend?: { show: boolean; pos: "top" | "bottom" | "left" | "right"; deleted?: number[]; overlay?: boolean };

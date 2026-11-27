@@ -49,14 +49,18 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
   const end = (): void => rec(0x1034);
   const base = m.kind;
   const series = m.series.filter((s) => s.values.ref || s.values.cache?.length);
-  const xy = base === "scatter" || base === "bubble";
+  const isXY = (k: ChartKind): boolean => k === "scatter" || k === "bubble";
+  const xy = isXY(base);
   // Chart groups: one per kind and axis, the base one first.
   const groups: Grp[] = [];
   const groupFor = (s: ChartSeries, i: number): Grp => {
     let kind = kindOf(s.type, base);
     if (NO_AXES.has(base)) kind = base;
-    else if (NO_AXES.has(kind) || ((kind === "scatter" || kind === "bubble") !== xy)) { env.warn("xlsChartComboKind"); kind = base; }
     const secondary = !!s.secondaryAxis && !NO_AXES.has(base);
+    // An XY group and a category group can share a chart only on different axes.
+    const other = groups.find((x) => x.secondary === secondary);
+    const clash = isXY(kind) !== (other ? isXY(other.kind) : secondary ? isXY(kind) : xy);
+    if (NO_AXES.has(kind) || clash) { env.warn("xlsChartComboKind"); kind = other?.kind ?? base; }
     let g = groups.find((x) => x.kind === kind && x.secondary === secondary);
     if (!g) { g = { kind, secondary, icrt: groups.length, series: [] }; groups.push(g); }
     g.series.push(i);
@@ -93,7 +97,7 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
   const auxSeries: { parent: number; kind: "trend" | "err"; s: ChartSeries; dir?: "plus" | "minus" }[] = [];
   series.forEach((s, i) => {
     const g = seriesGroup[i]!;
-    const vals = s.values, cats = xy ? s.xValues : m.categories, sizes = s.sizes;
+    const vals = s.values, cats = isXY(g.kind) ? s.xValues : m.categories, sizes = s.sizes;
     const nVals = refCount(vals.ref) || vals.cache?.length || 0;
     const nCats = refCount(cats?.ref) || cats?.cache?.length || 0;
     const textCats = cats?.cache?.some((v) => typeof v === "string") ?? false;
@@ -166,13 +170,14 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
   axisParent(false);
   if (anySecondary) axisParent(true);
   // Title, then the series' data label positions.
+  const auto = !!m.title && m.title === m.autoTitle && series.length === 1;
   if (m.title) {
-    text(0x0081, 0x2b20, true);
+    text(auto ? 0x00b1 : 0x0081, 0x2b20, true);
     begin();
     pos(2, 2);
     fontx(titleFont);
     rec(0x1051, body().u8(0).u8(1).u16(0).u16(0).u16(0));
-    seriesText(m.title);
+    if (!auto) seriesText(m.title);
     rec(0x1027, body().u16(1).u16(0).u16(0));
     end();
   }
@@ -340,7 +345,7 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
     const mine = groups.filter((g) => g.secondary === secondary);
     if (!NO_AXES.has(base)) {
       const ax = m.axes;
-      if (xy) axis(0, ax?.x, true, secondary);
+      if (mine.some((g) => isXY(g.kind))) axis(0, ax?.x, true, secondary);
       else axis(0, ax?.x, false, secondary);
       axis(1, ax?.y, true, false);
       if (!secondary) {
@@ -421,7 +426,7 @@ export function writeChartStream(m: ChartModel, env: ChartWriteEnv, size: { w: n
     for (const k of [2, 1, 3]) {
       rec(0x1065, body().u16(k));
       series.forEach((s, i) => {
-        const src = k === 1 ? literal(s.values) : k === 2 ? literal(xy ? s.xValues : m.categories) : literal(s.sizes);
+        const src = k === 1 ? literal(s.values) : k === 2 ? literal(isXY(seriesGroup[i]!.kind) ? s.xValues : m.categories) : literal(s.sizes);
         src?.forEach((v, p) => cell(p, i, v));
       });
     }

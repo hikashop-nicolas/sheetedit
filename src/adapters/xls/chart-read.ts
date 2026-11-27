@@ -325,7 +325,7 @@ export function readChart(recs: BiffRecord[], env: ChartEnv): XlsChart | null {
   let autoTitle: string | undefined;
   if (titleNode && !title && series.length === 1 && !(u16(titleNode.data, 24) & 0x40)) {
     const nm = series[0]!.name;
-    if (typeof nm === "string" && nm) model.title = nm;
+    if (typeof nm === "string" && nm) model.title = model.autoTitle = nm;
     else if (typeof nm === "object" && nm.ref) autoTitle = nm.ref;
   }
   const ts = titleNode ? textStyle(titleNode, env, titleNode) : undefined;
