@@ -446,6 +446,13 @@ padding:7px 13px; border-radius:7px; background:var(--sheetedit-notice-bg); colo
 font:12.5px/1.45 system-ui,sans-serif; box-shadow:0 6px 18px rgba(0,0,0,.35); pointer-events:none;
 }
 .sheetedit-notice[hidden] { display:none; }
+.sheetedit-infobar { display:flex; align-items:flex-start; gap:10px; padding:6px 10px; background:var(--sheetedit-notice-bg); color:var(--sheetedit-notice-fg); border-bottom:1px solid var(--sheetedit-notice-border); font:12.5px/1.45 system-ui,sans-serif; }
+.sheetedit-infobar p { margin:0; flex:1; }
+.sheetedit-infobar button { font:inherit; background:none; color:inherit; border:1px solid var(--sheetedit-notice-border); border-radius:5px; padding:1px 9px; cursor:pointer; }
+.sheetedit-password { display:flex; flex-direction:column; gap:8px; max-width:360px; margin:24px auto; padding:16px; font:13px/1.5 system-ui,sans-serif; color:var(--sheetedit-text); background:var(--sheetedit-bg); }
+.sheetedit-password input { font:inherit; padding:6px 8px; border-radius:5px; border:1px solid var(--sheetedit-btn-border); background:var(--sheetedit-input-bg); color:var(--sheetedit-input-fg); }
+.sheetedit-password button { font:inherit; align-self:flex-start; padding:5px 14px; border-radius:5px; border:1px solid var(--sheetedit-btn-border); background:var(--sheetedit-btn); color:var(--sheetedit-text); cursor:pointer; }
+.sheetedit-password .err { color:var(--sheetedit-error-text); min-height:1.5em; }
 .sheetedit-grid td.locked > input { cursor:default; }
 .sheetedit-grid td.pgbrk-top, .sheetedit-grid th.pgbrk-top { border-top:2px dashed var(--sheetedit-pagebreak) !important; }
 .sheetedit-grid td.pgbrk-left, .sheetedit-grid th.pgbrk-left { border-left:2px dashed var(--sheetedit-pagebreak) !important; }

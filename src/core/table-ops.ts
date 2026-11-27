@@ -1,4 +1,5 @@
 import { strFromU8 } from "fflate";
+import { capabilitiesOf } from "./capabilities";
 import { isSheetLoaded } from "./lazy-sheet";
 import { colToLetters, getCell, parseXmlOpt, serializeXml, type Sheet, type Workbook } from "./model";
 
@@ -31,7 +32,7 @@ export interface TableDef {
   columns: string[];
 }
 
-export const tablesAuthorable = (wb: Workbook): boolean => wb.kind === "xlsx" || wb.kind === "ods";
+export const tablesAuthorable = (wb: Workbook): boolean => capabilitiesOf(wb).tables;
 
 /** An id for a table created during a session; unique across peers. */
 export const newTableId = (): string => {

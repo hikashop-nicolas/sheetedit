@@ -1,5 +1,5 @@
 import { t } from "./i18n";
-import { capabilitiesFor } from "./capabilities";
+import { capabilitiesOf } from "./capabilities";
 import { dateToSerial, hasTimeFmt, isDateFmt, isTimeOnlyFmt, serialToEditText } from "./dates";
 import { computeFill, type FillSource } from "./fill";
 import { createFormulaBar } from "./ui/formulabar";
@@ -15,7 +15,7 @@ import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, Style
 import { cannotOverflow, fontPx } from "./spill";
 import { localDateEditText, localDisplay, localNumberInput } from "./regional";
 import { formulaToLocal, inputFromLocal } from "./formula-locale";
-import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, MAX_COL, MAX_ROW, parseA1Ref } from "./model";
+import { cellDisplay, colToLetters, drawingExtent, ensureCell, fontStack, getCell, key, parseA1Ref } from "./model";
 import { setOdsAutoFilter, setOdsCellNumFmt, setOdsCellStyle, setOdsColWidth, setOdsMerge, setOdsRowHeight, setOdsSparkline } from "../adapters/ods";
 import { makeFormulaEvaluator, sheetNeedsCalc, recalc } from "./recalc";
 import { applyRunStyle, cellRuns, isRunStyleChange, runsUniform, setRunStyle } from "./richtext";
@@ -63,6 +63,7 @@ import { SETTINGS_GROUPS, readGroup, writeGroup, type SettingsGroup } from "./sh
 import { deleteImage, imagesInsertable, insertImage } from "./image-ops";
 import { createTable, deleteTable, freeTableName, readTables, tablesAuthorable, updateTable } from "./table-ops";
 import { unzipAsync } from "./zip";
+import { looksLikeXls, XlsPasswordError, xlsLosses, xlsPasswordState } from "../adapters/xls";
 import { deleteXlsxShape, flagXlsxPivotRefresh, reorderXlsxShape, setXlsxAutoFilter, setXlsxCellNumFmt, setXlsxCellStyle, setXlsxColWidth, setXlsxMerge, setXlsxRowHeight, setXlsxRowHidden, setXlsxSparkline } from "../adapters/xlsx";
 // ---------------------------------------------------------------------------
 // Editor
@@ -223,9 +224,17 @@ export interface SheetEditorOptions {
   /** The font picker: "Show my fonts" (default on) and "Get more fonts" from Google Fonts
       after an in-app consent (default off, as a third party then sees each request). */
   fonts?: FontOptions;
+  /** The password of an encrypted .xls (createSheetEditor). */
+  password?: string;
+  /** createSheetEditorAsync: asked for the password of an encrypted .xls (again, with `wrong`, after
+      a wrong one). Resolve null to give up. Without it the editor shows its own password prompt. */
+  requestPassword?: (wrong: boolean) => Promise<string | null>;
 }
 export interface SheetEditor {
   getBytes(): Promise<Uint8Array>;
+  /** What saving in the open format will not keep (for a legacy .xls: its charts, drawing shapes
+      and chart sheets), as sentences to show before a save. Empty when nothing is lost. */
+  saveWarnings(): string[];
   /** The serialized text for text-backed workbooks (csv/tsv); null otherwise. */
   getText(): string | null;
   isDirty(): boolean;
@@ -407,7 +416,7 @@ export function createSheetEditor(
   let wb: Workbook;
   try {
     // Only the sheet on screen is parsed now; the others parse on first use or in idle time.
-    wb = readWorkbook(bytes, { formatHint: options.formatHint, lazySheets: true }, preunzipped);
+    wb = readWorkbook(bytes, { formatHint: options.formatHint, lazySheets: true, password: options.password }, preunzipped);
     // Before anything can be addressed: a sheet is named to a peer by its id, not its name.
     assignSheetIds(wb);
     assignImageIds(wb);
@@ -430,11 +439,12 @@ export function createSheetEditor(
     const banner = document.createElement("div");
     banner.className = "sheetedit-error";
     banner.setAttribute("role", "alert");
-    banner.textContent = t("openFailed");
+    banner.textContent = e instanceof XlsPasswordError ? t(e.code === "password-wrong" ? "xlsPasswordWrong" : "xlsPasswordTitle") : t("openFailed");
     errWrap.appendChild(banner);
     container.appendChild(errWrap);
     return {
       getBytes: () => Promise.resolve(original.slice()),
+      saveWarnings: () => [],
       getText: () => null,
       setPrintHandler: () => undefined,
       printPages: () => null, // nothing opened, so nothing to print
@@ -488,7 +498,7 @@ export function createSheetEditor(
   // after an edit. Recomputing on load would overwrite valid cached values whose inputs
   // are blank in this session (e.g. a DATEDIF age before a birthdate is entered).
 
-  const caps = capabilitiesFor(wb.kind);
+  const caps = capabilitiesOf(wb);
 
   const wrap = document.createElement("div");
   wrap.className = "sheetedit-wrap";
@@ -625,6 +635,29 @@ export function createSheetEditor(
   });
   if (wb.kind === "csv") wrap.append(toolbar, fxbar.el, gridScroll);
   else wrap.append(toolbar, fxbar.el, gridScroll, tabs);
+  // A .xls whose charts or drawings the BIFF8 writer cannot keep says so up front, not on save.
+  const saveWarnings = (): string[] => {
+    const loss = xlsLosses(wb);
+    if (!loss) return [];
+    const out: string[] = [];
+    if (loss.charts) out.push(t("xlsDropsCharts", { n: loss.charts }));
+    if (loss.shapes) out.push(t("xlsDropsShapes", { n: loss.shapes }));
+    if (loss.sheets.length) out.push(t("xlsDropsSheets", { names: loss.sheets.join(", ") }));
+    return out;
+  };
+  if (saveWarnings().length) {
+    const bar = document.createElement("div");
+    bar.className = "sheetedit-infobar";
+    bar.setAttribute("role", "status");
+    const msg = document.createElement("p");
+    msg.textContent = saveWarnings().join(" ");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = t("xlsNoticeClose");
+    close.addEventListener("click", () => bar.remove());
+    bar.append(msg, close);
+    wrap.insertBefore(bar, toolbar);
+  }
   wrap.appendChild(notice); // absolute, over the grid: never shifts the layout
 
   // Bottom bar, like the other editors: find on the left, zoom and fullscreen on the right.
@@ -1875,7 +1908,7 @@ export function createSheetEditor(
   // Power Query panel: only when the workbook carries a DataMashup payload. Refresh writes
   // the result through the model (undo-recorded when the target sheet is active) and the
   // table part's @ref is resized by applyQueryResult.
-  if (wb.kind === "xlsx") {
+  if (caps.powerQuery) {
     // Files attached for File.Contents, shared between the quick-refresh panel and the editor.
     const pqFiles: Record<string, Uint8Array> = {};
     // The quick-refresh panel + on-open auto-refresh only make sense once queries exist.
@@ -6000,11 +6033,11 @@ export function createSheetEditor(
     // time the user scrolled it sideways.
     const canDown = el.scrollHeight > el.clientHeight + 1;
     const canRight = el.scrollWidth > el.clientWidth + 1;
-    if (canDown && el.scrollHeight - el.scrollTop - el.clientHeight < EDGE_GROW && totalRows < MAX_ROW) {
+    if (canDown && el.scrollHeight - el.scrollTop - el.clientHeight < EDGE_GROW && totalRows < caps.maxRows) {
       extraRows += ROW_CHUNK;
       grew = true;
     }
-    if (canRight && el.scrollWidth - el.scrollLeft - el.clientWidth < EDGE_GROW && totalCols < MAX_COL) {
+    if (canRight && el.scrollWidth - el.scrollLeft - el.clientWidth < EDGE_GROW && totalCols < caps.maxCols) {
       extraCols += COL_CHUNK;
       grew = true;
     }
@@ -6017,11 +6050,11 @@ export function createSheetEditor(
     const el = mainPane.scrollEl;
     if (!el.clientHeight || !el.clientWidth) return false; // not laid out yet, or no layout at all
     let grew = false;
-    if (!rowsUnbounded && el.scrollHeight <= el.clientHeight + EDGE_GROW && totalRows < MAX_ROW) {
+    if (!rowsUnbounded && el.scrollHeight <= el.clientHeight + EDGE_GROW && totalRows < caps.maxRows) {
       extraRows += ROW_CHUNK;
       grew = true;
     }
-    if (!colsUnbounded && el.scrollWidth <= el.clientWidth + EDGE_GROW && totalCols < MAX_COL) {
+    if (!colsUnbounded && el.scrollWidth <= el.clientWidth + EDGE_GROW && totalCols < caps.maxCols) {
       extraCols += COL_CHUNK;
       grew = true;
     }
@@ -6085,8 +6118,8 @@ export function createSheetEditor(
     const keepLeft = gridScroll.scrollLeft;
     gridScroll.innerHTML = "";
     const drawn = drawingExtent(sheet);
-    totalRows = Math.max(ROWS_MIN, sheet.maxRow + 6, drawn.rows) + extraRows;
-    totalCols = Math.max(COLS_MIN, sheet.maxCol + 2, drawn.cols) + extraCols;
+    totalRows = Math.min(caps.maxRows, Math.max(ROWS_MIN, sheet.maxRow + 6, drawn.rows) + extraRows);
+    totalCols = Math.min(caps.maxCols, Math.max(COLS_MIN, sheet.maxCol + 2, drawn.cols) + extraCols);
     renderedRows = totalRows;
     renderedCols = totalCols;
     condVisuals = sheet.condFormats?.length ? computeCondVisuals(sheet, { evaluator: makeFormulaEvaluator(wb), sheetName: sheet.name }, dateToSerial(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate())) : new Map();
@@ -6929,6 +6962,7 @@ export function createSheetEditor(
     async getBytes() {
       return dirty ? writeWorkbookAsync(wb) : original.slice();
     },
+    saveWarnings,
     destroy() {
       idleStopped = true;
       gridObserver?.disconnect();
@@ -6972,6 +7006,16 @@ export async function createSheetEditorAsync(
   bytes: Uint8Array,
   options: SheetEditorOptions = {},
 ): Promise<SheetEditor> {
+  // An encrypted .xls: get its password first, from the host or from a prompt of our own.
+  if (looksLikeXls(bytes) && options.password == null && xlsPasswordState(bytes) === "required") {
+    let wrong = false;
+    for (;;) {
+      const pw = options.requestPassword ? await options.requestPassword(wrong) : await promptPassword(container, wrong);
+      if (pw == null) break;
+      if (xlsPasswordState(bytes, pw) === "ok") { options = { ...options, password: pw }; break; }
+      wrong = true;
+    }
+  }
   let files: Record<string, Uint8Array> | undefined;
   const isZip = bytes.length > 3 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
   if (isZip && options.formatHint !== "csv" && options.formatHint !== "tsv") {
@@ -6982,4 +7026,41 @@ export async function createSheetEditorAsync(
     }
   }
   return createSheetEditor(container, bytes, options, files);
+}
+
+/** The editor's own password prompt for an encrypted .xls, shown in the container. */
+function promptPassword(container: HTMLElement, wrong: boolean): Promise<string | null> {
+  injectStyles();
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "sheetedit-wrap";
+    const form = document.createElement("form");
+    form.className = "sheetedit-password";
+    const title = document.createElement("p");
+    title.textContent = t("xlsPasswordTitle");
+    const id = "sheetedit-pw-" + Math.random().toString(36).slice(2);
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = t("xlsPasswordLabel");
+    const input = document.createElement("input");
+    input.type = "password";
+    input.id = id;
+    input.autocomplete = "current-password";
+    const err = document.createElement("p");
+    err.className = "err";
+    err.setAttribute("aria-live", "polite");
+    err.textContent = wrong ? t("xlsPasswordWrong") : "";
+    const ok = document.createElement("button");
+    ok.type = "submit";
+    ok.textContent = t("xlsPasswordOpen");
+    form.append(title, label, input, err, ok);
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      wrap.remove();
+      resolve(input.value);
+    });
+    wrap.appendChild(form);
+    container.appendChild(wrap);
+    input.focus();
+  });
 }

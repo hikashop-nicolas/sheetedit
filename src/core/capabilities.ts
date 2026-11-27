@@ -1,4 +1,4 @@
-import type { Workbook } from "./model";
+import { MAX_COL, MAX_ROW, type Workbook } from "./model";
 
 // What a given workbook format supports, so the UI advertises exactly the features that work for
 // the open file instead of scattering `wb.kind === "xlsx"` checks. Each authoring control is gated
@@ -37,6 +37,18 @@ export interface WorkbookCapabilities {
   formControls: boolean;
   /** Defined names: the Name Manager and defining or jumping to a name from the name box. */
   definedNames: boolean;
+  /** Named tables (xlsx ListObjects, ODF database ranges): create / edit / delete. */
+  tables: boolean;
+  /** Pictures: insert and delete (moving and resizing existing ones is always allowed). */
+  images: boolean;
+  /** The conditional-formatting kinds beyond value / formula / text / date rules: colour scales,
+      data bars, icon sets, top-N, above average and duplicate / unique. */
+  conditionalFormatAdvanced: boolean;
+  /** Power Query: the query panel and editor, whose definitions live in an xlsx DataMashup part. */
+  powerQuery: boolean;
+  /** The grid's size: rows and columns the format can hold. */
+  maxRows: number;
+  maxCols: number;
 }
 
 const NONE: WorkbookCapabilities = {
@@ -56,6 +68,12 @@ const NONE: WorkbookCapabilities = {
   themes: false,
   formControls: false,
   definedNames: false,
+  tables: false,
+  images: false,
+  conditionalFormatAdvanced: false,
+  powerQuery: false,
+  maxRows: MAX_ROW,
+  maxCols: MAX_COL,
 };
 
 const XLSX: WorkbookCapabilities = {
@@ -75,6 +93,12 @@ const XLSX: WorkbookCapabilities = {
   themes: true,
   formControls: true,
   definedNames: true,
+  tables: true,
+  images: true,
+  conditionalFormatAdvanced: true,
+  powerQuery: true,
+  maxRows: MAX_ROW,
+  maxCols: MAX_COL,
 };
 
 // ODF has native hyperlinks, comments, validation, conditional formatting, charts and (via the
@@ -106,9 +130,36 @@ const ODS: WorkbookCapabilities = {
   // preserved rather than rendered.
   formControls: false,
   definedNames: true,
+  tables: true,
+  images: true,
+  conditionalFormatAdvanced: true,
+  powerQuery: false,
+  maxRows: MAX_ROW,
+  maxCols: MAX_COL,
+};
+
+// A legacy .xls is edited through the xlsx paths but saved as BIFF8, which has no tables, slicers,
+// sparklines, themes, pivot caches the editor can author, drawing shapes or charts the writer
+// emits, only value / formula conditional formats, and a 65,536 x 256 grid.
+const XLS: WorkbookCapabilities = {
+  ...XLSX,
+  charts: false,
+  sparklines: false,
+  pivots: false,
+  shapes: false,
+  themes: false,
+  formControls: false,
+  tables: false,
+  conditionalFormatAdvanced: false,
+  powerQuery: false,
+  maxRows: 65536,
+  maxCols: 256,
 };
 
 /** The capabilities of a workbook format. CSV (and anything else) supports none of the above. */
-export function capabilitiesFor(kind: Workbook["kind"]): WorkbookCapabilities {
-  return kind === "xlsx" ? XLSX : kind === "ods" ? ODS : NONE;
+export function capabilitiesFor(kind: Workbook["kind"] | "xls"): WorkbookCapabilities {
+  return kind === "xls" ? XLS : kind === "xlsx" ? XLSX : kind === "ods" ? ODS : NONE;
 }
+
+/** The capabilities of an open workbook: its kind, or BIFF8's when it came from a .xls. */
+export const capabilitiesOf = (wb: Workbook): WorkbookCapabilities => capabilitiesFor(wb.xls ? "xls" : wb.kind);

@@ -1,5 +1,6 @@
 import { colToLetters, getCell, parseA1Ref, type CfRule, type ShapeGeom, type Sheet, type Workbook } from "../model";
 import { isDateFmt } from "../dates";
+import { capabilitiesOf } from "../capabilities";
 import { formulaFromLocal, listFromLocal, listToLocal, operandFromLocal, operandToLocal, type OperandKind } from "../formula-locale";
 import { regional } from "../regional";
 import { t } from "../i18n";
@@ -156,18 +157,24 @@ export function setupDialogs(ctx: DialogCtx): {
     // have no interoperable ODF form (calcext is dropped by LibreOffice on external author), so ODS
     // offers only the standard highlight (cellIs, incl. between).
     const ods = wb.kind === "ods";
+    // A .xls stores only value and formula rules, so the kinds it cannot hold are not offered.
+    const advanced = capabilitiesOf(wb).conditionalFormatAdvanced;
     const kindOpts = [
       { value: "cellIs", label: t("cfHighlight") },
       ...(ods ? [] : [
         { value: "text", label: t("cfTextRule") },
-        { value: "top", label: t("cfTopBottom") },
-        { value: "average", label: t("cfAverageRule") },
-        { value: "dupUnique", label: t("cfDupUnique") },
+        ...(advanced ? [
+          { value: "top", label: t("cfTopBottom") },
+          { value: "average", label: t("cfAverageRule") },
+          { value: "dupUnique", label: t("cfDupUnique") },
+        ] : []),
         { value: "expression", label: t("cfFormulaRule") },
         { value: "timePeriod", label: t("cfTimePeriodRule") },
-        { value: "colorScale", label: t("cfColorScale") },
-        { value: "dataBar", label: t("cfDataBar") },
-        { value: "iconSet", label: t("cfIconSet") },
+        ...(advanced ? [
+          { value: "colorScale", label: t("cfColorScale") },
+          { value: "dataBar", label: t("cfDataBar") },
+          { value: "iconSet", label: t("cfIconSet") },
+        ] : []),
       ]),
     ];
     const periodOpts = ["today", "yesterday", "tomorrow", "last7Days", "thisWeek", "lastWeek", "nextWeek", "thisMonth", "lastMonth", "nextMonth"]

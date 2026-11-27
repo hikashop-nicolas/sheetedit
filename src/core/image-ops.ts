@@ -1,4 +1,5 @@
 import { ensureCell, parseXmlOpt, serializeXml, type Sheet, type SheetImage, type Workbook } from "./model";
+import { capabilitiesOf } from "./capabilities";
 import { pxToEmu, type ChartAnchor } from "./chart-model";
 
 // Adding and removing pictures.
@@ -37,7 +38,7 @@ const MIME: Record<string, string> = {
 };
 
 /** Formats whose pictures this editor can add to and remove from. */
-export const imagesInsertable = (wb: Workbook): boolean => wb.kind === "xlsx" || wb.kind === "ods";
+export const imagesInsertable = (wb: Workbook): boolean => capabilitiesOf(wb).images;
 
 const toDataUri = (bytes: Uint8Array, ext: string): string => {
   let bin = "";
