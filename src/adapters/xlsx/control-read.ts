@@ -354,8 +354,16 @@ function applyActiveX(ctl: SheetControl, files: Record<string, Uint8Array>, xmlP
     }
     return;
   }
-  const parsed = binPath && files[binPath] ? readActiveXStream(files[binPath]) : undefined;
+  if (binPath && files[binPath]) applyActiveXBin(ctl, binPath, files[binPath]);
+}
+
+/** Fill a control in from an ActiveX persisted stream (class id, then the control's data). */
+export function applyActiveXBin(ctl: SheetControl, binPath: string, bytes: Uint8Array): void {
+  ctl.activeX = true;
+  const parsed = readActiveXStream(bytes);
   if (!parsed) return;
+  ctl.kind = ACTIVEX_KINDS[parsed.kind] ?? ctl.kind;
+  if (ctl.kind === "button") ctl.macro ??= `${ctl.name}_Click`;
   ctl.activeXBinPath = binPath;
   if (parsed.caption) ctl.label = parsed.caption;
   // A range control's bounds come from its binary, where a form control keeps them in ctrlProps.

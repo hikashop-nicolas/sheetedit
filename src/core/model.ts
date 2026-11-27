@@ -666,6 +666,8 @@ export interface SheetControl {
   shapeId?: string;
   /** The user changed the state -> the parts are rewritten on save. */
   dirty?: boolean;
+  /** Read from a .xls: the OBJ record and shape it came from, for the BIFF8 writer. */
+  xls?: import("../adapters/xls/control").XlsControlExtra;
 }
 
 /** A supported drawing shape geometry. Anything else read from a file maps to "rect" for rendering

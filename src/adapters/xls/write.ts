@@ -1,7 +1,8 @@
 // BIFF8 writer: a workbook model (with its xlsx style pool) as an Excel 97-2003 .xls compound file.
 // Styles are rebuilt from the live styles.xml so every edit made through the xlsx paths lands in
 // the XF / FONT / FORMAT tables; formulas are compiled to tokens with their cached results.
-import type { Cell, CfRule, Sheet, SheetShape, TextRun, Workbook } from "../../core/model";
+import type { Cell, CfRule, Sheet, SheetControl, SheetShape, TextRun, Workbook } from "../../core/model";
+import { activeXObjBody, CAPTION_GRBIT, ctlObjBody, type CtlWriteEnv, newControlShape, ungroupedShape, withPib } from "./control";
 import { geomOf } from "../xlsx/shape-read";
 import { type ChartWriteEnv, writeChartStream } from "./chart-write";
 import { sptOf } from "./drawing";
@@ -288,6 +289,14 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
   // ---- sheets -----------------------------------------------------------------------------
   const blips: { type: number; data: Uint8Array }[] = [];
   const drawings: { dg: number; shapes: number }[] = [];
+  // ActiveX controls' persisted data, one slice each.
+  const ctlsStream = new Bytes();
+  // A macro a control runs: a hidden-less VBA procedure name (fOB | fProc), as Excel writes it.
+  const macroName = (n: string): number => {
+    let i = names.findIndex((x) => x.itab === 0 && x.builtin == null && x.name.toLowerCase() === n.toLowerCase());
+    if (i < 0) { names.push({ name: n, itab: 0, hidden: false, grbit: 0x000c }); i = names.length - 1; }
+    return i + 1;
+  };
   const sheetBodies = sheets.map((s, si) => writeSheet(s, si));
 
   function writeSheet(s: Sheet, si: number): { rs: RecStream; indexAt: number; dbcells: number[]; defColAt: number } {
@@ -580,12 +589,14 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     }
     const charts = s.chartSheet ? [] : s.charts ?? [];
     const shapes = (s.shapes ?? []).slice(0, 1000);
-    if (!notes.length && !pics.length && !charts.length && !shapes.length) return;
+    // ActiveX controls go back only with the persisted data they were read with.
+    const controls = (s.controls ?? []).filter((c) => !c.activeX || (c.xls?.progId && c.activeXBinPath && wb.files[c.activeXBinPath])).slice(0, 1000);
+    if (!notes.length && !pics.length && !charts.length && !shapes.length && !controls.length) return;
     const dg = drawings.length + 1;
     const spid = (k: number): number => dg * 1024 + k;
     // A shape container with its OBJ, and its TXO or chart substream; groups hold their members.
     type Txo = { text: string; runs: [number, number][]; grbit: number; rot: number };
-    type Item = { sp: Uint8Array; obj: Bytes; txo?: Txo; chart?: Uint8Array; kids?: Item[] };
+    type Item = { sp: Uint8Array; obj: Bytes; txo?: Txo; chart?: Uint8Array; kids?: Item[]; ctl?: boolean };
     const items: Item[] = [];
     const colPx = (c: number): number => (s.hiddenCols?.has(c) ? 0 : s.colWidths?.get(c) ?? s.defaultColWidth ?? 64);
     const rowPx = (r: number): number => (s.hiddenRows?.has(r) ? 0 : s.rowHeights?.get(r) ?? s.defaultRowHeight ?? 17);
@@ -603,14 +614,18 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     };
     const cmo = (ot: number, id: number, flags = 0x6011): Bytes => body().u16(0x15).u16(0x12).u16(ot).u16(id).u16(flags).zeros(12);
     let k = 1;
+    // Controls keep their ids where they can: Excel names an unnamed control after its id.
+    const reserved = new Set<number>();
+    const ctlIds = controls.map((c) => { const id = c.xls?.id; if (id && id < 0xffff && !reserved.has(id)) { reserved.add(id); return id; } return 0; });
     let objId = 1;
+    const nextId = (): number => { while (reserved.has(objId)) objId++; return objId++; };
     for (const pic of pics) {
       const sp = new Bytes();
       escher(sp, 0xf00a, 0x2, 75, body().u32(spid(k++)).u32(0xa00));
       escher(sp, 0xf00b, 0x3, 2, body().u16(0x4104).u32(pic.blip).u16(0x03bf).u32(0x00080000));
       escher(sp, 0xf010, 0, 0, anchorBytes(pic.anchor));
       escher(sp, 0xf011, 0, 0, body());
-      const obj = cmo(8, objId++).u16(0x07).u16(2).u16(0xffff).u16(0x08).u16(2).u16(1);
+      const obj = cmo(8, nextId()).u16(0x07).u16(2).u16(0xffff).u16(0x08).u16(2).u16(1);
       items.push({ sp: container(0xf004, sp).out().slice(), obj });
     }
     for (const ch of charts) {
@@ -627,14 +642,14 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       for (let c = a.fromCol; c < a.toCol; c++) wPx += colPx(c);
       for (let r = a.fromRow; r < a.toRow; r++) hPx += rowPx(r);
       const stream = writeChartStream(ch, chartEnv(si), { w: Math.max(10, wPx * 0.75), h: Math.max(10, hPx * 0.75) });
-      items.push({ sp: container(0xf004, sp).out().slice(), obj: cmo(5, objId++), chart: stream });
+      items.push({ sp: container(0xf004, sp).out().slice(), obj: cmo(5, nextId()), chart: stream });
     }
     // Shapes: untouched ones go back as read, groups with them; the others are built from the model.
     const groupItems = new Map<number, Item>();
     for (const sh of shapes) {
       const x = sh.xls;
       const txo = shapeTxo(sh);
-      const id = objId++;
+      const id = nextId();
       if (x?.groups?.length) {
         let parent: Item[] = items;
         for (const g of x.groups) {
@@ -642,7 +657,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
           if (!gi) {
             let raw = withSpid(g.raw, spid(k++));
             if (g === x.groups[0] && sh.dirty && moved(sh)) raw = withAnchor(raw, anchorBytes(sh.anchor).out());
-            gi = { sp: raw, obj: cmo(0, objId++).u16(0x06).u16(2).u16(0), kids: [] };
+            gi = { sp: raw, obj: cmo(0, nextId()).u16(0x06).u16(2).u16(0), kids: [] };
             groupItems.set(g.id, gi);
             parent.push(gi);
           }
@@ -691,9 +706,45 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       const ot = isLine ? 0x1e : spt === 202 ? 6 : 0x1e;
       items.push({ sp: container(0xf004, sp).out().slice(0, sh.text ? -8 : undefined), obj: cmo(ot, id), txo: sh.text ? txo : undefined });
     }
+    // Controls: ids first, since option buttons chain to each other by id.
+    ctlIds.forEach((id, i) => { if (!id) ctlIds[i] = nextId(); });
+    const byOldId = new Map<number, number>();
+    controls.forEach((c, i) => { if (c.xls) byOldId.set(c.xls.id, ctlIds[i]!); });
+    const cenv: CtlWriteEnv = {
+      ref: (text) => compile(text, envFor(si), "R")?.rgce ?? null,
+      macro: (text) => macroRgce(text),
+      newId: (old) => byOldId.get(old),
+    };
+    controls.forEach((ctl, i) => {
+      const id = ctlIds[i]!, x = ctl.xls;
+      const anchor = ctl.anchor ? anchorBytes(ctl.anchor).out() : undefined;
+      if (ctl.activeX) {
+        let raw = withSpid(x!.raw, spid(k++));
+        if (x!.grouped) raw = ungroupedShape(raw, anchor && ctlMoved(ctl) ? anchor : x!.grouped);
+        else if (anchor && ctlMoved(ctl)) raw = withAnchor(raw, anchor);
+        const pib = x!.blip ? blipOf(bytesUri(x!.blip.bytes, x!.blip.ext)) : null;
+        if (pib != null) raw = withPib(raw, pib);
+        const data = wb.files[ctl.activeXBinPath!]!;
+        const obj = activeXObjBody(ctl, id, ctlsStream.len, data.length, cenv);
+        if (!obj) return;
+        ctlsStream.bytes(data);
+        items.push({ sp: stripTextbox(raw), obj, ctl: true });
+        return;
+      }
+      if (!anchor && !x) return;
+      const txo = controlTxo(ctl);
+      let raw: Uint8Array;
+      if (x) {
+        raw = withSpid(x.raw, spid(k++));
+        if (x.grouped) raw = ungroupedShape(raw, anchor && ctlMoved(ctl) ? anchor : x.grouped);
+        else if (anchor && ctlMoved(ctl)) raw = withAnchor(raw, anchor);
+      } else raw = newControlShape(spid(k++), anchor!, !!txo);
+      const boxed = hasTextbox(raw);
+      items.push({ sp: stripTextbox(raw), obj: ctlObjBody(ctl, id, cenv), txo: boxed ? txo ?? EMPTY_TXO : undefined, ctl: true });
+    });
     const noteIds: number[] = [];
     for (const n of notes) {
-      const id = objId++;
+      const id = nextId();
       noteIds.push(id);
       const sp = new Bytes();
       escher(sp, 0xf00a, 0x2, 202, body().u32(spid(k++)).u32(0xa00));
@@ -726,7 +777,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       if (it.kids) chunk.u16(0xf).u16(0xf003).u32(lenOf(it) - 8);
       chunk.bytes(it.sp);
       rs.rec(0x00ec, chunk.out());
-      rs.rec(0x005d, it.obj.u16(0).u16(0));
+      rs.rec(0x005d, it.ctl ? it.obj : it.obj.u16(0).u16(0));
       if (it.chart) rs.bytes(it.chart);
       if (it.txo) writeTxo(rs, it.txo);
       for (const c of it.kids ?? []) emit(c);
@@ -767,6 +818,37 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
     const rb = body();
     for (const [ich, f] of runs.slice(0, 1000)) rb.u16(ich).u16(f).u32(0);
     rs.rec(0x003c, rb.u16(t.length).u16(0).u32(0));
+  }
+
+  /** Whether a control moved since it was read. */
+  function ctlMoved(c: SheetControl): boolean {
+    const a = c.anchor, b = c.xls?.anchor;
+    return !!a && (!b || a.fromCol !== b.fromCol || a.fromRow !== b.fromRow || a.toCol !== b.toCol || a.toRow !== b.toRow || a.fromColOff !== b.fromColOff || a.fromRowOff !== b.fromRowOff || a.toColOff !== b.toColOff || a.toRowOff !== b.toRowOff);
+  }
+
+  /** A control's caption as a TXO: its own runs while unchanged, else one run in the default font. */
+  function controlTxo(c: SheetControl): { text: string; runs: [number, number][]; grbit: number; rot: number } | undefined {
+    const text = c.label ?? "";
+    const grbit = c.xls?.txoGrbit ?? CAPTION_GRBIT[c.kind];
+    if (grbit == null) return undefined;
+    const kept = c.xls?.text;
+    if (kept && kept.text === text) {
+      const runs = kept.runs.map((r): [number, number] => [r.ich, ifnt({ height: r.font.height, italic: r.font.italic, strike: r.font.strike, weight: r.font.weight, underline: r.font.underline, escapement: r.font.escapement, color: r.font.color ? palette.index(r.font.color, 0x7fff) : 0x7fff, name: r.font.name })]);
+      if (runs.length) return { text, runs, grbit, rot: 0 };
+    }
+    return { text, runs: text ? [[0, ifnt(baseFont)]] : [], grbit, rot: 0 };
+  }
+
+  /** The tokens of a control's macro: another workbook's by NameX, this one's by its NAME. */
+  function macroRgce(text: string): Uint8Array | null {
+    const ext = /^\[(\d+)\]!(.+)$/.exec(text);
+    const env = envFor(-1);
+    try {
+      const t = ext ? env.externName(Number(ext[1]), ext[2]!) : { ixti: env.xti(-2, -2), index: macroName(text.replace(/^'(.*)'$/, "$1")) };
+      return body().u8(0x39).u16(t.ixti).u16(t.index).u16(0).out().slice();
+    } catch {
+      return null;
+    }
   }
 
   /** Whether a shape moved since it was read. */
@@ -1038,6 +1120,7 @@ export function writeXls(wb: Workbook, report: XlsWriteReport = { droppedFormula
       // A project that is not a compound file is left out rather than written damaged.
     }
   }
+  if (ctlsStream.len) entries.push({ name: "Ctls", data: ctlsStream.out() });
   return writeCfbStreams(entries);
 
   function writeDrawingGroup(gs: RecStream): void {

@@ -32,8 +32,8 @@ describe("workbook capabilities", () => {
 describe("legacy .xls capabilities", () => {
   it("hides what BIFF8 cannot store and clamps the grid", () => {
     const c = capabilitiesFor("xls");
-    expect(c.tables || c.sparklines || c.pivots || c.themes || c.formControls || c.conditionalFormatAdvanced).toBe(false);
-    expect(c.comments && c.hyperlinks && c.dataValidation && c.conditionalFormat && c.protection && c.printSetup && c.freezePanes && c.definedNames && c.charts && c.shapes).toBe(true);
+    expect(c.tables || c.sparklines || c.pivots || c.themes || c.conditionalFormatAdvanced).toBe(false);
+    expect(c.comments && c.hyperlinks && c.dataValidation && c.conditionalFormat && c.protection && c.printSetup && c.freezePanes && c.definedNames && c.charts && c.shapes && c.formControls).toBe(true);
     expect([c.maxRows, c.maxCols]).toEqual([65536, 256]);
     const wb = readWorkbook(new Uint8Array(readFileSync(join(__dirname, "../fixtures/compound.xls"))));
     expect(capabilitiesOf(wb).maxCols).toBe(256);

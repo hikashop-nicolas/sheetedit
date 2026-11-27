@@ -127,6 +127,8 @@ export interface NewControl {
  * pushed onto the sheet, or null when the workbook is not one we can add parts to.
  */
 export function createXlsxControl(wb: Workbook, sheet: Sheet, spec: NewControl): SheetControl | null {
+  // A .xls is saved from the model alone, so it needs no xlsx parts.
+  if (wb.xls) return pushModel(sheet, spec, `${OBJECT_TYPES[spec.kind] ?? "Label"} ${(sheet.controls?.length ?? 0) + 1}`);
   const doc = sheet.doc;
   const ws = doc?.documentElement;
   if (!doc || !ws || !sheet.path) return null;
@@ -250,22 +252,26 @@ export function createXlsxControl(wb: Workbook, sheet: Sheet, spec: NewControl):
   controls.appendChild(alt);
   sheet.layoutDirty = true;
 
+  return pushModel(sheet, spec, name, { linkedCell: absLink, propsPath, vmlPath, shapeId: String(shapeId) });
+}
+
+/** The model entry for a new control, pushed onto the sheet. */
+function pushModel(sheet: Sheet, spec: NewControl, name: string, parts: Partial<SheetControl> = {}): SheetControl {
+  const range = spec.kind === "spin" || spec.kind === "scroll";
   const model: SheetControl = {
     kind: spec.kind,
     name,
     label: spec.label,
-    linkedCell: absLink,
+    linkedCell: spec.linkedCell ? absoluteRef(spec.linkedCell) : undefined,
     sourceRange: spec.sourceRange,
     checked: spec.kind === "checkbox" || spec.kind === "radio" ? false : undefined,
     selected: spec.kind === "dropdown" || spec.kind === "list" ? 0 : undefined,
-    value: spec.kind === "spin" || spec.kind === "scroll" ? 0 : undefined,
-    min: spec.kind === "spin" || spec.kind === "scroll" ? 0 : undefined,
-    max: spec.kind === "spin" || spec.kind === "scroll" ? 100 : undefined,
-    inc: spec.kind === "spin" || spec.kind === "scroll" ? 1 : undefined,
+    value: range ? 0 : undefined,
+    min: range ? 0 : undefined,
+    max: range ? 100 : undefined,
+    inc: range ? 1 : undefined,
     anchor: { fromCol: spec.at.c1, fromRow: spec.at.r1, fromColOff: 0, fromRowOff: 0, toCol: spec.at.c2, toRow: spec.at.r2, toColOff: 0, toRowOff: 0 },
-    propsPath,
-    vmlPath,
-    shapeId: String(shapeId),
+    ...parts,
   };
   model.cid ??= newDrawingId();
   (sheet.controls ??= []).push(model);

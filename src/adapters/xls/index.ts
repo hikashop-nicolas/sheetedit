@@ -1,7 +1,8 @@
 // Legacy Excel .xls (BIFF8, plus BIFF2-7 on read): the workbook is converted to xlsx parts on open,
 // so every xlsx editing path applies, and written back as a BIFF8 compound file on save.
 import type { ChartModel } from "../../core/chart-model";
-import type { Workbook } from "../../core/model";
+import type { SheetControl, Workbook } from "../../core/model";
+import { xlsControlModel } from "./control";
 import { readXlsShapes, sptOf, xlsChartModel } from "./drawing";
 import { readXlsx } from "../xlsx/read";
 import { isCfb, writeCfbStreams } from "./cfb";
@@ -27,6 +28,8 @@ export interface XlsSource {
   charts: number;
   chartDrawings: number;
   shapes: number;
+  /** Form and ActiveX controls that are not kept (grouped ones, BIFF5 ones). */
+  controls: number;
   /** User-defined (macro) function names, which formulas call by name rather than as _xlfn. */
   udfs: string[];
   encrypted?: "xor" | "rc4" | "cryptoapi";
@@ -45,7 +48,8 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
   const vbaBin = book.vba ? writeCfbStreams(book.vba) : undefined;
   if (vbaBin) files["xl/vbaProject.bin"] = vbaBin;
   const wb = readXlsx(files, { lazySheets: opts.lazySheets });
-  // Charts, chart sheets and drawing shapes go straight into the model.
+  // Charts, chart sheets, drawing shapes and controls go straight into the model.
+  let axN = 0, lostControls = 0;
   book.sheets.forEach((s, i) => {
     const sheet = wb.sheets[i];
     if (!sheet) return;
@@ -63,6 +67,12 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
     if (charts.length) sheet.charts = charts;
     const shapes = readXlsShapes(s, book);
     if (shapes.length) sheet.shapes = shapes;
+    const controls: SheetControl[] = [];
+    for (const c of s.controls ?? []) {
+      const m = xlsControlModel(c, s, book, wb.files, `xl/activeX/xlsCtl${c.obj.activeX ? ++axN : 0}.bin`);
+      if (m) controls.push(m); else lostControls++;
+    }
+    if (controls.length) sheet.controls = controls;
   });
   wb.xls = {
     biff: book.biff,
@@ -72,6 +82,7 @@ export function readXls(bytes: Uint8Array, opts: XlsReadOptions & { lazySheets?:
     skippedSheets: book.skippedSheets,
     charts: book.sheets.reduce((n, s) => n + s.charts, 0),
     shapes: book.sheets.reduce((n, s) => n + s.shapes, 0),
+    controls: lostControls + book.sheets.reduce((n, s) => n + (s.ctlDropped ?? 0), 0),
     chartDrawings: book.sheets.reduce((n, s) => n + s.chartDrawings, 0),
     udfs: book.names.filter((n) => (n.func || !n.formula) && n.builtin == null && !n.name.startsWith("_xlfn.")).map((n) => n.name),
     encrypted: book.encrypted,
@@ -97,7 +108,8 @@ export function xlsSaveWarnings(wb: Workbook): { key: string; n?: number; names?
   if (!x) return [];
   const out: { key: string; n?: number; names?: string }[] = [];
   if (x.charts) out.push({ key: "xlsDropsCharts", n: x.charts });
-  if (x.shapes) out.push({ key: "xlsDropsControls", n: x.shapes });
+  if (x.controls) out.push({ key: "xlsDropsControls", n: x.controls });
+  if (x.shapes) out.push({ key: "xlsDropsObjects", n: x.shapes });
   if (x.chartDrawings) out.push({ key: "xlsDropsChartDrawings", n: x.chartDrawings });
   if (x.skippedSheets.length) out.push({ key: "xlsDropsSheets", names: x.skippedSheets.join(", ") });
   let standIn = 0, errBars = false, combo = false;

@@ -98,7 +98,7 @@ export function anchorPx(a: Anchor, s: XlsSheet): ChartAnchor {
   };
 }
 
-const runFont = (f: XlsFont | undefined, book: XlsBook): XlsRunFont | undefined =>
+export const runFont = (f: XlsFont | undefined, book: XlsBook): XlsRunFont | undefined =>
   f ? { height: f.height, italic: f.italic, strike: f.strike, weight: f.weight, underline: f.underline, escapement: f.escapement, color: icvCss(book.palette, f.color), name: f.name } : undefined;
 
 /** The sheet's drawing shapes and text boxes, groups flattened onto their members. */

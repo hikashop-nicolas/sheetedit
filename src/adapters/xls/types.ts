@@ -89,6 +89,25 @@ export interface XlsDrawing {
   txos: XlsTxo[];
 }
 
+/** A form or ActiveX control's OBJ record: its subrecords as read, and what they say. */
+export interface XlsCtlObj {
+  ot: number;
+  id: number;
+  /** The subrecords in file order, ftEnd excluded; ftLbsData runs to the end of the record. */
+  subs: { ft: number; data: Uint8Array }[];
+  link?: string;
+  range?: string;
+  macro?: string;
+  checked?: number;
+  sbs?: { val: number; min: number; max: number; inc: number; page: number; horiz: boolean };
+  sel?: number;
+  /** ActiveX: the class, and where its persisted data sits in the Ctls stream. */
+  activeX?: { progId: string; pos: number; size: number; data?: Uint8Array };
+}
+
+/** A control on a sheet: its shape, its OBJ, its caption and (ActiveX) its preview picture. */
+export interface XlsControl { node: DrawNode; obj: XlsCtlObj; txo?: XlsTxo; blip?: Blip; /** Enclosing groups, outermost first. */ groups?: DrawNode[] }
+
 export interface XlsPrint {
   paperSize?: number;
   scale?: number;
@@ -148,6 +167,8 @@ export interface XlsSheet {
   /** Drawing objects placed on this sheet's charts, which are not kept. */
   chartDrawings: number;
   shapes: number;
+  /** Form controls that are not kept (inside a group, or from a BIFF5 file). */
+  ctlDropped?: number;
   /** Position in the BOUNDSHEET list (chart sheets included), which names and 3D refs index. */
   boundIndex?: number;
   hasAutoFilter?: boolean;
@@ -156,6 +177,7 @@ export interface XlsSheet {
   codeName?: string;
   /** Drawing shapes and text boxes, and the embedded charts with their anchors. */
   drawing?: XlsDrawing;
+  controls?: XlsControl[];
   chartObjs: { anchor?: Anchor; chart: XlsChart }[];
   /** A chart sheet: its one chart fills the sheet. */
   chartSheet?: XlsChart;

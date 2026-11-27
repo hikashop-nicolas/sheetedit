@@ -10,7 +10,8 @@ import { type ChartEnv, chartRecords, readChart } from "./chart-read";
 import { icvCss } from "./palette";
 import { decodeFormula, ERRORS, type FormulaContext } from "./formula-read";
 import { DEFAULT_PALETTE } from "./palette";
-import type { XlsBook, XlsCell, XlsCf, XlsFont, XlsName, XlsRange, XlsSheet, XlsSupbook, XlsTxo, XlsXf } from "./types";
+import type { XlsBook, XlsCell, XlsCf, XlsCtlObj, XlsFont, XlsName, XlsRange, XlsSheet, XlsSupbook, XlsTxo, XlsXf } from "./types";
+import { readCtlObj } from "./control";
 
 export interface XlsReadOptions {
   /** The password for an encrypted workbook. */
@@ -36,6 +37,7 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
   let stream: Uint8Array | undefined;
   let summary: Map<string, Uint8Array> | undefined;
   let vba: { name: string; data: Uint8Array }[] | undefined;
+  let ctls: Uint8Array | undefined;
   if (isCfb(bytes)) {
     const { streams } = readCfbStreams(bytes);
     stream = streams.get("Workbook") ?? streams.get("Book") ?? [...streams.entries()].find(([k]) => /^(workbook|book)$/i.test(k))?.[1];
@@ -46,6 +48,7 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
     summary = new Map();
     for (const [k, v] of streams) if (/SummaryInformation$|^\u0001CompObj$/.test(k)) summary.set(k, v);
     vba = readCfbStorage(bytes, "_VBA_PROJECT_CUR");
+    ctls = streams.get("Ctls");
     // The project's signature sits at the root; it travels with the project as _VBA_SIGNATURE.
     const sig = streams.get("\u0005DigitalSignature");
     if (vba.length && sig) vba.push({ name: "_VBA_SIGNATURE", data: sig });
@@ -54,6 +57,11 @@ export function readXlsBook(bytes: Uint8Array, opts: XlsReadOptions = {}): XlsBo
   const book = parseWorkbookStream(stream, opts);
   if (summary?.size) book.summary = summary;
   if (vba?.length) book.vba = vba;
+  // ActiveX controls: each one's persisted data is a slice of the Ctls stream.
+  for (const s of book.sheets) for (const c of s.controls ?? []) {
+    const ax = c.obj.activeX;
+    if (ax && ctls && ax.pos + ax.size <= ctls.length) ax.data = ctls.slice(ax.pos, ax.pos + ax.size);
+  }
   return book;
 }
 
@@ -567,7 +575,7 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
   let depth = 0;
   let started = false;
   const drawing: Uint8Array[] = [];
-  const objs: { ot: number; id: number }[] = [];
+  const objs: { ot: number; id: number; ctl?: XlsCtlObj }[] = [];
   const txos: XlsTxo[] = [];
   const txoByObj = new Map<number, string>();
   const chartAt = new Map<number, number>();
@@ -762,7 +770,12 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
           break;
         }
         case 0x005d: { // OBJ
-          if (!b8) { sh.shapes++; break; }
+          if (!b8) {
+            // BIFF5 objects are not kept; the type (after cObj) says whether it was a control.
+            const ot5 = r.data.length >= 6 ? r.data[4]! | (r.data[5]! << 8) : 0;
+            if (ot5 >= 7 && ot5 <= 20 && ot5 !== 8 && ot5 !== 9) sh.ctlDropped = (sh.ctlDropped ?? 0) + 1; else sh.shapes++;
+            break;
+          }
           let ot = -1, id = -1;
           while (c.left >= 4) {
             const ft = c.u16(), cb = c.u16();
@@ -770,7 +783,8 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
             if (ft === 0) break;
             c.skip(Math.min(cb, c.left));
           }
-          objs.push({ ot, id });
+          const ctl = readCtlObj(r.data, (rgce) => decodeFormula(rgce, undefined, ctx(0, 0)));
+          objs.push(ctl ? { ot, id, ctl } : { ot, id });
           drawing.push(...r.conts); // the next shapes' drawing data can ride in its CONTINUEs
           break;
         }
@@ -890,7 +904,7 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
       for (const shape of readSheetShapes(concatAll(drawing))) {
         if (shape.pib == null || !shape.anchor) continue;
         const o = shape.obj != null ? objs[shape.obj] : undefined;
-        if (o && o.ot !== 8) continue;
+        if (o && (o.ot !== 8 || o.ctl)) continue;
         const blip = blips[shape.pib];
         if (blip) sh.images.push({ anchor: shape.anchor, blip, name: shape.name });
       }
@@ -904,9 +918,16 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
     try {
       const nodes = readDrawingTree(concatAll(drawing));
       const keep: DrawNode[] = [];
-      const visit = (n: DrawNode, top: boolean): boolean => {
+      const visit = (n: DrawNode, top: boolean, chain: DrawNode[] = []): boolean => {
         if (n.obj != null) seen.add(n.obj);
         const ot = n.obj != null ? objs[n.obj]?.ot ?? -1 : -1;
+        const ctl = n.obj != null ? objs[n.obj]?.ctl : undefined;
+        if (ctl) {
+          // A control inside a group comes out of it, placed where the group put it.
+          if ((top && n.anchor) || (chain.length && n.child)) (sh.controls ??= []).push({ node: n, obj: ctl, txo: n.txo != null ? txos[n.txo] : undefined, blip: ctl.activeX ? blips[n.props.get(0x104)?.value ?? 0] : undefined, ...(top ? {} : { groups: chain }) });
+          else sh.ctlDropped = (sh.ctlDropped ?? 0) + 1;
+          return false;
+        }
         if (ot === 5) {
           const at = n.obj != null ? chartAt.get(n.obj) : undefined;
           const ch = at != null ? readChart(chartRecords(stream, at), chartEnv(book, base)) : null;
@@ -915,8 +936,8 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
           return false;
         }
         if (ot === 8 || ot === 0x19 || ot === 0x14) return false; // pictures, notes, filter arrows
-        if (FORM_CONTROLS.has(ot)) { sh.shapes++; return false; }
-        if (n.kids) n.kids = n.kids.filter((k) => visit(k, false));
+        if (FORM_CONTROLS.has(ot)) { sh.ctlDropped = (sh.ctlDropped ?? 0) + 1; return false; }
+        if (n.kids) n.kids = n.kids.filter((k) => visit(k, false, [...chain, n]));
         return !n.kids || n.kids.length > 0;
       };
       for (const n of nodes) if (visit(n, true)) keep.push(n);
@@ -926,11 +947,14 @@ function readSheet(stream: Uint8Array, pos: number, sh: XlsSheet, book: XlsBook,
     }
   }
   // Objects no drawing describes (old-style OBJ records) cannot be kept either.
-  objs.forEach((o, i) => { if (!seen.has(i) && o.ot !== 0x14 && o.ot !== 0x19 && o.ot !== 8) { if (o.ot === 5) sh.charts++; else sh.shapes++; } });
+  objs.forEach((o, i) => {
+    if (seen.has(i) || o.ot === 0x14 || o.ot === 0x19 || (o.ot === 8 && !o.ctl)) return;
+    if (o.ot === 5) sh.charts++; else if (o.ctl || FORM_CONTROLS.has(o.ot)) sh.ctlDropped = (sh.ctlDropped ?? 0) + 1; else sh.shapes++;
+  });
 }
 
-/** OBJ types that are form controls (buttons, check boxes, lists...), still not kept. */
-const FORM_CONTROLS = new Set([7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 22, 23, 24]);
+/** OBJ types no control reader covers (beyond those readCtlObj takes), still not kept. */
+const FORM_CONTROLS = new Set([10, 21, 22, 23, 24]);
 
 /** What the chart reader needs from the book. */
 export function chartEnv(book: XlsBook, base: Omit<FormulaContext, "row" | "col">): ChartEnv {
