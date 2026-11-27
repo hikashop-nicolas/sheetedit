@@ -33,10 +33,10 @@ describe("furigana (phonetic ruby)", () => {
     // Selecting a cell is not editing it: the reading stays up, as it does in Excel.
     cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("be.visible");
     cy.get('input[aria-label="A1"]').should("have.value", "東京");
-    // Typing hands the cell to the input, which holds the base text alone.
+    // Typing hands the cell to the input; into a merely selected cell it replaces the text.
     cy.get('input[aria-label="A1"]').type("駅");
     cy.get('input[aria-label="A1"]').closest("td").find(".sheetedit-ruby").should("not.be.visible");
-    cy.get('input[aria-label="A1"]').should("have.value", "東京駅");
+    cy.get('input[aria-label="A1"]').should("have.value", "駅");
   });
 
   it("adds and removes furigana on a cell via the toolbar", () => {

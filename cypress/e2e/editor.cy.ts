@@ -207,4 +207,37 @@ describe("sheetedit", () => {
     cy.get('input[aria-label="B2"]').clear().type("10").blur();
     cy.get('input[aria-label="C2"]').should("have.value", "20");
   });
+
+  it("replaces a selected cell's content when typing, as Excel does", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="B2"]').click();
+    cy.get('input[aria-label="B2"]').type("7{enter}");
+    cy.get('input[aria-label="B2"]').should("have.value", "7");
+    cy.get('input[aria-label="C2"]').should("have.value", "14");
+  });
+
+  // Browser-level key events (CDP), with the caret left at the start as a click can leave it.
+  const realKey = (key: string, text = key, code = 0) =>
+    cy.wrap(null).then(() =>
+      Cypress.automation("remote:debugger:protocol", {
+        command: "Input.dispatchKeyEvent",
+        params: { type: "keyDown", key, text, unmodifiedText: text, windowsVirtualKeyCode: code || key.toUpperCase().charCodeAt(0) },
+      }).then(() => Cypress.automation("remote:debugger:protocol", { command: "Input.dispatchKeyEvent", params: { type: "keyUp", key } })),
+    );
+  const realType = (s: string) => [...s].forEach((ch) => realKey(ch));
+
+  it("replaces on real key presses and appends once editing", () => {
+    open("cypress/fixtures/sample.xlsx");
+    cy.get('input[aria-label="B2"]').click().then(($i) => ($i[0] as HTMLInputElement).setSelectionRange(0, 0));
+    realType("100");
+    realKey("Enter", "\r", 13);
+    cy.get('input[aria-label="B2"]').should("have.value", "100");
+    cy.get('input[aria-label="C2"]').should("have.value", "200");
+    // A second click places a caret: that is editing, and typing goes where the caret is.
+    cy.get('input[aria-label="B2"]').click();
+    cy.get('input[aria-label="B2"]').click().then(($i) => ($i[0] as HTMLInputElement).setSelectionRange(3, 3));
+    realType("5");
+    realKey("Enter", "\r", 13);
+    cy.get('input[aria-label="B2"]').should("have.value", "1005");
+  });
 });

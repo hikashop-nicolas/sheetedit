@@ -5230,7 +5230,16 @@ export function createSheetEditor(
         input.parentElement?.classList.toggle("num", getCell(sheet, r, c)?.kind === "n");
       };
       input.addEventListener("blur", commit);
+      // Typing into a cell that is only selected replaces its content, as in Excel; the click
+      // that selected it may have left a caret anywhere in the text.
+      const replaceIfSelected = (): void => {
+        if (isEditing(r, c)) return;
+        input.select();
+        beginEditing(r, c);
+      };
+      input.addEventListener("compositionstart", replaceIfSelected);
       input.addEventListener("keydown", (e) => {
+        if ((e.key.length === 1 || e.key === "Dead") && !e.metaKey && (!e.ctrlKey || e.altKey)) replaceIfSelected();
         const moveTo = (rr: number, cc: number) => {
           if (rr < 1 || cc < 1 || rr > totalRows || cc > totalCols) return;
           e.preventDefault();
