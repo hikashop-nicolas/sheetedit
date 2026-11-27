@@ -39,6 +39,12 @@ describe("formula tokens", () => {
     expect(decodeFormula(rgce, rgcb, ctx)).toBe(f);
   });
 
+  it("decodes a volatile TODAY() as Excel writes it", () => {
+    // tAttrVolatile, then PtgFuncV TODAY (221, no arguments).
+    expect(decodeFormula(new Uint8Array([0x19, 0x01, 0x00, 0x00, 0x41, 0xdd, 0x00]), undefined, ctx)).toBe("TODAY()");
+    expect(Array.from(compileFormula("TODAY()", env).rgce)).toEqual([0x19, 0x01, 0x00, 0x00, 0x41, 0xdd, 0x00]);
+  });
+
   it("refuses what BIFF8 cannot hold", () => {
     expect(compileFormula("A70000", env).rgce[0]).toBe(0x43); // past IV65536 it is a name
     expect(() => compileFormula(`"${"x".repeat(300)}"`, env)).toThrow();
