@@ -1,7 +1,8 @@
 # sheetedit
 
 A standalone, framework-agnostic, client-side **spreadsheet editor** for `.xlsx`
-(OOXML) and `.ods` (OpenDocument). Both are zips of XML; sheetedit reads the cells
+(OOXML) and `.ods` (OpenDocument), which also opens and saves legacy Excel `.xls` (see
+[Legacy Excel](#legacy-excel-xls)). Both are zips of XML; sheetedit reads the cells
 into an editable grid, **preserves formulas and recalculates** them as you edit, and
 exports a valid workbook, **keeping styles, number formats, charts, pivot tables and other
 sheets** intact. No server, no upload.
@@ -534,6 +535,35 @@ blocked, ODF what is allowed) and the adapters convert. ODF has no equivalent fo
 autofilter / pivot flags, so those fall back to their blocked defaults on an `.ods` round-trip.
 Verified through LibreOffice both ways; LibreOffice itself drops workbook structure protection on its
 OOXML export, so that flag was checked within ODF only.
+
+## Legacy Excel (.xls)
+
+Excel 97-2003 workbooks (BIFF8) open with the full editor and save back as `.xls`; Excel 5/95
+(BIFF5/7) and the single-sheet BIFF2-4 files open too and are saved as BIFF8. The reader turns the
+binary workbook into the xlsx parts the rest of sheetedit works on, so every editing path applies,
+and the writer rebuilds a BIFF8 compound file from the model on save.
+
+- **Read and written**: values, shared strings and rich text, formulas (functions, 3D and external
+  references, names, shared and array formulas, unions and intersections) with their cached
+  results, fonts, number formats, fills, borders and alignment, the 56-colour palette, column
+  widths, row heights, hidden rows and columns, outlines, merges, hyperlinks and their tips,
+  comments, defined names and sheet-scoped ones, freeze and split panes, data validation,
+  conditional formats (value and formula rules), sheet and workbook protection with the password
+  hash, page setup with print area and titles, the autofilter range, pictures (PNG, JPEG, BMP, EMF,
+  WMF), external link caches and the summary streams. The 1904 date system is read and saved as
+  1900, with date cells shifted to keep their dates.
+- **Encrypted files** (RC4, RC4 CryptoAPI and XOR obfuscation) open with their password:
+  `readWorkbook(bytes, { password })`, or `createSheetEditorAsync` asks through the
+  `requestPassword` option or a prompt of its own. Files protected with Excel's default
+  `VelvetSweatshop` open without asking. Saving writes an unencrypted file.
+- **Not stored by BIFF8, so not offered while a `.xls` is open**: tables, slicers, sparklines,
+  pivots authoring, drawing shapes, form controls, workbook themes, Power Query, colour scales, data
+  bars, icon sets and the top / average / duplicate rule kinds. The grid stops at 65,536 rows and
+  256 columns, and colours are mapped onto the palette (free entries are reassigned before falling
+  back to the nearest colour). `capabilitiesOf(wb)` reports this per workbook.
+- **Not kept on save**: embedded charts, chart sheets, drawing shapes and text boxes, macro modules
+  and the VBA project. The editor shows which of these the open file has, in a bar above the grid,
+  and `editor.saveWarnings()` returns the same sentences for a host to confirm before saving.
 
 ## How preservation works
 
