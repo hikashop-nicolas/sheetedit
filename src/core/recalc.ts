@@ -11,6 +11,7 @@ import { expandTableRefs, hasTableRef, tableBodyRef } from "./table-refs";
 import { deferredMayBeUncomputed, isSheetLoaded } from "./lazy-sheet";
 import { expandValueNames, findName } from "./names";
 import { SPAN_FUNCTIONS, expandSheetSpans, type SheetExtent } from "./sheet-span";
+import { hasAnchoredLine, unanchorLines } from "./whole-lines";
 
 type CellRef = { sheet: string; row: number; col: number };
 type RangeRef = { sheet: string; from: { row: number; col: number }; to: { row: number; col: number } };
@@ -396,7 +397,8 @@ export function recalc(wb: Workbook, opts: RecalcOptions = {}): void {
     let f = formula;
     if (hasTableRef(f)) f = expandTableRefs(f, wb, row);
     if (hasLet(f)) f = expandLet(f);
-    return expandSheetSpans(expandValueNames(f, wb.definedNames), sheetNames, extentOf);
+    f = expandSheetSpans(expandValueNames(f, wb.definedNames), sheetNames, extentOf);
+    return hasAnchoredLine(f) ? unanchorLines(f) : f;
   };
 
   const depParser = new FP.DepParser({ onVariable: (name: string, sheet?: string) => nameToRef(name, sheet) });
@@ -705,6 +707,7 @@ export function makeFormulaEvaluator(wb: Workbook): FormulaEvaluator {
       if (hasTableRef(f)) f = expandTableRefs(f, wb, r);
       if (hasLet(f)) f = expandLet(f);
       f = expandSheetSpans(expandValueNames(f, wb.definedNames), wb.sheets.map((s) => s.name), extentOf);
+      if (hasAnchoredLine(f)) f = unanchorLines(f);
       try {
         cutWhole = wholeColumnsCuttable(f);
         return parser.parse(f, { row: r, col: c, sheet: sheetName }, false);
