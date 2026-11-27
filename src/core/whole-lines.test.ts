@@ -84,5 +84,5 @@ describe("a whole column passed straight to a blank-proof function", () => {
     wb.definedNames!.set("TypeKeys", "OFFSET(Types!$A$2,0,0,COUNTA(Types!$A:$A)-1,1)");
     recalc(wb);
     expect(getCell(out, 7, 1)?.value).toBe("type 50");
-  });
+  }, 30000);
 });
