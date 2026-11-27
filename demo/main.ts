@@ -1,4 +1,4 @@
-import { createSheetEditor, setLocale, type SheetEditor } from "../src/index";
+import { createSheetEditor, createSheetEditorAsync, setLocale, type SheetEditor } from "../src/index";
 
 // ?lang=fr opens the demo in another language, with its numbers and formula names.
 const lang = new URLSearchParams(location.search).get("lang");
@@ -15,7 +15,7 @@ openBtn.addEventListener("click", () => fileInput.click());
 let editor: SheetEditor | null = null;
 let filename = "edited.xlsx";
 
-function loadBytes(bytes: Uint8Array, name: string): void {
+async function loadBytes(bytes: Uint8Array, name: string): Promise<void> {
   filename = name;
   editor?.destroy();
   editorEl.innerHTML = "";
@@ -24,7 +24,8 @@ function loadBytes(bytes: Uint8Array, name: string): void {
     win.seChangeCount = 0; // lets a host (and the e2e suite) see that onChange really fired
     win.seCellChanges = [];
     win.seStructural = [];
-    editor = createSheetEditor(editorEl, bytes, {
+    // The async variant asks for the password of an encrypted .xls with its own prompt.
+    editor = await createSheetEditorAsync(editorEl, bytes, {
       fonts: { remote: { provider: "google" } }, // the demo offers "Get more fonts"
       onChange: () => {
         win.seChangeCount = (win.seChangeCount as number) + 1;
@@ -70,9 +71,14 @@ if (src) {
 
 saveBtn.addEventListener("click", async () => {
   if (!editor) return;
+  // A legacy .xls may hold things BIFF8 saving cannot keep; say so before writing it.
+  const warnings = editor.saveWarnings();
+  if (warnings.length && !confirm(warnings.join("\n\n"))) return;
   const out = await editor.getBytes();
-  const ext = filename.toLowerCase().endsWith(".ods")
+  const lower = filename.toLowerCase();
+  const ext = lower.endsWith(".ods")
     ? "application/vnd.oasis.opendocument.spreadsheet"
+    : lower.endsWith(".xls") ? "application/vnd.ms-excel"
     : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   const blob = new Blob([out as BlobPart], { type: ext });
   const url = URL.createObjectURL(blob);
