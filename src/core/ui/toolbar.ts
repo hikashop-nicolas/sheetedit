@@ -3,6 +3,7 @@ import { numFmtPresets } from "../dates";
 import type { CellStyle, StyleChange } from "../model";
 import type { FontOptions } from "../fonts";
 import { createFontMenu, type FontMenu } from "./font-menu";
+import { anchorRect, placePopup, scrollToChecked, type Box } from "./place";
 
 // The style toolbar, split out of the editor. The styling controls form one
 // collapsible cluster (richdoc's toolbar pattern): inline while there is room,
@@ -138,25 +139,45 @@ export function buildToolbar(ctx: {
   // size pickers used to be native <select>s, whose list the browser draws in its own layer - so
   // they looked nothing like the rest and were the only two that never collided with anything.
   const menus: HTMLElement[] = [];
+  const anchors = new Map<HTMLElement, Box>();
+  const placeMenu = (menuEl: HTMLElement, anchor: Box): void => {
+    anchors.set(menuEl, anchor);
+    placePopup(menuEl, anchor, { container: wrap, floor: wrap, marginRight: 4 });
+  };
+  // The keyboard coming up or going away resizes the visual viewport: refit what is open.
+  const refit = (): void => {
+    for (const m of menus) {
+      const a = anchors.get(m);
+      if (!m.hidden && a) placeMenu(m, a);
+    }
+  };
+  window.visualViewport?.addEventListener("resize", refit);
   /** Wire a button to its menu: position under the button, toggle, and tell the host it is open. */
   const bindMenu = (btn: HTMLElement, menuEl: HTMLElement): void => {
     menus.push(menuEl);
     btn.addEventListener("mousedown", (e) => e.preventDefault());
     btn.addEventListener("click", () => {
       const open = menuEl.hidden;
+      // Measured before the other menus close: a button inside the folded "Aa" menu is 0x0 after.
+      const handed = btn as HTMLElement & { openAt?: DOMRect };
+      let anchor = open ? anchorRect(btn, handed.openAt) : null;
+      handed.openAt = undefined;
+      const parent = menus.find((m) => m !== menuEl && !m.hidden && m.contains(btn));
+      if (anchor && parent) {
+        // Take the closing menu's place, under its own button.
+        const top = parent.getBoundingClientRect().top - 2;
+        anchor = { left: anchor.left, right: anchor.right, top, bottom: top };
+      }
       for (const m of menus) if (m !== menuEl) m.hidden = true;
       if (open) {
-        const r = btn.getBoundingClientRect();
-        const wr = wrap.getBoundingClientRect();
-        menuEl.style.top = `${r.bottom - wr.top + 2}px`;
+        menuEl.style.top = "0px";
         menuEl.style.left = "0px"; // measured at the left edge, where it has the whole width to wrap in
       }
       menuEl.hidden = !open;
       if (open) {
-        // Then under its button, as far as it stays on screen (a wide menu wraps its rows, see the CSS).
-        const r = btn.getBoundingClientRect();
-        const wr = wrap.getBoundingClientRect();
-        menuEl.style.left = `${Math.max(0, Math.min(r.left - wr.left, wr.width - menuEl.offsetWidth - 4))}px`;
+        // Then under its button, inside what the screen shows (a wide menu wraps its rows, see the CSS).
+        placeMenu(menuEl, anchor ?? toolbar.getBoundingClientRect());
+        scrollToChecked(menuEl);
       }
       ctx.onMenuToggle?.(menus.some((m) => !m.hidden));
     });
@@ -385,6 +406,7 @@ export function buildToolbar(ctx: {
     fontMenu,
     teardown() {
       observer.disconnect();
+      window.visualViewport?.removeEventListener("resize", refit);
       fontMenu.teardown();
       for (const m of menus) m.remove();
     },

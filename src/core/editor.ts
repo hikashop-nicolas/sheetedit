@@ -9,6 +9,7 @@ import { setupQueryEditor } from "./ui/pq-editor";
 import { applyQueryResult, loadResultToNewSheet, listWorkbookTables, tableForQuery, touchedPositions, workbookHasQueries } from "../adapters/xlsx/tables";
 import { setupFindBar } from "./ui/findbar";
 import { buildToolbar, tbIcon } from "./ui/toolbar";
+import { anchorRect, placePopup } from "./ui/place";
 import { setupFloatBar } from "./ui/floatbar";
 import { UndoHistory, applyFields, snapFields, type CellFields, type UndoCellChange } from "./history";
 import type { Cell, CellStyle, DataValidation, Phonetic, ShapeGeom, Sheet, StyleChange, Workbook, SheetControl } from "./model";
@@ -1800,10 +1801,8 @@ export function createSheetEditor(
     }
     document.body.appendChild(pop);
     borderPop = pop;
-    const r = btn.getBoundingClientRect();
-    pop.style.left = `${Math.round(r.left)}px`;
-    pop.style.top = `${Math.round(r.bottom + 4)}px`;
-    (pop.firstElementChild as HTMLElement | null)?.focus(); // move focus into the menu
+    placePopup(pop, anchorRect(btn) ?? toolbar.getBoundingClientRect(), { floor: wrap, gap: 4 });
+    (pop.firstElementChild as HTMLElement | null)?.focus({ preventScroll: true }); // move focus into the menu
     setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
   };
 
@@ -3120,13 +3119,10 @@ export function createSheetEditor(
     // would open in the top-left corner of the screen. The menu row hands over its place instead.
     const handed = (anchor as HTMLElement & { openAt?: DOMRect }).openAt;
     (anchor as HTMLElement & { openAt?: DOMRect }).openAt = undefined;
-    const own = anchor.getBoundingClientRect();
-    const r = own.width > 0 ? own : handed ?? toolbar.getBoundingClientRect();
-    pop.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 312))}px`;
-    pop.style.top = `${Math.min(r.bottom + 4, window.innerHeight - 120)}px`;
     document.body.appendChild(pop);
     shapeGallery = pop;
-    (pop.querySelector("button") as HTMLElement | null)?.focus();
+    placePopup(pop, anchorRect(anchor, handed) ?? toolbar.getBoundingClientRect(), { floor: wrap, gap: 4, marginRight: 4 });
+    (pop.querySelector("button") as HTMLElement | null)?.focus({ preventScroll: true });
     pop.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeShapeGallery(); anchor.focus(); } });
     setTimeout(() => {
       const away = (e: MouseEvent): void => {

@@ -14,7 +14,7 @@ export interface FontMenuDeps {
   /** The font of the active cell, marked as checked. */
   current(): string | undefined;
   apply(family: string): void;
-  /** Wire the button to the menu (position, toggle, outside click). */
+  /** Wire the button to the menu (position, scroll to the checked font, toggle, outside click). */
   bindMenu(button: HTMLElement, menu: HTMLElement): void;
   /** Hide every toolbar menu. */
   closeMenus(): void;
@@ -168,8 +168,8 @@ export function createFontMenu(deps: FontMenuDeps): FontMenu {
     if (menu.hidden || e.detail !== 0) return;
     const list = items();
     const target = list.find((b) => b.getAttribute("aria-checked") === "true") ?? list[0];
-    target?.focus();
-    target?.scrollIntoView?.({ block: "nearest" });
+    // The toolbar already scrolled the list to it; focusing must not scroll the host page.
+    target?.focus({ preventScroll: true });
   });
   button.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown" && menu.hidden) {
