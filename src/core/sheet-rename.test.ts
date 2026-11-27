@@ -38,6 +38,7 @@ function xlsx(): Uint8Array {
       `<worksheet xmlns="${S}" xmlns:r="${R}"><sheetData><row r="1"><c r="A1"><f>Data!B1*2</f><v>2</v></c></row></sheetData>` +
         `<conditionalFormatting sqref="A1:A5"><cfRule type="expression" priority="1"><formula>Data!$B$1&gt;0</formula></cfRule></conditionalFormatting>` +
         `<dataValidations count="1"><dataValidation type="list" allowBlank="1" sqref="B1:B5"><formula1>Data!$A$1:$A$2</formula1></dataValidation></dataValidations>` +
+        `<hyperlinks><hyperlink ref="C1" location="Data!A1"/><hyperlink ref="C2" location="'Data'!B2"/><hyperlink ref="C3" location="Report!A1"/></hyperlinks>` +
         `<drawing r:id="rId1"/></worksheet>`,
     ),
     "xl/worksheets/_rels/sheet2.xml.rels": strToU8(rels([["drawing", "../drawings/drawing1.xml"]])),
@@ -67,6 +68,10 @@ describe("renaming a sheet in an xlsx", () => {
     const chart = strFromU8(files["xl/charts/chart1.xml"]!);
     expect(chart).toContain("<c:f>'Raw data'!$B$1:$B$2</c:f>");
     expect(chart).not.toContain("Data!");
+    expect(sheet2).toContain(`<hyperlink ref="C1" location="'Raw data'!A1"/>`);
+    expect(sheet2).toContain(`<hyperlink ref="C2" location="'Raw data'!B2"/>`);
+    expect(sheet2).toContain(`<hyperlink ref="C3" location="Report!A1"/>`);
+    expect(report.cells.get("2:3")?.link).toEqual({ href: "'Raw data'!B2", internal: true, tip: undefined });
 
     const again = readWorkbook(writeWorkbook(wb));
     expect(again.sheets[1]!.validations?.[0]?.rangeRef).toBe("'Raw data'!$A$1:$A$2");
@@ -87,14 +92,18 @@ describe("renaming a sheet in an xlsx", () => {
 const NS =
   `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
   `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
-  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"`;
+  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ` +
+  `xmlns:xlink="http://www.w3.org/1999/xlink"`;
 
 function ods(): Uint8Array {
   const content =
     `<?xml version="1.0"?><office:document-content ${NS}><office:body><office:spreadsheet>` +
     `<table:content-validations><table:content-validation table:name="v1" table:condition="of:cell-content-is-in-list([$Data.$A$1:.$A$2])" table:allow-empty-cell="true" table:base-cell-address="Report.A1"/></table:content-validations>` +
     `<table:table table:name="Data"><table:table-row><table:table-cell office:value-type="float" office:value="1"><text:p>1</text:p></table:table-cell></table:table-row></table:table>` +
-    `<table:table table:name="Report"><table:table-row><table:table-cell table:content-validation-name="v1" table:formula="of:=[$Data.A1]*2" office:value-type="float" office:value="2"><text:p>2</text:p></table:table-cell></table:table-row></table:table>` +
+    `<table:table table:name="Report"><table:table-row><table:table-cell table:content-validation-name="v1" table:formula="of:=[$Data.A1]*2" office:value-type="float" office:value="2"><text:p>2</text:p></table:table-cell>` +
+    `<table:table-cell office:value-type="string"><text:p><text:a xlink:href="#Data.B1">go</text:a></text:p></table:table-cell>` +
+    `<table:table-cell office:value-type="string"><text:p><text:a xlink:href="https://data.test/Data.A1x">web</text:a></text:p></table:table-cell>` +
+    `</table:table-row></table:table>` +
     `</office:spreadsheet></office:body></office:document-content>`;
   return zipSync({
     mimetype: [strToU8("application/vnd.oasis.opendocument.spreadsheet"), { level: 0 }] as unknown as Uint8Array,
@@ -118,5 +127,9 @@ describe("renaming a sheet in an ods", () => {
     expect(xml).toContain("[$'Raw data'.$A$1:.$A$2]");
     expect(xml).toContain("of:=[$'Raw data'.A1]*2");
     expect(xml).not.toContain("$Data.");
+    expect(wb.sheets[1]!.cells.get("1:2")?.link).toEqual({ href: "'Raw data'!B1", internal: true });
+    expect(xml).toContain(`xlink:href="#'Raw data'.B1"`);
+    expect(xml).toContain(`xlink:href="https://data.test/Data.A1x"`);
+    expect(readWorkbook(writeWorkbook(wb)).sheets[1]!.cells.get("1:2")?.link?.href).toBe("'Raw data'!B1");
   });
 });

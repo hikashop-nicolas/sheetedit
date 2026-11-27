@@ -1,7 +1,7 @@
 import type { Cell, Phonetic, Sheet, Workbook } from "../../core/model";
 import { ensureCell, getCell, key, parseXmlOpt, serializeXml } from "../../core/model";
 import { isDateFmt, isTimeOnlyFmt, serialToDuration, serialToIso } from "../../core/dates";
-import { ODS, a1ToOdf } from "./shared";
+import { ODS, a1LinkToOdf, a1ToOdf } from "./shared";
 import { CALCEXT_DATE_PERIODS } from "./read";
 import { ensureOdsAutoStyles, findOdsStyleByName, internOdsStyle, odsColStyle } from "./styles";
 import { writeOdsFreezes } from "./freeze-write";
@@ -53,7 +53,7 @@ function applyOdsValue(doc: Document, c: Element, cell: Cell): void {
         if (at.localName === "href" || at.localName === "type") continue;
         a.setAttributeNS(at.namespaceURI, at.name, at.value);
       }
-      a.setAttributeNS(ODS.xlink, "xlink:href", cell.link.internal ? `#${cell.link.href.replace("!", ".")}` : cell.link.href);
+      a.setAttributeNS(ODS.xlink, "xlink:href", cell.link.internal ? a1LinkToOdf(cell.link.href) : cell.link.href);
       a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
       a.textContent = text;
       p.appendChild(a);
@@ -207,7 +207,7 @@ function makeRunsP(doc: Document, runs: import("../../core/model").TextRun[]): E
   // links keeps both.
   const anchor = (run: import("../../core/model").TextRun, inner: Node): Element => {
     const a = doc.createElementNS(ODS.text, "text:a");
-    a.setAttributeNS(ODS.xlink, "xlink:href", run.link!.internal ? `#${run.link!.href.replace("!", ".")}` : run.link!.href);
+    a.setAttributeNS(ODS.xlink, "xlink:href", run.link!.internal ? a1LinkToOdf(run.link!.href) : run.link!.href);
     a.setAttributeNS(ODS.xlink, "xlink:type", "simple");
     a.appendChild(inner);
     return a;

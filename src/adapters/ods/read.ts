@@ -10,7 +10,7 @@ const ODF_TO_FUNC: Record<string, PivotFunc> = { sum: "sum", count: "count", cou
 import { readOdsCharts } from "./chart-read";
 import { readOdsImages } from "./image-read";
 import { readOdsShapes } from "./shape-read";
-import { REPEAT_CAP, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx, odsLinkIsWholeCell } from "./shared";
+import { REPEAT_CAP, odfLinkToA1, odfToA1, odsBorderColor, odsCellComments, odsCellLink, odsCellRich, odsCellText, odsColorOf, odsLenToPx, odsLinkIsWholeCell } from "./shared";
 // ---------------------------------------------------------------------------
 // ods read: content.xml parsing (tables, rows, styles)
 // ---------------------------------------------------------------------------
@@ -863,7 +863,7 @@ function odsCellRuns(cellEl: Element, styles: OdsStyles): TextRun[] | undefined 
       // several, and lets an edit elsewhere in the cell leave them where they were.
       const href = el.getAttribute("xlink:href") ?? "";
       const run: TextRun = { text: el.textContent ?? "" };
-      if (href) run.link = href.startsWith("#") ? { href: href.slice(1).replace(".", "!"), internal: true } : { href };
+      if (href) run.link = href.startsWith("#") ? { href: odfLinkToA1(href), internal: true } : { href };
       // A styled anchor carries its style on an inner span, or on itself.
       const cs = styles.text.get(el.getAttribute("text:style-name") ?? "") ?? {};
       if (cs.bold) run.bold = true;

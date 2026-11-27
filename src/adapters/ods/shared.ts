@@ -140,6 +140,20 @@ export function odsCellText(cell: Element): string {
     .join("\n");
 }
 
+/** An internal ODF link target ("#$'My sheet'.$B$2") in the editor's "'My sheet'!$B$2" form. */
+export function odfLinkToA1(target: string): string {
+  const t = target.replace(/^#/, "");
+  const dot = t.lastIndexOf(".");
+  if (dot < 0) return t; // a named range
+  return `${t.slice(0, dot).replace(/^\$/, "")}!${t.slice(dot + 1)}`;
+}
+
+/** The editor's internal link ("Sheet2!B2") as an ODF target ("#Sheet2.B2"). */
+export function a1LinkToOdf(href: string): string {
+  const bang = href.lastIndexOf("!");
+  return "#" + (bang < 0 ? href : `${href.slice(0, bang)}.${href.slice(bang + 1)}`);
+}
+
 // A cell hyperlink from an ODF <text:a xlink:href>. Internal targets are "#Sheet1.A1"
 // (converted to the "Sheet1!A1" form the editor follows); everything else is external.
 export function odsCellLink(cell: Element): Cell["link"] {
@@ -147,7 +161,7 @@ export function odsCellLink(cell: Element): Cell["link"] {
   if (!a) return undefined;
   const href = a.getAttribute("xlink:href") ?? "";
   if (!href) return undefined;
-  if (href.startsWith("#")) return { href: href.slice(1).replace(".", "!"), internal: true };
+  if (href.startsWith("#")) return { href: odfLinkToA1(href), internal: true };
   return { href };
 }
 

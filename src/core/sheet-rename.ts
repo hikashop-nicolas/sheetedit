@@ -17,6 +17,7 @@ export function renameSheetInOdf(text: string, from: string, to: string): string
   });
 }
 
+const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const XLSX_FORMULA_TAGS = new Set(["formula", "formula1", "formula2", "f"]);
 
 /** Rewrite the formula texts of an xlsx part outside its cell data; true when one changed. */
@@ -25,6 +26,14 @@ function renameInXlsxDoc(doc: Document, rename: (f: string) => string): boolean 
   const walk = (el: Element): void => {
     for (const ch of Array.from(el.children)) {
       if (ch.localName === "sheetData") continue; // cell formulas come from the model
+      // An internal hyperlink names its target in @location; with an r:id it is another file's.
+      if (ch.localName === "hyperlink" && !ch.getAttribute("r:id") && !ch.getAttributeNS(REL, "id")) {
+        const loc = ch.getAttribute("location");
+        if (loc && rename(loc) !== loc) {
+          ch.setAttribute("location", rename(loc));
+          changed = true;
+        }
+      }
       if (XLSX_FORMULA_TAGS.has(ch.localName) && ch.children.length === 0) {
         const t = ch.textContent ?? "";
         const next = rename(t);
@@ -47,6 +56,7 @@ function renameInOdfDoc(doc: Document, from: string, to: string): boolean {
     const el = all[i]!;
     for (const a of Array.from(el.attributes)) {
       if (!a.value.includes(".") || a.localName === "name") continue;
+      if (a.localName === "href" && !a.value.startsWith("#")) continue; // an external URL
       const next = renameSheetInOdf(a.value, from, to);
       if (next !== a.value) {
         el.setAttributeNS(a.namespaceURI, a.name, next);
@@ -97,6 +107,21 @@ export function renameSheetInParts(wb: Workbook, from: string, to: string): void
           touched = true;
         }
       }
+    for (const cell of sheet.cells.values()) {
+      let linked = false;
+      if (cell.link?.internal && rename(cell.link.href) !== cell.link.href) {
+        cell.link = { ...cell.link, href: rename(cell.link.href) };
+        linked = true;
+      }
+      if (cell.richRuns?.some((run) => run.link?.internal && rename(run.link.href) !== run.link.href)) {
+        cell.richRuns = cell.richRuns.map((run) => (run.link?.internal ? { ...run, link: { ...run.link, href: rename(run.link.href) } } : run));
+        linked = true;
+      }
+      if (linked) {
+        cell.linkDirty = true;
+        touched = true;
+      }
+    }
     for (const sp of sheet.sparklines ?? []) {
       const next = rename(sp.dataRef);
       if (next !== sp.dataRef) {
