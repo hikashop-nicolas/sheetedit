@@ -18,6 +18,19 @@ function ev(formula: string, data = DATA): string {
 const num = (f: string): number => Number(ev(f));
 
 describe("statistics", () => {
+  it("computes the A statistics: text in a reference counts as 0", () => {
+    expect(ev("MAXA(B1:B5)")).toBe("0");
+    expect(ev("MINA(A1:B5)")).toBe("0");
+    expect(num("AVERAGEA(A1:B2)")).toBeCloseTo(1, 9); // (3+0+1+0)/4
+    expect(num("VARA(A1:A5)")).toBeCloseTo(3.2, 9);
+    expect(num("VARPA(A1:A5)")).toBeCloseTo(2.56, 9);
+    expect(num("STDEVA(A1:A5)")).toBeCloseTo(1.7888543819998, 9);
+    expect(num("STDEVPA(A1:A5)")).toBeCloseTo(1.6, 9);
+    expect(ev('MAXA(2,TRUE,"3")')).toBe("3");
+    expect(ev('MAXA(1,"x")')).toBe("#VALUE!");
+    expect(ev("COUNT(A1,B1,A2)")).toBe("2");
+  });
+
   it("computes the spread functions Excel-compatibly", () => {
     expect(ev("MEDIAN(A1:A5)")).toBe("3");
     expect(ev("MODE(A1:A5)")).toBe("1");

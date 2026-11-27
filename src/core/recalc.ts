@@ -112,7 +112,7 @@ interface AggState {
 }
 
 function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
-  const FE = (FormulaParser as unknown as { FormulaError: { new (n: string): object; DIV0: unknown } }).FormulaError;
+  const FE = (FormulaParser as unknown as { FormulaError: { new (n: string): object; DIV0: unknown; VALUE: unknown } }).FormulaError;
   const isErr = (v: unknown): boolean => v instanceof (FE as unknown as new (...a: never[]) => object);
   const feed = (agg: AggState, n: number) => {
     agg.sum += n;
@@ -133,9 +133,10 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
         return;
       }
       // Range/union wrappers carry their cells in .data; single results in .value.
-      const o = v as { data?: unknown; value?: unknown };
+      const o = v as { data?: unknown; value?: unknown; isCellRef?: boolean };
       if (o.data !== undefined) walk(o.data, true, agg);
-      else if (o.value !== undefined) walk(o.value, inRange, agg);
+      // A single-cell reference is a reference too: its text and booleans do not count.
+      else if (o.value !== undefined) walk(o.value, inRange || o.isCellRef === true, agg);
       return;
     }
     if (typeof v === "number") {
@@ -183,6 +184,66 @@ function fastAggregates(): Record<string, (...args: unknown[]) => unknown> {
       const a = run(args);
       return a.err ?? a.countA;
     },
+    ...aFunctions(FE, isErr),
+  };
+}
+
+// The "A" statistics (MAXA, VARA...): in a reference, text and FALSE count as 0 and TRUE as 1;
+// a direct argument must be a number, a boolean or numeric text. The library left them empty.
+function aFunctions(
+  FE: { DIV0: unknown; VALUE?: unknown },
+  isErr: (v: unknown) => boolean,
+): Record<string, (...args: unknown[]) => unknown> {
+  const collect = (args: unknown[]): number[] | { err: unknown } => {
+    const vals: number[] = [];
+    let err: unknown = null;
+    const walk = (v: unknown, inRange: boolean): void => {
+      if (err || v == null) return;
+      if (Array.isArray(v)) {
+        for (const x of v) walk(x, true);
+        return;
+      }
+      if (typeof v === "object") {
+        if (isErr(v)) {
+          err = v;
+          return;
+        }
+        const o = v as { data?: unknown; value?: unknown; isCellRef?: boolean; omitted?: boolean };
+        if (o.omitted) return;
+        if (o.data !== undefined) walk(o.data, true);
+        else if (o.value !== undefined) walk(o.value, inRange || o.isCellRef === true);
+        return;
+      }
+      if (typeof v === "number") vals.push(v);
+      else if (typeof v === "boolean") vals.push(v ? 1 : 0);
+      else if (typeof v === "string") {
+        if (inRange) vals.push(0);
+        else if (v.trim() !== "" && Number.isFinite(Number(v))) vals.push(Number(v));
+        else err = FE.VALUE;
+      }
+    };
+    for (const a of args) walk(a, false);
+    return err ? { err } : vals;
+  };
+  const stat = (fn: (vals: number[]) => unknown) => (...args: unknown[]) => {
+    const v = collect(args);
+    return Array.isArray(v) ? fn(v) : v.err;
+  };
+  const variance = (v: number[], sample: boolean): number | unknown => {
+    const n = v.length;
+    if (n < (sample ? 2 : 1)) return FE.DIV0;
+    const mean = v.reduce((a, b) => a + b, 0) / n;
+    return v.reduce((a, b) => a + (b - mean) ** 2, 0) / (sample ? n - 1 : n);
+  };
+  const sqrt = (x: unknown) => (typeof x === "number" ? Math.sqrt(x) : x);
+  return {
+    MAXA: stat((v) => (v.length ? v.reduce((a, b) => (b > a ? b : a)) : 0)),
+    MINA: stat((v) => (v.length ? v.reduce((a, b) => (b < a ? b : a)) : 0)),
+    AVERAGEA: stat((v) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : FE.DIV0)),
+    VARA: stat((v) => variance(v, true)),
+    VARPA: stat((v) => variance(v, false)),
+    STDEVA: stat((v) => sqrt(variance(v, true))),
+    STDEVPA: stat((v) => sqrt(variance(v, false))),
   };
 }
 
